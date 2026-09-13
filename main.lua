@@ -1,7 +1,7 @@
 local Lib
 do
     local ok, err = pcall(function()
-        Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/template.lua"))()
+        Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/template(ofuscated).lua"))()
     end)
     if not ok or type(Lib) ~= "table" then
         warn("[HappyHub] Template load failed: " .. tostring(err))
@@ -9,17 +9,17 @@ do
     end
 end
 
-local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
-local UserInputService  = game:GetService("UserInputService")
-local HttpService       = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
-local TextChatService   = game:GetService("TextChatService")
-local TeleportService   = game:GetService("TeleportService")
+local TextChatService = game:GetService("TextChatService")
+local TeleportService = game:GetService("TeleportService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local SoundService      = game:GetService("SoundService")
-local LocalPlayer       = Players.LocalPlayer
-local isMobile          = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local SoundService = game:GetService("SoundService")
+local LocalPlayer = Players.LocalPlayer
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
 local HOME_ICON = "131878842124084"
 local AIM_ICON  = "119272570124806"
@@ -73,9 +73,6 @@ local totalCoins = 0
 local coinStatusSetter = nil
 local coinCountSetter = nil
 
--- ═══════════════════════════════════════════════════════════════
---  HELPERS
--- ═══════════════════════════════════════════════════════════════
 local function getHRP()
     local c = LocalPlayer.Character
     return c and c:FindFirstChild("HumanoidRootPart")
@@ -178,9 +175,6 @@ local function getMM2TargetPart(character)
     end
 end
 
--- ═══════════════════════════════════════════════════════════════
---  TELEPORT VIA REMOTE (TeleportToPart)
--- ═══════════════════════════════════════════════════════════════
 local tpEvent = nil
 local function getTpEvent()
     if tpEvent and tpEvent.Parent then return tpEvent end
@@ -192,7 +186,6 @@ local function getTpEvent()
     return tpEvent
 end
 
--- Mueve "source" DENTRO de "destination" (mismo CFrame, sin offset)
 local function fireTeleportToPart(sourcePart, destinationPart)
     local ev = getTpEvent()
     if not ev then return false end
@@ -203,7 +196,6 @@ local function fireTeleportToPart(sourcePart, destinationPart)
     return true
 end
 
--- HRP → HRP del target (dentro del target, sin offset)
 local function teleportToPlayer(targetPlr)
     if not targetPlr then return false end
     local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
@@ -211,8 +203,7 @@ local function teleportToPlayer(targetPlr)
     if not myHRP or not theirHRP then return false end
 
     if fireTeleportToPart(myHRP, theirHRP) then
-        -- Fallback CFrame por si el remote no hace nada en ese tick
-        task.wait(0.05)
+        task.wait(0.03)
         local h = getHRP()
         if h and (h.Position - theirHRP.Position).Magnitude > 5 then
             h.CFrame = theirHRP.CFrame
@@ -223,7 +214,6 @@ local function teleportToPlayer(targetPlr)
     return true
 end
 
--- Gun → HRP del local (mueve la gun adentro del jugador)
 local function bringGunToPlayer()
     local gun = findGunDrop()
     if not gun then return false, "no gun" end
@@ -235,8 +225,7 @@ local function bringGunToPlayer()
         moved = true
     end
 
-    -- Fallback: mover la part directamente
-    task.wait(0.05)
+    task.wait(0.03)
     if gun and gun.Parent then
         gun.CFrame = hrp.CFrame
         gun.Velocity = Vector3.zero
@@ -247,9 +236,6 @@ local function bringGunToPlayer()
     return moved, moved and "remote" or "fallback"
 end
 
--- ═══════════════════════════════════════════════════════════════
---  WALLCHECK
--- ═══════════════════════════════════════════════════════════════
 local function isVisible(originPos, targetPos, targetChar)
     local dir = targetPos - originPos
     local dist = dir.Magnitude
@@ -268,9 +254,6 @@ local function isVisible(originPos, targetPos, targetChar)
     return false
 end
 
--- ═══════════════════════════════════════════════════════════════
---  ESP
--- ═══════════════════════════════════════════════════════════════
 local ESP = {
     active = { MM2 = false, OG = false, NameTag = false },
     highlights = { MM2 = {}, OG = {} },
@@ -414,9 +397,6 @@ Players.PlayerAdded:Connect(function(plr)
 end)
 Players.PlayerRemoving:Connect(function(plr) clearHighlights(plr) end)
 
--- ═══════════════════════════════════════════════════════════════
---  AVATAR
--- ═══════════════════════════════════════════════════════════════
 local function applyKorblox()
     local char = LocalPlayer.Character; if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
@@ -463,9 +443,6 @@ local function removeKorblox()
     end
 end
 
--- ═══════════════════════════════════════════════════════════════
---  COIN FARM
--- ═══════════════════════════════════════════════════════════════
 local function getCoinContainer()
     local maps = {
         "ResearchFacility", "House2", "Mansion2", "Hotel", "MilBase", "Bank2",
@@ -607,9 +584,6 @@ local function startCoinCollector()
     end)
 end
 
--- ═══════════════════════════════════════════════════════════════
---  FLY
--- ═══════════════════════════════════════════════════════════════
 local function attachFlyBodyMovers()
     local hrp = getHRP(); local hum = getHumanoid()
     if not hrp or not hum then return end
@@ -669,9 +643,6 @@ local function stopFly()
     detachFlyBodyMovers()
 end
 
--- ═══════════════════════════════════════════════════════════════
---  WINDOW
--- ═══════════════════════════════════════════════════════════════
 local window
 do
     local ok, err = pcall(function()
@@ -692,7 +663,6 @@ local avatarTab    = window:CreateTab("Avatar", AVT_ICON)
 local farmTab      = window:CreateTab("Farm", FARM_ICON)
 local miscTab      = window:CreateTab("Misc", MISC_ICON)
 
--- ─── Home ─────────────────────────────────────────────────
 window:CreateLabel(homeTab, "Happy Hub")
 window:CreateParagraph(homeTab, "Best free hub · Since 2026 · v11 Update · MM2 Project")
 
@@ -723,7 +693,6 @@ window:CreateParagraph(homeTab, "@odecode · Hexagonal Client · Farm Engine")
 window:CreateLabel(homeTab, "Features")
 window:CreateParagraph(homeTab, "Players · ESP · Movement · Aimbot · Avatar · Farm · Misc · Configs")
 
--- ─── Players ──────────────────────────────────────────────
 window:CreateLabel(playersTab, "Teleport")
 local tpAllToggleRef = window:CreateToggle(playersTab, "TP All (Loop)", false, function(v)
     MovementSettings.TPAll = v
@@ -786,7 +755,6 @@ window:CreateButton(playersTab, "Server Hop", function()
     end)
 end)
 
--- ─── ESP ──────────────────────────────────────────────────
 window:CreateLabel(espTab, "Role Viewer")
 local mm2ESPToggleRef = window:CreateToggle(espTab, "Murder Mystery 2", false, function(v)
     ESP.active.MM2 = v
@@ -824,7 +792,6 @@ local nameTagToggleRef = window:CreateToggle(espTab, "Nametag", false, function(
 end)
 registerControl(VisualSettings, "NameTags", nameTagToggleRef)
 
--- ─── Movement ─────────────────────────────────────────────
 window:CreateLabel(movementTab, "Fly")
 local flyToggleRef = window:CreateToggle(movementTab, "Active Fly", false, function(v)
     MovementSettings.Fly = v
@@ -1002,7 +969,6 @@ local flingRef = window:CreateToggle(movementTab, "Fling All", false, function(v
 end)
 registerControl(MovementSettings, "Fling", flingRef)
 
--- ─── Aimbot ───────────────────────────────────────────────
 window:CreateLabel(aimbotTab, "Murder Mystery")
 local mm2LockRef = window:CreateToggle(aimbotTab, "Lock-On Murderer", false, function(v)
     AimbotSettings.MM2LockOn = v
@@ -1086,8 +1052,6 @@ local autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire  [B]", false, func
             if not murderer or not murderer.Character then return end
             local targetPart = getMM2TargetPart(murderer.Character)
             if not targetPart then return end
-            local myHRP = getHRP()
-            if not myHRP then return end
             if AimbotSettings.WallCheck then
                 local camera = workspace.CurrentCamera
                 if not isVisible(camera.CFrame.Position, targetPart.Position, murderer.Character) then return end
@@ -1122,24 +1086,41 @@ window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
 
     task.spawn(function()
         local startTime = tick()
+        local spinAngle = 0
+        local spinConn = RunService.RenderStepped:Connect(function(dt)
+            local hrp = getHRP()
+            if not hrp then return end
+            spinAngle = spinAngle + (dt * 25)
+            hrp.CFrame = hrp.CFrame * CFrame.Angles(0, spinAngle, 0)
+        end)
+
         while killAllRunning and tick() - startTime < 3 do
             for _, plr in ipairs(Players:GetPlayers()) do
                 if plr ~= LocalPlayer and plr.Character then
-                    teleportToPlayer(plr)
-                    task.wait(0.05)
-                    pcall(function()
-                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                        task.wait(0.03)
-                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-                    end)
+                    local theirHRP = plr.Character:FindFirstChild("HumanoidRootPart")
+                    if theirHRP then
+                        local myHRP = getHRP()
+                        if myHRP then
+                            if not fireTeleportToPart(myHRP, theirHRP) then
+                                myHRP.CFrame = theirHRP.CFrame
+                            end
+                        end
+                        task.wait(0.1)
+                        pcall(function()
+                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+                            task.wait(0.03)
+                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+                        end)
+                    end
                 end
             end
         end
+
+        if spinConn then spinConn:Disconnect() end
         killAllRunning = false
     end)
 end)
 
--- ─── Avatar ───────────────────────────────────────────────
 window:CreateLabel(avatarTab, "Avatar")
 window:CreateParagraph(avatarTab, "Effects are local only. They re-apply on respawn.")
 
@@ -1289,7 +1270,6 @@ LocalPlayer.CharacterAdded:Connect(function()
     end
 end)
 
--- ─── Farm ─────────────────────────────────────────────────
 window:CreateLabel(farmTab, "Coin Farm")
 window:CreateParagraph(farmTab, "Farm engine powered by Hexagonal Client · Made by odecode")
 
@@ -1389,7 +1369,6 @@ if roundEndFadeEvent then
     end)
 end
 
--- ─── Misc ─────────────────────────────────────────────────
 window:CreateLabel(miscTab, "Gun")
 window:CreateButton(miscTab, "Bring Gun", function()
     local ok, reason = bringGunToPlayer()
