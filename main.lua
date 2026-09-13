@@ -1,7 +1,7 @@
 local Lib
 do
     local ok, err = pcall(function()
-        Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/template(ofuscated).lua"))()
+        Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/template.lua"))()
     end)
     if not ok or type(Lib) ~= "table" then
         warn("[HappyHub] Template load failed: " .. tostring(err))
