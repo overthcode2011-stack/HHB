@@ -1,15 +1,15 @@
 if _G.__rivals_happyhub_loaded then return end
 _G.__rivals_happyhub_loaded = true
 
-local UserInputService = game:GetService("UserInputService")
-local TweenService     = game:GetService("TweenService")
-local RunService       = game:GetService("RunService")
-local Players          = game:GetService("Players")
-local HttpService      = game:GetService("HttpService")
-local SoundService     = game:GetService("SoundService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local LocalPlayer      = Players.LocalPlayer
-local Camera           = workspace.CurrentCamera
+local UserInputService      = game:GetService("UserInputService")
+local TweenService          = game:GetService("TweenService")
+local RunService            = game:GetService("RunService")
+local Players               = game:GetService("Players")
+local HttpService           = game:GetService("HttpService")
+local SoundService          = game:GetService("SoundService")
+local VirtualInputManager   = game:GetService("VirtualInputManager")
+local LocalPlayer           = Players.LocalPlayer
+local Camera                = workspace.CurrentCamera
 
 local mousemoverel = mousemoverel or MouseMoveRel or (syn and syn.mousemoverel) or (fluxus and fluxus.mousemoverel)
 
@@ -34,6 +34,8 @@ local NOTIF_ICON = "rbxassetid://111849828445660"
 local TYPING_SOUND_ID = "rbxassetid://140036379967302"
 local NOTIF_SOUND_ID  = "rbxassetid://97455084935031"
 
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
 local typingSound = Instance.new("Sound")
 typingSound.SoundId = TYPING_SOUND_ID
 typingSound.Volume = 0.5
@@ -46,91 +48,79 @@ notifSound.Parent = SoundService
 
 local THEMES = {
     Green = {
-        Accent        = Color3.fromRGB(0, 255, 63),
-        Background    = Color3.fromRGB(0, 0, 0),
-        Panel         = Color3.fromRGB(8, 8, 8),
-        Text          = Color3.fromRGB(255, 255, 255),
-        TextSecondary = Color3.fromRGB(180, 180, 180),
-        Hover         = Color3.fromRGB(20, 20, 20),
-        ToggleOn      = Color3.fromRGB(0, 255, 63),
-        ToggleOff     = Color3.fromRGB(40, 40, 40),
+        Accent = Color3.fromRGB(0, 255, 63), Background = Color3.fromRGB(0, 0, 0),
+        Panel = Color3.fromRGB(8, 8, 8), Text = Color3.fromRGB(255, 255, 255),
+        TextSecondary = Color3.fromRGB(180, 180, 180), Hover = Color3.fromRGB(20, 20, 20),
+        ToggleOn = Color3.fromRGB(0, 255, 63), ToggleOff = Color3.fromRGB(40, 40, 40),
     },
     Purple = {
-        Accent        = Color3.fromRGB(160, 80, 255),
-        Background    = Color3.fromRGB(8, 4, 15),
-        Panel         = Color3.fromRGB(12, 8, 20),
-        Text          = Color3.fromRGB(240, 228, 255),
-        TextSecondary = Color3.fromRGB(160, 140, 200),
-        Hover         = Color3.fromRGB(25, 15, 40),
-        ToggleOn      = Color3.fromRGB(160, 80, 255),
-        ToggleOff     = Color3.fromRGB(55, 35, 80),
+        Accent = Color3.fromRGB(160, 80, 255), Background = Color3.fromRGB(8, 4, 15),
+        Panel = Color3.fromRGB(12, 8, 20), Text = Color3.fromRGB(240, 228, 255),
+        TextSecondary = Color3.fromRGB(160, 140, 200), Hover = Color3.fromRGB(25, 15, 40),
+        ToggleOn = Color3.fromRGB(160, 80, 255), ToggleOff = Color3.fromRGB(55, 35, 80),
     },
     Blue = {
-        Accent        = Color3.fromRGB(40, 160, 255),
-        Background    = Color3.fromRGB(3, 8, 15),
-        Panel         = Color3.fromRGB(6, 12, 22),
-        Text          = Color3.fromRGB(215, 232, 255),
-        TextSecondary = Color3.fromRGB(120, 160, 210),
-        Hover         = Color3.fromRGB(15, 25, 45),
-        ToggleOn      = Color3.fromRGB(40, 160, 255),
-        ToggleOff     = Color3.fromRGB(25, 45, 80),
+        Accent = Color3.fromRGB(40, 160, 255), Background = Color3.fromRGB(3, 8, 15),
+        Panel = Color3.fromRGB(6, 12, 22), Text = Color3.fromRGB(215, 232, 255),
+        TextSecondary = Color3.fromRGB(120, 160, 210), Hover = Color3.fromRGB(15, 25, 45),
+        ToggleOn = Color3.fromRGB(40, 160, 255), ToggleOff = Color3.fromRGB(25, 45, 80),
     },
     Red = {
-        Accent        = Color3.fromRGB(230, 50, 50),
-        Background    = Color3.fromRGB(10, 3, 3),
-        Panel         = Color3.fromRGB(15, 5, 5),
-        Text          = Color3.fromRGB(255, 228, 228),
-        TextSecondary = Color3.fromRGB(190, 140, 140),
-        Hover         = Color3.fromRGB(30, 10, 10),
-        ToggleOn      = Color3.fromRGB(230, 50, 50),
-        ToggleOff     = Color3.fromRGB(70, 28, 28),
+        Accent = Color3.fromRGB(230, 50, 50), Background = Color3.fromRGB(10, 3, 3),
+        Panel = Color3.fromRGB(15, 5, 5), Text = Color3.fromRGB(255, 228, 228),
+        TextSecondary = Color3.fromRGB(190, 140, 140), Hover = Color3.fromRGB(30, 10, 10),
+        ToggleOn = Color3.fromRGB(230, 50, 50), ToggleOff = Color3.fromRGB(70, 28, 28),
     },
 }
 
-local currentThemeName = "Green"
+local savedTheme = "Green"
+if hasFileSystem then
+    pcall(function()
+        if isfile("HappyHub/theme.txt") then
+            local t = readfile("HappyHub/theme.txt")
+            if t and THEMES[t] then savedTheme = t end
+        end
+    end)
+end
+
+local currentThemeName = savedTheme
 local Colors = {}
-for k, v in pairs(THEMES.Green) do Colors[k] = v end
+for k, v in pairs(THEMES[currentThemeName]) do Colors[k] = v end
+
+local suppressNotify = false
 
 local reg = {
-    panels        = {},
-    texts         = {},
-    subtexts      = {},
-    accentBgs     = {},
-    accentTexts   = {},
-    accentStrokes = {},
-    accentIcons   = {},
-    pills         = {},
-    sliderFills   = {},
-    sliderHandles = {},
-    sidebarBtns   = {},
-    sidebarIcons  = {},
-    sidebarTexts  = {},
-    scrollBars    = {},
-    mainFrame     = nil,
-    tabContainer  = nil,
-    contentArea   = nil,
-    playerCard    = nil,
+    panels = {}, texts = {}, subtexts = {}, accentBgs = {}, accentTexts = {},
+    accentStrokes = {}, accentIcons = {}, pills = {}, sliderFills = {},
+    sliderHandles = {}, sidebarBtns = {}, sidebarIcons = {}, sidebarTexts = {},
+    scrollBars = {}, dropdowns = {}, mainFrame = nil, tabContainer = nil,
+    contentArea = nil, playerCard = nil,
 }
 
 local refreshPlayerList = nil
+local UIControls = {}
 
 local function register(list, obj)
     table.insert(list, obj)
     return obj
 end
 
+local function registerControl(settingsTable, key, control)
+    table.insert(UIControls, { table = settingsTable, key = key, control = control })
+end
+
 local function applyTheme()
     local th = Colors
     if reg.mainFrame then reg.mainFrame.BackgroundColor3 = th.Background end
-    for _, o in ipairs(reg.panels)        do if o and o.Parent then o.BackgroundColor3 = th.Panel    end end
-    for _, o in ipairs(reg.texts)         do if o and o.Parent then o.TextColor3       = th.Text     end end
-    for _, o in ipairs(reg.subtexts)      do if o and o.Parent then o.TextColor3       = th.TextSecondary end end
-    for _, o in ipairs(reg.accentBgs)     do if o and o.Parent then o.BackgroundColor3 = th.Accent   end end
-    for _, o in ipairs(reg.accentTexts)   do if o and o.Parent then o.TextColor3       = th.Accent   end end
-    for _, o in ipairs(reg.accentStrokes) do if o and o.Parent then o.Color            = th.Accent   end end
-    for _, o in ipairs(reg.accentIcons)   do if o and o.Parent then o.ImageColor3      = th.Accent   end end
-    for _, o in ipairs(reg.sliderFills)   do if o and o.Parent then o.BackgroundColor3 = th.Accent   end end
-    for _, o in ipairs(reg.sliderHandles) do if o and o.Parent then o.BackgroundColor3 = th.Text     end end
+    for _, o in ipairs(reg.panels)        do if o and o.Parent then o.BackgroundColor3 = th.Panel end end
+    for _, o in ipairs(reg.texts)         do if o and o.Parent then o.TextColor3 = th.Text end end
+    for _, o in ipairs(reg.subtexts)      do if o and o.Parent then o.TextColor3 = th.TextSecondary end end
+    for _, o in ipairs(reg.accentBgs)     do if o and o.Parent then o.BackgroundColor3 = th.Accent end end
+    for _, o in ipairs(reg.accentTexts)   do if o and o.Parent then o.TextColor3 = th.Accent end end
+    for _, o in ipairs(reg.accentStrokes) do if o and o.Parent then o.Color = th.Accent end end
+    for _, o in ipairs(reg.accentIcons)   do if o and o.Parent then o.ImageColor3 = th.Accent end end
+    for _, o in ipairs(reg.sliderFills)   do if o and o.Parent then o.BackgroundColor3 = th.Accent end end
+    for _, o in ipairs(reg.sliderHandles) do if o and o.Parent then o.BackgroundColor3 = th.Text end end
     for _, o in ipairs(reg.scrollBars)    do if o and o.Parent then o.ScrollBarImageColor3 = th.Accent end end
     for _, d in ipairs(reg.pills) do
         local pill, getState = d[1], d[2]
@@ -152,20 +142,36 @@ local function applyTheme()
     for _, d in ipairs(reg.sidebarIcons) do
         local ic, name = d[1], d[2]
         if ic and ic.Parent then
-            if name == _G.__activeTabName then
-                ic.ImageColor3 = th.Accent
-            else
-                ic.ImageColor3 = th.TextSecondary
-            end
+            ic.ImageColor3 = (name == _G.__activeTabName) and th.Accent or th.TextSecondary
         end
     end
     for _, d in ipairs(reg.sidebarTexts) do
         local tx, name = d[1], d[2]
         if tx and tx.Parent then
-            if name == _G.__activeTabName then
-                tx.TextColor3 = th.Accent
-            else
-                tx.TextColor3 = th.Text
+            tx.TextColor3 = (name == _G.__activeTabName) and th.Accent or th.Text
+        end
+    end
+    for _, d in ipairs(reg.dropdowns) do
+        local b, list, btns, getSel = d[1], d[2], d[3], d[4]
+        if b and b.Parent then
+            b.BackgroundColor3 = th.Panel
+            b.TextColor3 = th.Text
+        end
+        if list and list.Parent then
+            list.BackgroundColor3 = th.Panel
+        end
+        local sel = getSel and getSel() or nil
+        for _, ob in ipairs(btns) do
+            if ob and ob.Parent then
+                if ob.Text == sel then
+                    ob.BackgroundColor3 = th.Accent
+                    ob.BackgroundTransparency = 0
+                    ob.TextColor3 = th.Background
+                else
+                    ob.BackgroundColor3 = th.Panel
+                    ob.BackgroundTransparency = 0.2
+                    ob.TextColor3 = th.Text
+                end
             end
         end
     end
@@ -174,21 +180,10 @@ local function applyTheme()
 end
 
 local AimbotSettings = {
-    Enabled = false,
-    SilentAim = false,
-    FOV = 150,
-    Smoothing = 0.35,
-    WallCheck = false,
-    MaxDistance = 150,
-    Target = "Head",
-    ShowFOV = false,
-    TeamCheck = false,
-    RotateRig = true,
-    TriggerBot = false,
-    TriggerRange = 150,
-    AutoFire = false,
+    Enabled = false, SilentAim = false, FOV = 150, Smoothing = 0.35,
+    WallCheck = false, MaxDistance = 150, Target = "Head", ShowFOV = false,
+    TeamCheck = false, RotateRig = true, TriggerBot = false, TriggerRange = 150, AutoFire = false,
 }
-
 local VisualSettings = { RivalsESP = false, NameTags = false }
 local MiscSettings = { InfJump = false, AntiAFK = false }
 local MovementSettings = { Noclip = false, God = false }
@@ -217,8 +212,7 @@ end
 local function isTeamName(n)
     if typeof(n) ~= "string" then return false end
     local l = string.gsub(string.lower(n), "[%s_%-]", "")
-    return l == "team" or l == "teamid" or l == "teamindex"
-        or l == "teamcolor" or l == "teamcolour"
+    return l == "team" or l == "teamid" or l == "teamindex" or l == "teamcolor" or l == "teamcolour"
 end
 
 local function getTeamAttr(c)
@@ -498,18 +492,11 @@ UserInputService.JumpRequest:Connect(function()
     end
 end)
 
-local RivalsESP = {
-    active = false,
-    highlights = {},
-    nameTags = {},
-    updateThread = nil,
-    nameTagUpdater = nil,
-}
-
+local RivalsESP = { active = false, highlights = {}, nameTags = {}, updateThread = nil, nameTagUpdater = nil }
 local ESP_COLORS = {
     Enemy = Color3.fromRGB(255, 60, 60),
-    Ally = Color3.fromRGB(60, 160, 255),
-    Self = Color3.fromRGB(0, 255, 63),
+    Ally  = Color3.fromRGB(60, 160, 255),
+    Self  = Color3.fromRGB(0, 255, 63),
 }
 
 local function getRivalsESPColor(plr)
@@ -689,6 +676,7 @@ NotifLayout.Parent = NotifContainer
 local notifOrder = 0
 
 local function Notify(text, duration)
+    if suppressNotify then return end
     duration = duration or 3
     notifOrder = notifOrder + 1
     pcall(function() notifSound:Play() end)
@@ -766,8 +754,7 @@ local function Notify(text, duration)
     bar.BackgroundTransparency = 1
 
     TweenService:Create(frame, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        Position = UDim2.new(0, 0, 0, 0),
-        BackgroundTransparency = 0.1
+        Position = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 0.1
     }):Play()
     TweenService:Create(icon, TweenInfo.new(0.3), {ImageTransparency = 0}):Play()
     TweenService:Create(title, TweenInfo.new(0.3), {TextTransparency = 0}):Play()
@@ -775,15 +762,11 @@ local function Notify(text, duration)
     TweenService:Create(accent, TweenInfo.new(0.3), {BackgroundTransparency = 0}):Play()
     TweenService:Create(barBg, TweenInfo.new(0.3), {BackgroundTransparency = 0}):Play()
     TweenService:Create(bar, TweenInfo.new(0.3), {BackgroundTransparency = 0}):Play()
-
-    TweenService:Create(bar, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
-        Size = UDim2.new(0, 0, 1, 0)
-    }):Play()
+    TweenService:Create(bar, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Size = UDim2.new(0, 0, 1, 0)}):Play()
 
     task.delay(duration, function()
         TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-            Position = UDim2.new(1, 300, 0, 0),
-            BackgroundTransparency = 1
+            Position = UDim2.new(1, 300, 0, 0), BackgroundTransparency = 1
         }):Play()
         TweenService:Create(icon, TweenInfo.new(0.25), {ImageTransparency = 1}):Play()
         TweenService:Create(title, TweenInfo.new(0.25), {TextTransparency = 1}):Play()
@@ -801,12 +784,7 @@ _G.HappyHubNotify = Notify
 local typingTokens = {}
 local function registerTyping(label, fullText, speed)
     if not label or not fullText then return end
-    table.insert(typingTokens, {
-        Label = label,
-        FullText = fullText,
-        Speed = speed or 0.02,
-        Token = {},
-    })
+    table.insert(typingTokens, { Label = label, FullText = fullText, Speed = speed or 0.02, Token = {} })
 end
 
 local function playTyping(tab)
@@ -826,18 +804,14 @@ local function playTyping(tab)
                     lbl.Text = string.sub(full, 1, i)
                     task.wait(entry.Speed)
                 end
-                if entry.Token == token and lbl and lbl.Parent then
-                    lbl.Text = full
-                end
+                if entry.Token == token and lbl and lbl.Parent then lbl.Text = full end
             end)
         end
     end
 end
 
 local function stopAllTyping()
-    for _, entry in ipairs(typingTokens) do
-        entry.Token = {}
-    end
+    for _, entry in ipairs(typingTokens) do entry.Token = {} end
 end
 
 local CSGOHub = {}
@@ -1119,7 +1093,7 @@ function CSGOHub:CreateWindow(title, subtitle)
     KeybindsTitle.TextSize = 11
     KeybindsTitle.TextColor3 = Colors.Accent
     KeybindsTitle.TextXAlignment = Enum.TextXAlignment.Left
-    KeybindsTitle.Text = "LEFT KEYBINDS"
+    KeybindsTitle.Text = isMobile and "MOBILE CONTROLS" or "LEFT KEYBINDS"
     KeybindsTitle.ZIndex = 6
     KeybindsTitle.Parent = KeybindsPanel
     register(reg.accentTexts, KeybindsTitle)
@@ -1160,34 +1134,27 @@ function CSGOHub:CreateWindow(title, subtitle)
         register(reg.subtexts, lbl)
     end
 
-    makeKeybindRow(KeybindsPanel, "T", "Toggle Aimbot", 1)
-    makeKeybindRow(KeybindsPanel, "O", "Toggle ESP", 2)
-    makeKeybindRow(KeybindsPanel, "F3", "Toggle UI", 3)
+    makeKeybindRow(KeybindsPanel, isMobile and "BTN" or "T", "Toggle Aimbot", 1)
+    makeKeybindRow(KeybindsPanel, isMobile and "BTN" or "O", "Toggle ESP", 2)
+    makeKeybindRow(KeybindsPanel, isMobile and "BTN" or "F3", "Toggle UI", 3)
 
     local DragBar = Instance.new("Frame")
     DragBar.Name = "DragBar"
     DragBar.Size = UDim2.new(0.12, 0, 0, 4)
     DragBar.AnchorPoint = Vector2.new(0.5, 1)
     DragBar.Position = UDim2.new(0.5, 0, 1, -6)
-    DragBar.BackgroundColor3 = Colors.Text
+    DragBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     DragBar.BackgroundTransparency = 0.3
     DragBar.BorderSizePixel = 0
     DragBar.Active = true
     DragBar.ZIndex = 4
     DragBar.Parent = MainFrame
     makeCorner(DragBar, 2)
-    register(reg.accentBgs, DragBar)
 
     local window = {
-        ScreenGui = ScreenGui,
-        MainFrame = MainFrame,
-        TabContainer = TabContainer,
-        ContentArea = ContentArea,
-        PlayerCard = PlayerCard,
-        Tabs = {},
-        ActiveTab = nil,
-        IsVisible = true,
-        Minimized = false,
+        ScreenGui = ScreenGui, MainFrame = MainFrame, TabContainer = TabContainer,
+        ContentArea = ContentArea, PlayerCard = PlayerCard, Tabs = {}, ActiveTab = nil,
+        IsVisible = true, Minimized = false,
     }
 
     local dragging, dragStart, startPos = false, nil, nil
@@ -1254,6 +1221,9 @@ function CSGOHub:CreateWindow(title, subtitle)
         window.IsVisible = true
         MainFrame.Visible = true
     end
+
+    window.HideUI = hideUI
+    window.ShowUI = showUI
 
     CloseButton.MouseEnter:Connect(function()
         TweenService:Create(CloseButton, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(40, 0, 0)}):Play()
@@ -1368,13 +1338,8 @@ function CSGOHub:CreateWindow(title, subtitle)
         register(reg.scrollBars, TabContent)
 
         local tab = {
-            Button = TabButton,
-            Content = TabContent,
-            Elements = {},
-            YOffset = 20,
-            Name = name,
-            TextRef = txt,
-            IconRef = icon,
+            Button = TabButton, Content = TabContent, Elements = {},
+            YOffset = 20, Name = name, TextRef = txt, IconRef = icon,
         }
 
         TabButton.MouseEnter:Connect(function()
@@ -1498,8 +1463,8 @@ function CSGOHub:CreateWindow(title, subtitle)
         registerTyping(l, text)
 
         local t = Instance.new("TextButton")
-        t.Size = UDim2.fromOffset(30, 30)
-        t.Position = UDim2.new(1, -30, 0.5, -15)
+        t.Size = UDim2.fromOffset(isMobile and 40 or 30, isMobile and 40 or 30)
+        t.Position = UDim2.new(1, isMobile and -40 or -30, 0.5, isMobile and -20 or -15)
         t.BackgroundColor3 = default and Colors.ToggleOn or Colors.ToggleOff
         t.BorderSizePixel = 0
         t.Text = ""
@@ -1551,7 +1516,8 @@ function CSGOHub:CreateWindow(title, subtitle)
         local sf = Instance.new("Frame")
         sf.Size = UDim2.new(1, 0, 0, 6)
         sf.Position = UDim2.new(0, 0, 1, -15)
-        sf.BackgroundColor3 = Colors.ToggleOff        sf.BorderSizePixel = 0
+        sf.BackgroundColor3 = Colors.ToggleOff
+        sf.BorderSizePixel = 0
         sf.ZIndex = 3
         sf.Parent = c
         makeCorner(sf, 3)
@@ -1566,56 +1532,69 @@ function CSGOHub:CreateWindow(title, subtitle)
         register(reg.sliderFills, f)
 
         local k = Instance.new("TextButton")
-        k.Size = UDim2.fromOffset(14, 14)
-        k.Position = UDim2.new((default-min)/(max-min), -7, 0.5, -7)
+        local kSize = isMobile and 20 or 14
+        k.Size = UDim2.fromOffset(kSize, kSize)
+        k.Position = UDim2.new((default-min)/(max-min), -kSize/2, 0.5, -kSize/2)
         k.BackgroundColor3 = Colors.Text
         k.BorderSizePixel = 0
         k.Text = ""
         k.AutoButtonColor = false
         k.ZIndex = 4
         k.Parent = sf
-        makeCorner(k, 7)
+        makeCorner(k, kSize/2)
         register(reg.sliderHandles, k)
 
         local val = default
         local drag = false
 
-        local function updateFromMouse()
-            local mp = UserInputService:GetMouseLocation()
-            local rx = mp.X - sf.AbsolutePosition.X
-            local p = math.clamp(rx / sf.AbsoluteSize.X, 0, 1)
-            val = math.floor((min + (max-min)*p) * 100) / 100
+        local function apply(v)
+            v = math.clamp(v, min, max)
+            val = math.floor(v * 100) / 100
+            local p = (val - min) / (max - min)
             f.Size = UDim2.new(p, 0, 1, 0)
-            k.Position = UDim2.new(p, -7, 0.5, -7)
+            k.Position = UDim2.new(p, -kSize/2, 0.5, -kSize/2)
             l.Text = text .. ": " .. tostring(val)
+        end
+
+        local function updateFromInput(posX)
+            local p = math.clamp((posX - sf.AbsolutePosition.X) / sf.AbsoluteSize.X, 0, 1)
+            apply(min + (max - min) * p)
             if cb then cb(val) end
         end
 
         k.InputBegan:Connect(function(i)
             if i.UserInputType == Enum.UserInputType.MouseButton1
-            or i.UserInputType == Enum.UserInputType.Touch then drag = true end
+            or i.UserInputType == Enum.UserInputType.Touch then
+                drag = true
+            end
+        end)
+        sf.InputBegan:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1
+            or i.UserInputType == Enum.UserInputType.Touch then
+                drag = true
+                updateFromInput(i.Position.X)
+            end
         end)
         UserInputService.InputEnded:Connect(function(i)
             if i.UserInputType == Enum.UserInputType.MouseButton1
-            or i.UserInputType == Enum.UserInputType.Touch then drag = false end
+            or i.UserInputType == Enum.UserInputType.Touch then
+                drag = false
+            end
         end)
         UserInputService.InputChanged:Connect(function(i)
-            if drag and (i.UserInputType == Enum.UserInputType.MouseMovement
-                or i.UserInputType == Enum.UserInputType.Touch) then
-                updateFromMouse()
+            if not drag then return end
+            if i.UserInputType == Enum.UserInputType.MouseMovement then
+                updateFromInput(UserInputService:GetMouseLocation().X)
+            elseif i.UserInputType == Enum.UserInputType.Touch then
+                updateFromInput(i.Position.X)
             end
         end)
 
         addElement(tab, c)
         return {
             SetValue = function(v)
-                v = math.clamp(v, min, max)
-                val = v
-                local p = (v - min) / (max - min)
-                f.Size = UDim2.new(p, 0, 1, 0)
-                k.Position = UDim2.new(p, -7, 0.5, -7)
-                l.Text = text .. ": " .. tostring(v)
-                if cb then cb(v) end
+                apply(v)
+                if cb then cb(val) end
             end,
             GetValue = function() return val end,
         }
@@ -1656,8 +1635,6 @@ function CSGOHub:CreateWindow(title, subtitle)
         b.ZIndex = 10
         b.Parent = c
         makeCorner(b, 8)
-        register(reg.panels, b)
-        register(reg.texts, b)
 
         local list = Instance.new("Frame")
         list.Size = UDim2.new(0.5, -10, 0, (#options * 36) + 10)
@@ -1670,7 +1647,6 @@ function CSGOHub:CreateWindow(title, subtitle)
         list.ClipsDescendants = false
         list.Parent = c
         makeCorner(list, 8)
-        register(reg.panels, list)
 
         local listPad = Instance.new("UIPadding")
         listPad.PaddingTop = UDim.new(0, 5)
@@ -1681,6 +1657,7 @@ function CSGOHub:CreateWindow(title, subtitle)
         local function closeDropdown() list.Visible = false end
         table.insert(openDropdowns, closeDropdown)
 
+        local optionButtons = {}
         for i, opt in ipairs(options) do
             local ob = Instance.new("TextButton")
             ob.Size = UDim2.new(1, -10, 0, 30)
@@ -1696,6 +1673,7 @@ function CSGOHub:CreateWindow(title, subtitle)
             ob.ZIndex = 51
             ob.Parent = list
             makeCorner(ob, 6)
+            table.insert(optionButtons, ob)
 
             ob.MouseEnter:Connect(function()
                 if ob.Text ~= sel then
@@ -1712,22 +1690,22 @@ function CSGOHub:CreateWindow(title, subtitle)
                 sel = opt
                 b.Text = opt
                 list.Visible = false
-                for _, ch in ipairs(list:GetChildren()) do
-                    if ch:IsA("TextButton") then
-                        if ch.Text == sel then
-                            ch.BackgroundColor3 = Colors.Accent
-                            ch.BackgroundTransparency = 0
-                            ch.TextColor3 = Colors.Background
-                        else
-                            ch.BackgroundColor3 = Colors.Panel
-                            ch.BackgroundTransparency = 0.2
-                            ch.TextColor3 = Colors.Text
-                        end
+                for _, ch in ipairs(optionButtons) do
+                    if ch.Text == sel then
+                        ch.BackgroundColor3 = Colors.Accent
+                        ch.BackgroundTransparency = 0
+                        ch.TextColor3 = Colors.Background
+                    else
+                        ch.BackgroundColor3 = Colors.Panel
+                        ch.BackgroundTransparency = 0.2
+                        ch.TextColor3 = Colors.Text
                     end
                 end
                 if cb then cb(sel) end
             end)
         end
+
+        register(reg.dropdowns, { b, list, optionButtons, function() return sel end })
 
         b.MouseEnter:Connect(function()
             TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3 = Colors.Hover}):Play()
@@ -1756,6 +1734,26 @@ function CSGOHub:CreateWindow(title, subtitle)
         end)
 
         addElement(tab, c)
+        return {
+            SetValue = function(v)
+                if not v then return end
+                sel = v
+                b.Text = v
+                for _, ch in ipairs(optionButtons) do
+                    if ch.Text == sel then
+                        ch.BackgroundColor3 = Colors.Accent
+                        ch.BackgroundTransparency = 0
+                        ch.TextColor3 = Colors.Background
+                    else
+                        ch.BackgroundColor3 = Colors.Panel
+                        ch.BackgroundTransparency = 0.2
+                        ch.TextColor3 = Colors.Text
+                    end
+                end
+                if cb then cb(sel) end
+            end,
+            GetValue = function() return sel end,
+        }
     end
 
     window._applyTheme = applyTheme
@@ -1764,11 +1762,11 @@ end
 
 local win = CSGOHub:CreateWindow("Happy Hub", "Rivals · Keyless · by replicatedman")
 
-local aimbotTab = win:CreateTab("Aimbot", AIM_ICON)
-local visualsTab = win:CreateTab("Visuals", VIS_ICON)
+local aimbotTab     = win:CreateTab("Aimbot", AIM_ICON)
+local visualsTab    = win:CreateTab("Visuals", VIS_ICON)
 local playerListTab = win:CreateTab("PlayerList", PLR_ICON)
-local configsTab = win:CreateTab("Configs", CFG_ICON)
-local miscTab = win:CreateTab("Misc", MISC_ICON)
+local miscTab       = win:CreateTab("Misc", MISC_ICON)
+local configsTab    = win:CreateTab("Configs", CFG_ICON)
 
 local aimbotToggleRef, espToggleRef
 
@@ -1786,30 +1784,48 @@ aimbotToggleRef = win:CreateToggle(aimbotTab, "Enabled (T)", AimbotSettings.Enab
     end
     Notify(v and "Aimbot enabled" or "Aimbot disabled")
 end)
+registerControl(AimbotSettings, "Enabled", aimbotToggleRef)
 
-win:CreateToggle(aimbotTab, "Silent Aim", AimbotSettings.SilentAim, function(v)
+local silentToggleRef = win:CreateToggle(aimbotTab, "Silent Aim", AimbotSettings.SilentAim, function(v)
     AimbotSettings.SilentAim = v
     silentAimEnabled = v
     Notify(v and "Silent Aim on" or "Silent Aim off")
 end)
+registerControl(AimbotSettings, "SilentAim", silentToggleRef)
 
-win:CreateSlider(aimbotTab, "FOV", 20, 800, AimbotSettings.FOV, function(v) AimbotSettings.FOV = v end)
-win:CreateSlider(aimbotTab, "Smoothing", 0.05, 1, AimbotSettings.Smoothing, function(v) AimbotSettings.Smoothing = v end)
-win:CreateSlider(aimbotTab, "Max Distance", 100, 2000, AimbotSettings.MaxDistance, function(v) AimbotSettings.MaxDistance = v end)
-win:CreateToggle(aimbotTab, "Wall Check", AimbotSettings.WallCheck, function(v) AimbotSettings.WallCheck = v end)
-win:CreateToggle(aimbotTab, "Team Check", AimbotSettings.TeamCheck, function(v) AimbotSettings.TeamCheck = v end)
-win:CreateToggle(aimbotTab, "Show FOV Circle", AimbotSettings.ShowFOV, function(v) AimbotSettings.ShowFOV = v end)
-win:CreateToggle(aimbotTab, "Rotate Rig", AimbotSettings.RotateRig, function(v) AimbotSettings.RotateRig = v end)
-win:CreateDropdown(aimbotTab, "Target", {"Head", "Torso", "Random"}, "Head", function(sel)
+local fovSliderRef = win:CreateSlider(aimbotTab, "FOV", 20, 800, AimbotSettings.FOV, function(v) AimbotSettings.FOV = v end)
+registerControl(AimbotSettings, "FOV", fovSliderRef)
+
+local smoothSliderRef = win:CreateSlider(aimbotTab, "Smoothing", 0.05, 1, AimbotSettings.Smoothing, function(v) AimbotSettings.Smoothing = v end)
+registerControl(AimbotSettings, "Smoothing", smoothSliderRef)
+
+local maxDistSliderRef = win:CreateSlider(aimbotTab, "Max Distance", 100, 2000, AimbotSettings.MaxDistance, function(v) AimbotSettings.MaxDistance = v end)
+registerControl(AimbotSettings, "MaxDistance", maxDistSliderRef)
+
+local wallToggleRef = win:CreateToggle(aimbotTab, "Wall Check", AimbotSettings.WallCheck, function(v) AimbotSettings.WallCheck = v end)
+registerControl(AimbotSettings, "WallCheck", wallToggleRef)
+
+local teamToggleRef = win:CreateToggle(aimbotTab, "Team Check", AimbotSettings.TeamCheck, function(v) AimbotSettings.TeamCheck = v end)
+registerControl(AimbotSettings, "TeamCheck", teamToggleRef)
+
+local fovCircleToggleRef = win:CreateToggle(aimbotTab, "Show FOV Circle", AimbotSettings.ShowFOV, function(v) AimbotSettings.ShowFOV = v end)
+registerControl(AimbotSettings, "ShowFOV", fovCircleToggleRef)
+
+local rotateRigToggleRef = win:CreateToggle(aimbotTab, "Rotate Rig", AimbotSettings.RotateRig, function(v) AimbotSettings.RotateRig = v end)
+registerControl(AimbotSettings, "RotateRig", rotateRigToggleRef)
+
+local targetDropdownRef = win:CreateDropdown(aimbotTab, "Target", {"Head", "Torso", "Random"}, "Head", function(sel)
     AimbotSettings.Target = sel
     Notify("Target: " .. sel)
 end)
+registerControl(AimbotSettings, "Target", targetDropdownRef)
 
 win:CreateLabel(aimbotTab, "Trigger Bot")
-win:CreateToggle(aimbotTab, "Trigger Bot", AimbotSettings.TriggerBot, function(v)
+
+local triggerBotToggleRef = win:CreateToggle(aimbotTab, "Trigger Bot", AimbotSettings.TriggerBot, function(v)
     AimbotSettings.TriggerBot = v
+    if triggerBotConn then triggerBotConn:Disconnect(); triggerBotConn = nil end
     if v then
-        if triggerBotConn then triggerBotConn:Disconnect() end
         triggerBotConn = RunService.RenderStepped:Connect(function()
             if not AimbotSettings.TriggerBot then return end
             local crosshair = getCrosshairPosition()
@@ -1826,16 +1842,17 @@ win:CreateToggle(aimbotTab, "Trigger Bot", AimbotSettings.TriggerBot, function(v
                 end)
             end
         end)
-    else
-        if triggerBotConn then triggerBotConn:Disconnect(); triggerBotConn = nil end
     end
 end)
-win:CreateSlider(aimbotTab, "Trigger Range", 20, 400, AimbotSettings.TriggerRange, function(v) AimbotSettings.TriggerRange = v end)
+registerControl(AimbotSettings, "TriggerBot", triggerBotToggleRef)
 
-win:CreateToggle(aimbotTab, "Auto Fire", AimbotSettings.AutoFire, function(v)
+local triggerRangeRef = win:CreateSlider(aimbotTab, "Trigger Range", 20, 400, AimbotSettings.TriggerRange, function(v) AimbotSettings.TriggerRange = v end)
+registerControl(AimbotSettings, "TriggerRange", triggerRangeRef)
+
+local autoFireToggleRef = win:CreateToggle(aimbotTab, "Auto Fire", AimbotSettings.AutoFire, function(v)
     AimbotSettings.AutoFire = v
+    if autoFireConn then autoFireConn:Disconnect(); autoFireConn = nil end
     if v then
-        if autoFireConn then autoFireConn:Disconnect() end
         autoFireConn = RunService.RenderStepped:Connect(function()
             if not AimbotSettings.AutoFire then return end
             local crosshair = getCrosshairPosition()
@@ -1847,10 +1864,9 @@ win:CreateToggle(aimbotTab, "Auto Fire", AimbotSettings.AutoFire, function(v)
                 VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
             end)
         end)
-    else
-        if autoFireConn then autoFireConn:Disconnect(); autoFireConn = nil end
     end
 end)
+registerControl(AimbotSettings, "AutoFire", autoFireToggleRef)
 
 win:CreateLabel(visualsTab, "Visual Settings")
 
@@ -1859,8 +1875,9 @@ espToggleRef = win:CreateToggle(visualsTab, "Rivals ESP (O)", VisualSettings.Riv
     if v then startRivalsESP() else stopRivalsESP() end
     Notify(v and "ESP enabled" or "ESP disabled")
 end)
+registerControl(VisualSettings, "RivalsESP", espToggleRef)
 
-win:CreateToggle(visualsTab, "Name Tags", VisualSettings.NameTags, function(v)
+local nameTagsToggleRef = win:CreateToggle(visualsTab, "Name Tags", VisualSettings.NameTags, function(v)
     VisualSettings.NameTags = v
     if v then
         startNameTagUpdater()
@@ -1870,14 +1887,19 @@ win:CreateToggle(visualsTab, "Name Tags", VisualSettings.NameTags, function(v)
         refreshAllRivalsESP()
     end
 end)
+registerControl(VisualSettings, "NameTags", nameTagsToggleRef)
 
 win:CreateLabel(miscTab, "Movement")
-win:CreateToggle(miscTab, "Infinite Jump", MiscSettings.InfJump, function(v)
+
+local infJumpToggleRef = win:CreateToggle(miscTab, "Infinite Jump", MiscSettings.InfJump, function(v)
     MiscSettings.InfJump = v
     Notify(v and "Infinite Jump enabled" or "Infinite Jump disabled")
 end)
-win:CreateToggle(miscTab, "Noclip", MovementSettings.Noclip, function(v)
+registerControl(MiscSettings, "InfJump", infJumpToggleRef)
+
+local noclipToggleRef = win:CreateToggle(miscTab, "Noclip", MovementSettings.Noclip, function(v)
     MovementSettings.Noclip = v
+    if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
     if v then
         noclipConn = RunService.Stepped:Connect(function()
             local c = LocalPlayer.Character
@@ -1887,23 +1909,25 @@ win:CreateToggle(miscTab, "Noclip", MovementSettings.Noclip, function(v)
                 end
             end
         end)
-    else
-        if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
     end
 end)
-win:CreateToggle(miscTab, "God Mode", MovementSettings.God, function(v)
+registerControl(MovementSettings, "Noclip", noclipToggleRef)
+
+local godToggleRef = win:CreateToggle(miscTab, "God Mode", MovementSettings.God, function(v)
     MovementSettings.God = v
+    if godConn then godConn:Disconnect(); godConn = nil end
     if v then
         godConn = RunService.Heartbeat:Connect(function()
             local hum = getHumanoid()
             if hum then hum.Health = hum.MaxHealth end
         end)
-    else
-        if godConn then godConn:Disconnect(); godConn = nil end
     end
 end)
-win:CreateToggle(miscTab, "Anti-AFK", MiscSettings.AntiAFK, function(v)
+registerControl(MovementSettings, "God", godToggleRef)
+
+local antiAFKToggleRef = win:CreateToggle(miscTab, "Anti-AFK", MiscSettings.AntiAFK, function(v)
     MiscSettings.AntiAFK = v
+    if antiAFKConn then antiAFKConn:Disconnect(); antiAFKConn = nil end
     if v then
         local vu = game:GetService("VirtualUser")
         antiAFKConn = LocalPlayer.Idled:Connect(function()
@@ -1911,65 +1935,60 @@ win:CreateToggle(miscTab, "Anti-AFK", MiscSettings.AntiAFK, function(v)
             task.wait(1)
             vu:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
         end)
-    else
-        if antiAFKConn then antiAFKConn:Disconnect(); antiAFKConn = nil end
     end
 end)
+registerControl(MiscSettings, "AntiAFK", antiAFKToggleRef)
 
 win:CreateLabel(configsTab, "Config Slots")
 
 local function snapshotSettings()
     return {
         Aimbot = {
-            Enabled = AimbotSettings.Enabled,
-            SilentAim = AimbotSettings.SilentAim,
-            FOV = AimbotSettings.FOV,
-            Smoothing = AimbotSettings.Smoothing,
-            WallCheck = AimbotSettings.WallCheck,
-            MaxDistance = AimbotSettings.MaxDistance,
-            Target = AimbotSettings.Target,
-            ShowFOV = AimbotSettings.ShowFOV,
-            TeamCheck = AimbotSettings.TeamCheck,
-            RotateRig = AimbotSettings.RotateRig,
-            TriggerBot = AimbotSettings.TriggerBot,
-            TriggerRange = AimbotSettings.TriggerRange,
+            Enabled = AimbotSettings.Enabled, SilentAim = AimbotSettings.SilentAim,
+            FOV = AimbotSettings.FOV, Smoothing = AimbotSettings.Smoothing,
+            WallCheck = AimbotSettings.WallCheck, MaxDistance = AimbotSettings.MaxDistance,
+            Target = AimbotSettings.Target, ShowFOV = AimbotSettings.ShowFOV,
+            TeamCheck = AimbotSettings.TeamCheck, RotateRig = AimbotSettings.RotateRig,
+            TriggerBot = AimbotSettings.TriggerBot, TriggerRange = AimbotSettings.TriggerRange,
             AutoFire = AimbotSettings.AutoFire,
         },
-        Visual = {
-            RivalsESP = VisualSettings.RivalsESP,
-            NameTags = VisualSettings.NameTags,
-        },
-        Misc = {
-            InfJump = MiscSettings.InfJump,
-            AntiAFK = MiscSettings.AntiAFK,
-        },
-        Movement = {
-            Noclip = MovementSettings.Noclip,
-            God = MovementSettings.God,
-        },
+        Visual = { RivalsESP = VisualSettings.RivalsESP, NameTags = VisualSettings.NameTags },
+        Misc = { InfJump = MiscSettings.InfJump, AntiAFK = MiscSettings.AntiAFK },
+        Movement = { Noclip = MovementSettings.Noclip, God = MovementSettings.God },
         Theme = currentThemeName,
     }
 end
 
+local function syncUIControls()
+    suppressNotify = true
+    for _, entry in ipairs(UIControls) do
+        local val = entry.table[entry.key]
+        if val ~= nil and entry.control then
+            if entry.control.SetState then
+                entry.control.SetState(val)
+            elseif entry.control.SetValue then
+                entry.control.SetValue(val)
+            end
+        end
+    end
+    suppressNotify = false
+end
+
 local function applyConfig(data)
     if not data then return end
-    if data.Aimbot then
-        for k, v in pairs(data.Aimbot) do AimbotSettings[k] = v end
-    end
-    if data.Visual then
-        for k, v in pairs(data.Visual) do VisualSettings[k] = v end
-    end
-    if data.Misc then
-        for k, v in pairs(data.Misc) do MiscSettings[k] = v end
-    end
-    if data.Movement then
-        for k, v in pairs(data.Movement) do MovementSettings[k] = v end
-    end
-    if data.Theme and THEMES[data.Theme] then
+    if data.Aimbot then for k, v in pairs(data.Aimbot) do AimbotSettings[k] = v end end
+    if data.Visual then for k, v in pairs(data.Visual) do VisualSettings[k] = v end end
+    if data.Misc then for k, v in pairs(data.Misc) do MiscSettings[k] = v end end
+    if data.Movement then for k, v in pairs(data.Movement) do MovementSettings[k] = v end end
+    if data.Theme and THEMES[data.Theme] and data.Theme ~= currentThemeName then
         currentThemeName = data.Theme
         for k, v in pairs(THEMES[data.Theme]) do Colors[k] = v end
         applyTheme()
+        if hasFileSystem then
+            pcall(function() writefile("HappyHub/theme.txt", currentThemeName) end)
+        end
     end
+    syncUIControls()
 end
 
 for i = 1, 3 do
@@ -2099,12 +2118,18 @@ for _, tName in ipairs(themeNames) do
     register(reg.subtexts, themeLbl)
 
     themeBtn.MouseButton1Click:Connect(function()
+        if currentThemeName == tName then return end
         currentThemeName = tName
         for k, v in pairs(THEMES[tName]) do Colors[k] = v end
         applyTheme()
+        if hasFileSystem then
+            pcall(function() writefile("HappyHub/theme.txt", currentThemeName) end)
+        end
         Notify("Theme: " .. tName)
     end)
 end
+
+configsTab.Content.CanvasSize = UDim2.new(0, 0, 0, configsTab.YOffset + 30)
 
 win:CreateLabel(playerListTab, "Players in Server")
 
@@ -2201,30 +2226,73 @@ UserInputService.InputBegan:Connect(function(input, gp)
     if UserInputService:GetFocusedTextBox() then return end
     if input.KeyCode == Enum.KeyCode.T then
         local newState = not AimbotSettings.Enabled
-        if aimbotToggleRef then aimbotToggleRef.SetState(newState, true) end
-        AimbotSettings.Enabled = newState
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not newState then
-            lockedTarget = nil
-            if hum then hum.AutoRotate = true end
-        else
-            if hum then hum.AutoRotate = false end
-        end
+        if aimbotToggleRef then aimbotToggleRef.SetState(newState) end
         Notify(newState and "Aimbot enabled (T)" or "Aimbot disabled (T)")
     elseif input.KeyCode == Enum.KeyCode.O then
         local newState = not VisualSettings.RivalsESP
-        if espToggleRef then espToggleRef.SetState(newState, true) end
-        VisualSettings.RivalsESP = newState
-        if newState then startRivalsESP() else stopRivalsESP() end
+        if espToggleRef then espToggleRef.SetState(newState) end
         Notify(newState and "ESP enabled (O)" or "ESP disabled (O)")
     end
 end)
 
+if isMobile then
+    local MobileBar = Instance.new("Frame")
+    MobileBar.Name = "HappyHubMobileBar"
+    MobileBar.Size = UDim2.fromOffset(180, 54)
+    MobileBar.Position = UDim2.new(0, 10, 0, 10)
+    MobileBar.BackgroundColor3 = Colors.Panel
+    MobileBar.BackgroundTransparency = 0.15
+    MobileBar.BorderSizePixel = 0
+    MobileBar.ZIndex = 80
+    MobileBar.Parent = win.ScreenGui
+    makeCorner(MobileBar, 10)
+    register(reg.panels, MobileBar)
+
+    local barLayout = Instance.new("UIListLayout")
+    barLayout.FillDirection = Enum.FillDirection.Horizontal
+    barLayout.Padding = UDim.new(0, 6)
+    barLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    barLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+    barLayout.Parent = MobileBar
+
+    local function makeMobileBtn(label, color, cb)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.fromOffset(52, 42)
+        b.BackgroundColor3 = color
+        b.Text = label
+        b.TextColor3 = Colors.Background
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 12
+        b.BorderSizePixel = 0
+        b.AutoButtonColor = true
+        b.ZIndex = 81
+        b.Parent = MobileBar
+        makeCorner(b, 8)
+        b.MouseButton1Click:Connect(cb)
+        return b
+    end
+
+    makeMobileBtn("AIM", Colors.Panel, function()
+        local newState = not AimbotSettings.Enabled
+        if aimbotToggleRef then aimbotToggleRef.SetState(newState) end
+        Notify(newState and "Aimbot enabled" or "Aimbot disabled")
+    end)
+
+    makeMobileBtn("ESP", Colors.Panel, function()
+        local newState = not VisualSettings.RivalsESP
+        if espToggleRef then espToggleRef.SetState(newState) end
+        Notify(newState and "ESP enabled" or "ESP disabled")
+    end)
+
+    makeMobileBtn("UI", Colors.Panel, function()
+        if win.IsVisible then win.HideUI() else win.ShowUI() end
+    end)
+end
+
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(1)
-    if MovementSettings.Noclip and noclipConn then
-        noclipConn:Disconnect()
+    if MovementSettings.Noclip then
+        if noclipConn then noclipConn:Disconnect() end
         noclipConn = RunService.Stepped:Connect(function()
             local c = LocalPlayer.Character
             if c then
@@ -2234,8 +2302,8 @@ LocalPlayer.CharacterAdded:Connect(function()
             end
         end)
     end
-    if MovementSettings.God and godConn then
-        godConn:Disconnect()
+    if MovementSettings.God then
+        if godConn then godConn:Disconnect() end
         godConn = RunService.Heartbeat:Connect(function()
             local hum = getHumanoid()
             if hum then hum.Health = hum.MaxHealth end
@@ -2277,10 +2345,7 @@ local function onRenderStep()
                 local camLook = Camera.CFrame.LookVector
                 local targetYaw = math.atan2(-camLook.X, -camLook.Z)
                 local currentYaw = math.atan2(-hrp.CFrame.LookVector.X, -hrp.CFrame.LookVector.Z)
-                local diff = math.atan2(
-                    math.sin(targetYaw - currentYaw),
-                    math.cos(targetYaw - currentYaw)
-                )
+                local diff = math.atan2(math.sin(targetYaw - currentYaw), math.cos(targetYaw - currentYaw))
                 local newYaw = currentYaw + diff * 0.4
                 local look = Vector3.new(-math.sin(newYaw), 0, -math.cos(newYaw))
                 local right = Vector3.new(math.cos(newYaw), 0, -math.sin(newYaw))
@@ -2293,5 +2358,32 @@ local function onRenderStep()
 end
 
 RunService:BindToRenderStep("HappyHub", Enum.RenderPriority.Camera.Value + 1, onRenderStep)
+
+local function setupAutoReload()
+    local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+    if not queue then return end
+    local src = nil
+    pcall(function()
+        local genv = getgenv and getgenv() or _G
+        src = genv.__HAPPYHUB_SOURCE
+    end)
+    if not src then
+        pcall(function()
+            local info = debug.getinfo(1, "s")
+            if info and info.source then
+                local s = info.source
+                if s:sub(1, 1) == "@" or s:sub(1, 1) == "=" then
+                    s = s:sub(2)
+                    if isfile and isfile(s) then src = readfile(s) end
+                end
+            end
+        end)
+    end
+    if src and #src > 100 then
+        pcall(function() queue(src) end)
+    end
+end
+
+setupAutoReload()
 
 Notify("Happy Hub loaded")
