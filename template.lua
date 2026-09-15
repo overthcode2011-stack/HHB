@@ -28,10 +28,10 @@ local NOTIF_SOUND_ID  = "rbxassetid://97455084935031"
 
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
-local PANEL_SIZE_OPEN = isMobile and UDim2.new(0.6, 0, 0.8, 0) or UDim2.new(0, 700, 0, 450)
-local PANEL_SIZE_MIN  = isMobile and UDim2.new(0.6, 0, 0, 56)  or UDim2.new(0, 700, 0, 56)
-local PANEL_POSITION  = UDim2.new(0.5, 0, 0.5, 0)
-local PANEL_ANCHOR    = Vector2.new(0.5, 0.5)
+local PANEL_SIZE_OPEN    = isMobile and UDim2.new(0.6, 0, 0.8, 0) or UDim2.new(0, 700, 0, 450)
+local PANEL_SIZE_MIN     = isMobile and UDim2.new(0.6, 0, 0, 56)  or UDim2.new(0, 700, 0, 56)
+local PANEL_POSITION     = UDim2.new(0.5, 0, 0.5, 0)
+local PANEL_ANCHOR       = Vector2.new(0.5, 0.5)
 local PANEL_TRANSPARENCY = 0.15
 
 local SIDEBAR_RATIO = 0.32
@@ -104,9 +104,10 @@ local UIControls = {}
 local openDropdowns = {}
 local typingTokens = {}
 local notifOrder = 0
-local screenGui, mainFrame, tabContainer, contentArea, playerCard
+local screenGui, mainFrame, tabContainer, contentArea, playerCard, keybindsPanel, dragBar
 local toggleBtn = nil
 local currentWindow = nil
+local configsTabRef = nil
 
 local function register(list, obj)
     table.insert(list, obj)
@@ -354,6 +355,7 @@ function Library:SyncUIControls() syncUIControls() end
 function Library:RegisterControl(t, key, ctrl) registerControl(t, key, ctrl) end
 function Library:GetScreenGui() return screenGui end
 function Library:GetWindow() return currentWindow end
+function Library:GetConfigsTab() return configsTabRef end
 function Library:IsMobile() return isMobile end
 function Library:SuppressNotify() suppressNotify = true end
 function Library:UnsuppressNotify() suppressNotify = false end
@@ -676,18 +678,18 @@ function Library:CreateWindow(title, subtitle)
         if ok then pfp.Image = thumb end
     end)
 
-    local KeybindsPanel = Instance.new("Frame")
-    KeybindsPanel.Name = "KeybindsPanel"
-    KeybindsPanel.Size = UDim2.new(0, 140, 0, 128)
-    KeybindsPanel.Position = UDim2.new(1, 10, 0, 70)
-    KeybindsPanel.BackgroundColor3 = Colors.Panel
-    KeybindsPanel.BackgroundTransparency = 0.15
-    KeybindsPanel.BorderSizePixel = 0
-    KeybindsPanel.ZIndex = 5
-    KeybindsPanel.Visible = not isMobile
-    KeybindsPanel.Parent = mainFrame
-    makeCorner(KeybindsPanel, 10)
-    register(reg.panels, KeybindsPanel)
+    keybindsPanel = Instance.new("Frame")
+    keybindsPanel.Name = "KeybindsPanel"
+    keybindsPanel.Size = UDim2.new(0, 140, 0, 128)
+    keybindsPanel.Position = UDim2.new(1, 10, 0, 70)
+    keybindsPanel.BackgroundColor3 = Colors.Panel
+    keybindsPanel.BackgroundTransparency = 0.15
+    keybindsPanel.BorderSizePixel = 0
+    keybindsPanel.ZIndex = 5
+    keybindsPanel.Visible = not isMobile
+    keybindsPanel.Parent = mainFrame
+    makeCorner(keybindsPanel, 10)
+    register(reg.panels, keybindsPanel)
 
     local KeybindsTitle = Instance.new("TextLabel")
     KeybindsTitle.Size = UDim2.new(1, -16, 0, 20)
@@ -699,7 +701,7 @@ function Library:CreateWindow(title, subtitle)
     KeybindsTitle.TextXAlignment = Enum.TextXAlignment.Left
     KeybindsTitle.Text = "LEFT KEYBINDS"
     KeybindsTitle.ZIndex = 6
-    KeybindsTitle.Parent = KeybindsPanel
+    KeybindsTitle.Parent = keybindsPanel
     register(reg.accentTexts, KeybindsTitle)
 
     local function makeKeybindRow(parent, key, label, order)
@@ -736,22 +738,22 @@ function Library:CreateWindow(title, subtitle)
         register(reg.subtexts, lbl)
     end
 
-    makeKeybindRow(KeybindsPanel, "T", "Toggle Aimbot", 1)
-    makeKeybindRow(KeybindsPanel, "O", "Toggle ESP", 2)
-    makeKeybindRow(KeybindsPanel, "F3", "Toggle UI", 3)
+    makeKeybindRow(keybindsPanel, "T", "Toggle Aimbot", 1)
+    makeKeybindRow(keybindsPanel, "O", "Toggle ESP", 2)
+    makeKeybindRow(keybindsPanel, "F3", "Toggle UI", 3)
 
-    local DragBar = Instance.new("Frame")
-    DragBar.Name = "DragBar"
-    DragBar.Size = UDim2.new(0.12, 0, 0, 4)
-    DragBar.AnchorPoint = Vector2.new(0.5, 1)
-    DragBar.Position = UDim2.new(0.5, 0, 1, -6)
-    DragBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    DragBar.BackgroundTransparency = 0.3
-    DragBar.BorderSizePixel = 0
-    DragBar.Active = true
-    DragBar.ZIndex = 4
-    DragBar.Parent = mainFrame
-    makeCorner(DragBar, 2)
+    dragBar = Instance.new("Frame")
+    dragBar.Name = "DragBar"
+    dragBar.Size = UDim2.new(0.12, 0, 0, 4)
+    dragBar.AnchorPoint = Vector2.new(0.5, 1)
+    dragBar.Position = UDim2.new(0.5, 0, 1, -6)
+    dragBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    dragBar.BackgroundTransparency = 0.3
+    dragBar.BorderSizePixel = 0
+    dragBar.Active = true
+    dragBar.ZIndex = 4
+    dragBar.Parent = mainFrame
+    makeCorner(dragBar, 2)
 
     local window = {
         ScreenGui = screenGui, MainFrame = mainFrame, TabContainer = tabContainer,
@@ -783,17 +785,17 @@ function Library:CreateWindow(title, subtitle)
             beginDrag(input)
         end
     end)
-    DragBar.InputBegan:Connect(function(input)
+    dragBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             beginDrag(input)
         end
     end)
-    DragBar.MouseEnter:Connect(function()
-        TweenService:Create(DragBar, TweenInfo.new(0.15), {BackgroundTransparency = 0}):Play()
+    dragBar.MouseEnter:Connect(function()
+        TweenService:Create(dragBar, TweenInfo.new(0.15), {BackgroundTransparency = 0}):Play()
     end)
-    DragBar.MouseLeave:Connect(function()
-        TweenService:Create(DragBar, TweenInfo.new(0.15), {BackgroundTransparency = 0.3}):Play()
+    dragBar.MouseLeave:Connect(function()
+        TweenService:Create(dragBar, TweenInfo.new(0.15), {BackgroundTransparency = 0.3}):Play()
     end)
     UserInputService.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement
@@ -843,11 +845,36 @@ function Library:CreateWindow(title, subtitle)
     MinimizeButton.MouseButton1Click:Connect(function()
         closeAllDropdowns()
         window.Minimized = not window.Minimized
-        local targetSize = window.Minimized and PANEL_SIZE_MIN or PANEL_SIZE_OPEN
-        local targetTransparency = window.Minimized and 1 or PANEL_TRANSPARENCY
-        local tweenInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-        TweenService:Create(mainFrame, tweenInfo, {Size = targetSize}):Play()
-        TweenService:Create(mainFrame, tweenInfo, {BackgroundTransparency = targetTransparency}):Play()
+
+        if window.Minimized then
+            tabContainer.Visible = false
+            contentArea.Visible = false
+            playerCard.Visible = false
+            keybindsPanel.Visible = false
+            dragBar.Visible = false
+            TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+                Size = PANEL_SIZE_MIN
+            }):Play()
+        else
+            local vp = workspace.CurrentCamera.ViewportSize
+            local newW = isMobile and (vp.X * 0.6) or 700
+            local newH = isMobile and (vp.Y * 0.8) or 450
+            local maxOffX = math.max(0, (vp.X - newW) / 2)
+            local maxOffY = math.max(0, (vp.Y - newH) / 2)
+            local offX = math.clamp(mainFrame.Position.X.Offset, -maxOffX, maxOffX)
+            local offY = math.clamp(mainFrame.Position.Y.Offset, -maxOffY, maxOffY)
+            mainFrame.Position = UDim2.new(0.5, offX, 0.5, offY)
+
+            tabContainer.Visible = true
+            contentArea.Visible = true
+            playerCard.Visible = true
+            keybindsPanel.Visible = not isMobile
+            dragBar.Visible = true
+
+            TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+                Size = PANEL_SIZE_OPEN
+            }):Play()
+        end
     end)
 
     UserInputService.InputBegan:Connect(function(input, gp)
@@ -860,6 +887,10 @@ function Library:CreateWindow(title, subtitle)
     end)
 
     function window:CreateTab(name, iconId, isConfigs)
+        if name == "Configs" and self.ConfigsTab then
+            return self.ConfigsTab
+        end
+
         local TabButton = Instance.new("TextButton")
         TabButton.Size = UDim2.new(1, 0, 0, isMobile and 36 or 40)
         TabButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
@@ -942,9 +973,10 @@ function Library:CreateWindow(title, subtitle)
         end)
         TabButton.MouseButton1Click:Connect(function() self:SelectTab(tab) end)
 
-        if isConfigs then
+        if isConfigs or name == "Configs" then
             TabButton.LayoutOrder = 999999
             self.ConfigsTab = tab
+            configsTabRef = tab
         else
             TabButton.LayoutOrder = #self.Tabs + 1
             table.insert(self.Tabs, tab)
