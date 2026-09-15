@@ -28,13 +28,14 @@ local NOTIF_SOUND_ID  = "rbxassetid://97455084935031"
 
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
-local PANEL_SIZE     = isMobile and UDim2.new(0.65, 0, 0.8, 0) or UDim2.new(0, 700, 0, 450)
-local PANEL_POSITION = isMobile and UDim2.new(0.5, 0, 0.5, 0) or UDim2.new(0.5, -350, 0.5, -225)
-local PANEL_ANCHOR   = isMobile and Vector2.new(0.5, 0.5) or Vector2.new(0, 0)
+local PANEL_SIZE_OPEN    = isMobile and UDim2.new(0.6, 0, 0.8, 0) or UDim2.new(0, 700, 0, 450)
+local PANEL_SIZE_MIN     = isMobile and UDim2.new(0.6, 0, 0, 56)  or UDim2.new(0, 700, 0, 56)
+local PANEL_POSITION     = UDim2.new(0.5, 0, 0.5, 0)
+local PANEL_ANCHOR       = Vector2.new(0.5, 0.5)
 
-local SIDEBAR_W = isMobile and 0.32 or 0
-local SIDEBAR_PX = isMobile and 0 or 200
-local SIDEBAR_PAD = isMobile and 6 or 8
+local SIDEBAR_RATIO  = 0.32
+local SIDEBAR_FIXED  = 200
+local SIDEBAR_PAD    = isMobile and 6 or 8
 
 local typingSound = Instance.new("Sound")
 typingSound.SoundId = TYPING_SOUND_ID
@@ -385,7 +386,7 @@ function Library:CreateWindow(title, subtitle)
 
     mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = PANEL_SIZE
+    mainFrame.Size = PANEL_SIZE_OPEN
     mainFrame.Position = PANEL_POSITION
     mainFrame.AnchorPoint = PANEL_ANCHOR
     mainFrame.BackgroundColor3 = Colors.Background
@@ -536,16 +537,22 @@ function Library:CreateWindow(title, subtitle)
     CloseIcon.ZIndex = 5
     CloseIcon.Parent = CloseButton
 
+    local sidebarSize
+    if isMobile then
+        sidebarSize = UDim2.new(SIDEBAR_RATIO, 0, 1, -145)
+    else
+        sidebarSize = UDim2.new(0, SIDEBAR_FIXED, 1, -145)
+    end
     tabContainer = Instance.new("ScrollingFrame")
     tabContainer.Name = "TabContainer"
-    tabContainer.Size = UDim2.new(SIDEBAR_W, SIDEBAR_PX, 1, -145)
+    tabContainer.Size = sidebarSize
     tabContainer.Position = UDim2.new(0, SIDEBAR_PAD, 0, 61)
     tabContainer.BackgroundColor3 = Colors.Panel
     tabContainer.BackgroundTransparency = 0.2
     tabContainer.BorderSizePixel = 0
     tabContainer.ClipsDescendants = true
     tabContainer.ZIndex = 2
-    tabContainer.ScrollBarThickness = isMobile and 4 or 3
+    tabContainer.ScrollBarThickness = isMobile and 5 or 3
     tabContainer.ScrollBarImageColor3 = Colors.Accent
     tabContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
     tabContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -568,17 +575,17 @@ function Library:CreateWindow(title, subtitle)
     tabPad.PaddingRight = UDim.new(0, isMobile and 6 or 10)
     tabPad.Parent = tabContainer
 
-    contentArea = Instance.new("Frame")
-    contentArea.Size = UDim2.new(1, -(SIDEBAR_W * 0 - 0), 1, -73)
+    local contentSize, contentPos
     if isMobile then
-        contentArea.Size = UDim2.new(1, -(SIDEBAR_PAD * 2), 1, -73)
-        contentArea.Position = UDim2.new(0, SIDEBAR_PAD, 0, 61)
-        contentArea.Size = UDim2.new(1 - SIDEBAR_W, -(SIDEBAR_PAD * 2), 1, -73)
-        contentArea.Position = UDim2.new(SIDEBAR_W, SIDEBAR_PAD, 0, 61)
+        contentSize = UDim2.new(1 - SIDEBAR_RATIO, -SIDEBAR_PAD * 2, 1, -73)
+        contentPos  = UDim2.new(SIDEBAR_RATIO, SIDEBAR_PAD, 0, 61)
     else
-        contentArea.Size = UDim2.new(1, -224, 1, -73)
-        contentArea.Position = UDim2.new(0, 216, 0, 61)
+        contentSize = UDim2.new(1, -224, 1, -73)
+        contentPos  = UDim2.new(0, 216, 0, 61)
     end
+    contentArea = Instance.new("Frame")
+    contentArea.Size = contentSize
+    contentArea.Position = contentPos
     contentArea.BackgroundColor3 = Colors.Background
     contentArea.BackgroundTransparency = 0.4
     contentArea.BorderSizePixel = 0
@@ -589,10 +596,16 @@ function Library:CreateWindow(title, subtitle)
     register(reg.panels, contentArea)
     reg.contentArea = contentArea
 
+    local cardSize
+    if isMobile then
+        cardSize = UDim2.new(SIDEBAR_RATIO, 0, 0, 60)
+    else
+        cardSize = UDim2.new(0, SIDEBAR_FIXED, 0, 64)
+    end
     playerCard = Instance.new("Frame")
     playerCard.Name = "PlayerCard"
-    playerCard.Size = UDim2.new(SIDEBAR_W, SIDEBAR_PX, 0, 64)
-    playerCard.Position = UDim2.new(0, SIDEBAR_PAD, 1, -72)
+    playerCard.Size = cardSize
+    playerCard.Position = UDim2.new(0, SIDEBAR_PAD, 1, -68)
     playerCard.BackgroundColor3 = Colors.Panel
     playerCard.BackgroundTransparency = 0.15
     playerCard.BorderSizePixel = 0
@@ -602,7 +615,7 @@ function Library:CreateWindow(title, subtitle)
     register(reg.panels, playerCard)
     reg.playerCard = playerCard
 
-    local pfpSize = isMobile and 36 or 44
+    local pfpSize = isMobile and 34 or 44
     local pfpFrame = Instance.new("Frame")
     pfpFrame.Size = UDim2.fromOffset(pfpSize, pfpSize)
     pfpFrame.Position = UDim2.new(0, isMobile and 6 or 10, 0.5, -pfpSize/2)
@@ -631,7 +644,7 @@ function Library:CreateWindow(title, subtitle)
     local nameOffsetX = pfpSize + (isMobile and 12 or 18)
     local pfpName = Instance.new("TextLabel")
     pfpName.Size = UDim2.new(1, -nameOffsetX - 6, 0, 18)
-    pfpName.Position = UDim2.new(0, nameOffsetX, 0, isMobile and 12 or 14)
+    pfpName.Position = UDim2.new(0, nameOffsetX, 0, isMobile and 10 or 14)
     pfpName.BackgroundTransparency = 1
     pfpName.Font = Enum.Font.GothamBold
     pfpName.TextSize = isMobile and 11 or 13
@@ -743,6 +756,7 @@ function Library:CreateWindow(title, subtitle)
         ScreenGui = screenGui, MainFrame = mainFrame, TabContainer = tabContainer,
         ContentArea = contentArea, PlayerCard = playerCard, Tabs = {}, ActiveTab = nil,
         IsVisible = true, Minimized = false, ConfigsTab = nil, FirstSelected = false,
+        _mobileButtons = {},
     }
 
     local dragging, dragStart, startPos = false, nil, nil
@@ -825,29 +839,15 @@ function Library:CreateWindow(title, subtitle)
         TweenService:Create(MinimizeButton, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(15, 15, 15)}):Play()
     end)
 
+    local originalTransparency = 0.15
     MinimizeButton.MouseButton1Click:Connect(function()
         closeAllDropdowns()
         window.Minimized = not window.Minimized
-        if window.Minimized then
-            tabContainer.Visible = false
-            contentArea.Visible = false
-            playerCard.Visible = false
-            KeybindsPanel.Visible = false
-            DragBar.Visible = false
-            TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-                Size = isMobile and UDim2.new(0.65, 0, 0, 56) or UDim2.new(0, 700, 0, 56)
-            }):Play()
-        else
-            TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-                Size = PANEL_SIZE
-            }):Play()
-            task.wait(0.35)
-            tabContainer.Visible = true
-            contentArea.Visible = true
-            playerCard.Visible = true
-            KeybindsPanel.Visible = not isMobile
-            DragBar.Visible = true
-        end
+        local targetSize = window.Minimized and PANEL_SIZE_MIN or PANEL_SIZE_OPEN
+        local targetTransparency = window.Minimized and 1 or originalTransparency
+        local tweenInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+        TweenService:Create(mainFrame, tweenInfo, {Size = targetSize}):Play()
+        TweenService:Create(mainFrame, tweenInfo, {BackgroundTransparency = targetTransparency}):Play()
     end)
 
     UserInputService.InputBegan:Connect(function(input, gp)
@@ -861,12 +861,12 @@ function Library:CreateWindow(title, subtitle)
 
     function window:CreateTab(name, iconId, isConfigs)
         local TabButton = Instance.new("TextButton")
-        TabButton.Size = UDim2.new(1, 0, 0, isMobile and 44 or 40)
+        TabButton.Size = UDim2.new(1, 0, 0, isMobile and 36 or 40)
         TabButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         TabButton.BackgroundTransparency = 0.35
         TabButton.BorderSizePixel = 0
         TabButton.Font = Enum.Font.GothamSemibold
-        TabButton.TextSize = isMobile and 12 or 15
+        TabButton.TextSize = isMobile and 11 or 15
         TabButton.TextColor3 = Colors.Text
         TabButton.Text = ""
         TabButton.TextXAlignment = Enum.TextXAlignment.Left
@@ -875,11 +875,11 @@ function Library:CreateWindow(title, subtitle)
         TabButton.Parent = self.TabContainer
         makeCorner(TabButton, 8)
 
-        local iconSize = isMobile and 18 or 22
+        local iconSize = isMobile and 16 or 22
         local icon = Instance.new("ImageLabel")
         icon.Name = "TabIcon"
         icon.Size = UDim2.fromOffset(iconSize, iconSize)
-        icon.Position = UDim2.new(0, isMobile and 10 or 14, 0.5, -iconSize/2)
+        icon.Position = UDim2.new(0, isMobile and 8 or 14, 0.5, -iconSize/2)
         icon.BackgroundTransparency = 1
         icon.Image = iconId and ("rbxassetid://" .. tostring(iconId)) or ""
         icon.ImageColor3 = Colors.TextSecondary
@@ -889,11 +889,11 @@ function Library:CreateWindow(title, subtitle)
 
         local txt = Instance.new("TextLabel")
         txt.Name = "TabText"
-        txt.Size = UDim2.new(1, isMobile and -34 or -55, 1, 0)
-        txt.Position = UDim2.new(0, isMobile and 34 or 55, 0, 0)
+        txt.Size = UDim2.new(1, isMobile and -30 or -55, 1, 0)
+        txt.Position = UDim2.new(0, isMobile and 30 or 55, 0, 0)
         txt.BackgroundTransparency = 1
         txt.Font = Enum.Font.GothamSemibold
-        txt.TextSize = isMobile and 12 or 15
+        txt.TextSize = isMobile and 11 or 15
         txt.TextColor3 = Colors.Text
         txt.TextXAlignment = Enum.TextXAlignment.Left
         txt.Text = name
@@ -1408,6 +1408,113 @@ function Library:CreateWindow(title, subtitle)
         if tMoved then tMoved = false; return end
         if window.IsVisible then hideUI() else showUI() end
     end)
+
+    function window:CreateMobileButton(label, callback)
+        if not isMobile then return nil end
+        if #self._mobileButtons >= 3 then
+            warn("[HappyHub] Max 3 mobile buttons allowed.")
+            return nil
+        end
+        local index = #self._mobileButtons + 1
+        local size = 58
+        local gap = 8
+        local baseX = -(toggleBtnSize + 20)
+        local baseY = -(toggleBtnSize + 30) - (size + gap) * index
+
+        local btn = Instance.new("TextButton")
+        btn.Name = "HappyHubMobileBtn" .. index
+        btn.Size = UDim2.fromOffset(size, size)
+        btn.Position = UDim2.new(1, baseX + (toggleBtnSize - size) / 2, 1, baseY)
+        btn.BackgroundColor3 = Colors.Panel
+        btn.BackgroundTransparency = 0.15
+        btn.Text = tostring(label or "BTN")
+        btn.TextColor3 = Colors.Accent
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = 12
+        btn.TextWrapped = true
+        btn.TextScaled = false
+        btn.BorderSizePixel = 0
+        btn.AutoButtonColor = false
+        btn.ZIndex = 90
+        btn.Parent = screenGui
+        makeCorner(btn, 14)
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Colors.Accent
+        stroke.Thickness = 1
+        stroke.Transparency = 0.5
+        stroke.Parent = btn
+        register(reg.panels, btn)
+
+        local isDragging = false
+        local wasMoved = false
+        local dragStart, startPos
+        btn.InputBegan:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1
+            or i.UserInputType == Enum.UserInputType.Touch then
+                isDragging = true
+                wasMoved = false
+                dragStart = i.Position
+                startPos = btn.Position
+            end
+        end)
+        UserInputService.InputChanged:Connect(function(i)
+            if not isDragging then return end
+            if i.UserInputType == Enum.UserInputType.MouseMovement
+            or i.UserInputType == Enum.UserInputType.Touch then
+                local d = i.Position - dragStart
+                if d.Magnitude > 6 then wasMoved = true end
+                btn.Position = UDim2.new(
+                    startPos.X.Scale, startPos.X.Offset + d.X,
+                    startPos.Y.Scale, startPos.Y.Offset + d.Y
+                )
+            end
+        end)
+        UserInputService.InputEnded:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1
+            or i.UserInputType == Enum.UserInputType.Touch then
+                isDragging = false
+            end
+        end)
+        btn.MouseButton1Click:Connect(function()
+            if wasMoved then wasMoved = false; return end
+            if callback then pcall(callback) end
+        end)
+
+        local handle = {
+            _btn = btn,
+            _index = index,
+            _active = false,
+            SetText = function(_, text)
+                btn.Text = tostring(text or "")
+            end,
+            GetText = function()
+                return btn.Text
+            end,
+            SetActive = function(_, active)
+                handle._active = active and true or false
+                if handle._active then
+                    btn.BackgroundColor3 = Colors.Accent
+                    btn.TextColor3 = Colors.Background
+                    stroke.Color = Colors.Accent
+                    stroke.Transparency = 0
+                else
+                    btn.BackgroundColor3 = Colors.Panel
+                    btn.TextColor3 = Colors.Accent
+                    stroke.Color = Colors.Accent
+                    stroke.Transparency = 0.5
+                end
+            end,
+            IsActive = function()
+                return handle._active
+            end,
+            Destroy = function()
+                if btn and btn.Parent then btn:Destroy() end
+            end,
+        }
+
+        table.insert(self._mobileButtons, handle)
+        return handle
+    end
 
     window:CreateTab("Configs", CFG_ICON, true)
 
