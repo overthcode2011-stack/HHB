@@ -28,11 +28,10 @@ local NOTIF_SOUND_ID  = "rbxassetid://97455084935031"
 
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
-local PANEL_SIZE_OPEN    = isMobile and UDim2.new(0.6, 0, 0.8, 0) or UDim2.new(0, 700, 0, 450)
-local PANEL_SIZE_MIN     = isMobile and UDim2.new(0.6, 0, 0, 56)  or UDim2.new(0, 700, 0, 56)
-local PANEL_POSITION     = UDim2.new(0.5, 0, 0.5, 0)
-local PANEL_ANCHOR       = Vector2.new(0.5, 0.5)
-local PANEL_TRANSPARENCY = 0.15
+local PANEL_SIZE_OPEN = isMobile and UDim2.new(0.6, 0, 0.8, 0) or UDim2.new(0, 700, 0, 450)
+local PANEL_SIZE_MIN  = isMobile and UDim2.new(0.6, 0, 0, 56)  or UDim2.new(0, 700, 0, 56)
+local PANEL_POSITION  = UDim2.new(0.5, 0, 0.5, 0)
+local PANEL_ANCHOR    = Vector2.new(0.5, 0.5)
 
 local SIDEBAR_RATIO = 0.32
 local SIDEBAR_FIXED = 200
@@ -393,7 +392,7 @@ function Library:CreateWindow(title, subtitle)
     mainFrame.Position = PANEL_POSITION
     mainFrame.AnchorPoint = PANEL_ANCHOR
     mainFrame.BackgroundColor3 = Colors.Background
-    mainFrame.BackgroundTransparency = PANEL_TRANSPARENCY
+    mainFrame.BackgroundTransparency = 0.15
     mainFrame.BorderSizePixel = 0
     mainFrame.Visible = true
     mainFrame.Active = true
@@ -845,7 +844,6 @@ function Library:CreateWindow(title, subtitle)
     MinimizeButton.MouseButton1Click:Connect(function()
         closeAllDropdowns()
         window.Minimized = not window.Minimized
-
         if window.Minimized then
             tabContainer.Visible = false
             contentArea.Visible = false
@@ -856,24 +854,15 @@ function Library:CreateWindow(title, subtitle)
                 Size = PANEL_SIZE_MIN
             }):Play()
         else
-            local vp = workspace.CurrentCamera.ViewportSize
-            local newW = isMobile and (vp.X * 0.6) or 700
-            local newH = isMobile and (vp.Y * 0.8) or 450
-            local maxOffX = math.max(0, (vp.X - newW) / 2)
-            local maxOffY = math.max(0, (vp.Y - newH) / 2)
-            local offX = math.clamp(mainFrame.Position.X.Offset, -maxOffX, maxOffX)
-            local offY = math.clamp(mainFrame.Position.Y.Offset, -maxOffY, maxOffY)
-            mainFrame.Position = UDim2.new(0.5, offX, 0.5, offY)
-
+            TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+                Size = PANEL_SIZE_OPEN
+            }):Play()
+            task.wait(0.35)
             tabContainer.Visible = true
             contentArea.Visible = true
             playerCard.Visible = true
             keybindsPanel.Visible = not isMobile
             dragBar.Visible = true
-
-            TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-                Size = PANEL_SIZE_OPEN
-            }):Play()
         end
     end)
 
