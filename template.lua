@@ -28,14 +28,15 @@ local NOTIF_SOUND_ID  = "rbxassetid://97455084935031"
 
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
-local PANEL_SIZE_OPEN    = isMobile and UDim2.new(0.6, 0, 0.8, 0) or UDim2.new(0, 700, 0, 450)
-local PANEL_SIZE_MIN     = isMobile and UDim2.new(0.6, 0, 0, 56)  or UDim2.new(0, 700, 0, 56)
-local PANEL_POSITION     = UDim2.new(0.5, 0, 0.5, 0)
-local PANEL_ANCHOR       = Vector2.new(0.5, 0.5)
+local PANEL_SIZE_OPEN = isMobile and UDim2.new(0.6, 0, 0.8, 0) or UDim2.new(0, 700, 0, 450)
+local PANEL_SIZE_MIN  = isMobile and UDim2.new(0.6, 0, 0, 56)  or UDim2.new(0, 700, 0, 56)
+local PANEL_POSITION  = UDim2.new(0.5, 0, 0.5, 0)
+local PANEL_ANCHOR    = Vector2.new(0.5, 0.5)
+local PANEL_TRANSPARENCY = 0.15
 
-local SIDEBAR_RATIO  = 0.32
-local SIDEBAR_FIXED  = 200
-local SIDEBAR_PAD    = isMobile and 6 or 8
+local SIDEBAR_RATIO = 0.32
+local SIDEBAR_FIXED = 200
+local SIDEBAR_PAD   = isMobile and 6 or 8
 
 local typingSound = Instance.new("Sound")
 typingSound.SoundId = TYPING_SOUND_ID
@@ -390,7 +391,7 @@ function Library:CreateWindow(title, subtitle)
     mainFrame.Position = PANEL_POSITION
     mainFrame.AnchorPoint = PANEL_ANCHOR
     mainFrame.BackgroundColor3 = Colors.Background
-    mainFrame.BackgroundTransparency = 0.15
+    mainFrame.BackgroundTransparency = PANEL_TRANSPARENCY
     mainFrame.BorderSizePixel = 0
     mainFrame.Visible = true
     mainFrame.Active = true
@@ -839,12 +840,11 @@ function Library:CreateWindow(title, subtitle)
         TweenService:Create(MinimizeButton, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(15, 15, 15)}):Play()
     end)
 
-    local originalTransparency = 0.15
     MinimizeButton.MouseButton1Click:Connect(function()
         closeAllDropdowns()
         window.Minimized = not window.Minimized
         local targetSize = window.Minimized and PANEL_SIZE_MIN or PANEL_SIZE_OPEN
-        local targetTransparency = window.Minimized and 1 or originalTransparency
+        local targetTransparency = window.Minimized and 1 or PANEL_TRANSPARENCY
         local tweenInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
         TweenService:Create(mainFrame, tweenInfo, {Size = targetSize}):Play()
         TweenService:Create(mainFrame, tweenInfo, {BackgroundTransparency = targetTransparency}):Play()
@@ -1432,7 +1432,6 @@ function Library:CreateWindow(title, subtitle)
         btn.Font = Enum.Font.GothamBold
         btn.TextSize = 12
         btn.TextWrapped = true
-        btn.TextScaled = false
         btn.BorderSizePixel = 0
         btn.AutoButtonColor = false
         btn.ZIndex = 90
@@ -1445,8 +1444,7 @@ function Library:CreateWindow(title, subtitle)
         stroke.Parent = btn
         register(reg.panels, btn)
 
-        local isDragging = false
-        local wasMoved = false
+        local isDragging, wasMoved = false, false
         local dragStart, startPos
         btn.InputBegan:Connect(function(i)
             if i.UserInputType == Enum.UserInputType.MouseButton1
@@ -1480,37 +1478,33 @@ function Library:CreateWindow(title, subtitle)
             if callback then pcall(callback) end
         end)
 
-        local handle = {
-            _btn = btn,
-            _index = index,
-            _active = false,
-            SetText = function(_, text)
-                btn.Text = tostring(text or "")
-            end,
-            GetText = function()
-                return btn.Text
-            end,
-            SetActive = function(_, active)
-                handle._active = active and true or false
-                if handle._active then
-                    btn.BackgroundColor3 = Colors.Accent
-                    btn.TextColor3 = Colors.Background
-                    stroke.Color = Colors.Accent
-                    stroke.Transparency = 0
-                else
-                    btn.BackgroundColor3 = Colors.Panel
-                    btn.TextColor3 = Colors.Accent
-                    stroke.Color = Colors.Accent
-                    stroke.Transparency = 0.5
-                end
-            end,
-            IsActive = function()
-                return handle._active
-            end,
-            Destroy = function()
-                if btn and btn.Parent then btn:Destroy() end
-            end,
-        }
+        local handle = { _btn = btn, _index = index, _active = false }
+        function handle.SetText(_, text)
+            btn.Text = tostring(text or "")
+        end
+        function handle.GetText()
+            return btn.Text
+        end
+        function handle.SetActive(_, active)
+            handle._active = active and true or false
+            if handle._active then
+                btn.BackgroundColor3 = Colors.Accent
+                btn.TextColor3 = Colors.Background
+                stroke.Color = Colors.Accent
+                stroke.Transparency = 0
+            else
+                btn.BackgroundColor3 = Colors.Panel
+                btn.TextColor3 = Colors.Accent
+                stroke.Color = Colors.Accent
+                stroke.Transparency = 0.5
+            end
+        end
+        function handle.IsActive()
+            return handle._active
+        end
+        function handle.Destroy()
+            if btn and btn.Parent then btn:Destroy() end
+        end
 
         table.insert(self._mobileButtons, handle)
         return handle
