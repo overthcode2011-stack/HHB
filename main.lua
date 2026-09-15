@@ -1453,4 +1453,129 @@ UserInputService.InputBegan:Connect(function(input, gp)
     end
 end)
 
+local function snapshotSettings()
+    return {
+        Aimbot = {
+            MM2LockOn   = AimbotSettings.MM2LockOn,
+            MM2Smooth   = AimbotSettings.MM2Smooth,
+            MM2Range    = AimbotSettings.MM2Range,
+            MM2Target   = AimbotSettings.MM2Target,
+            TriggerBot  = AimbotSettings.TriggerBot,
+            TriggerRange= AimbotSettings.TriggerRange,
+            AutoFire    = AimbotSettings.AutoFire,
+            WallCheck   = AimbotSettings.WallCheck,
+        },
+        Visual = {
+            MM2ESP   = VisualSettings.MM2ESP,
+            OGESP    = VisualSettings.OGESP,
+            NameTags = VisualSettings.NameTags,
+        },
+        Misc = {
+            InfJump        = MiscSettings.InfJump,
+            AntiAFK        = MiscSettings.AntiAFK,
+            AutoTpGun      = MiscSettings.AutoTpGun,
+            SilentAim      = MiscSettings.SilentAim,
+            MusicCompanion = MiscSettings.MusicCompanion,
+        },
+        Movement = {
+            Noclip    = MovementSettings.Noclip,
+            God       = MovementSettings.God,
+            Fly       = MovementSettings.Fly,
+            WalkSpeed = MovementSettings.WalkSpeed,
+            JumpPower = MovementSettings.JumpPower,
+            FlySpeed  = MovementSettings.FlySpeed,
+            AntiFling = MovementSettings.AntiFling,
+            Fling     = MovementSettings.Fling,
+            TPAll     = MovementSettings.TPAll,
+        },
+        Avatar = {
+            Korblox   = AvatarSettings.Korblox,
+            Shoulder  = AvatarSettings.Shoulder,
+            Invisible = AvatarSettings.Invisible,
+            NoobFace  = AvatarSettings.NoobFace,
+            Rainbow   = AvatarSettings.Rainbow,
+        },
+        Farm = {
+            AutoFarm      = FarmSettings.AutoFarm,
+            ManualCollect = FarmSettings.ManualCollect,
+            CoinSpeed     = FarmSettings.CoinSpeed,
+            PickupRadius  = FarmSettings.PickupRadius,
+        },
+        Theme = Lib:GetTheme(),
+    }
+end
+
+local function applyConfig(data)
+    if not data then return end
+
+    if data.Aimbot then
+        for k, v in pairs(data.Aimbot) do AimbotSettings[k] = v end
+    end
+    if data.Visual then
+        for k, v in pairs(data.Visual) do VisualSettings[k] = v end
+    end
+    if data.Misc then
+        for k, v in pairs(data.Misc) do MiscSettings[k] = v end
+    end
+    if data.Movement then
+        for k, v in pairs(data.Movement) do MovementSettings[k] = v end
+    end
+    if data.Avatar then
+        for k, v in pairs(data.Avatar) do AvatarSettings[k] = v end
+    end
+    if data.Farm then
+        for k, v in pairs(data.Farm) do FarmSettings[k] = v end
+    end
+
+    if data.Theme and data.Theme ~= Lib:GetTheme() then
+        Lib:SetTheme(data.Theme)
+    end
+
+    if MovementSettings.Fly then startFly() else stopFly() end
+
+    if MovementSettings.Noclip then
+        if noclipConn then noclipConn:Disconnect() end
+        noclipConn = RunService.Stepped:Connect(function()
+            local c = LocalPlayer.Character
+            if c then
+                for _, p in ipairs(c:GetDescendants()) do
+                    if p:IsA("BasePart") then p.CanCollide = false end
+                end
+            end
+        end)
+    elseif noclipConn then
+        noclipConn:Disconnect(); noclipConn = nil
+    end
+
+    if MovementSettings.God then
+        if godConn then godConn:Disconnect() end
+        godConn = RunService.Heartbeat:Connect(function()
+            local hum = getHumanoid()
+            if hum then hum.Health = hum.MaxHealth end
+        end)
+    elseif godConn then
+        godConn:Disconnect(); godConn = nil
+    end
+
+    local hum = getHumanoid()
+    if hum then
+        hum.WalkSpeed = MovementSettings.WalkSpeed
+        hum.JumpPower = MovementSettings.JumpPower
+        hum.UseJumpPower = true
+    end
+
+    ESP.active.MM2     = VisualSettings.MM2ESP
+    ESP.active.OG      = VisualSettings.OGESP
+    ESP.active.NameTag = VisualSettings.NameTags
+    refreshAllESP()
+    if VisualSettings.NameTags then startNameTagUpdater() else stopNameTagUpdater() end
+
+    Lib:SyncUIControls()
+    if window.UpdateThemeButtons then window:UpdateThemeButtons() end
+end
+
+window:SetConfigSnapshot(snapshotSettings)
+window:SetConfigApply(applyConfig)
+window:BuildConfigPage()
+
 Lib:Notify("Happy Hub loaded")
