@@ -1087,6 +1087,7 @@ window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
     task.spawn(function()
         local startTime = tick()
         local spinAngle = 0
+
         local spinConn = RunService.RenderStepped:Connect(function(dt)
             local hrp = getHRP()
             if not hrp then return end
@@ -1096,14 +1097,13 @@ window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
 
         while killAllRunning and tick() - startTime < 3 do
             for _, plr in ipairs(Players:GetPlayers()) do
+                if not killAllRunning then break end
                 if plr ~= LocalPlayer and plr.Character then
                     local theirHRP = plr.Character:FindFirstChild("HumanoidRootPart")
-                    if theirHRP then
-                        local myHRP = getHRP()
-                        if myHRP then
-                            if not fireTeleportToPart(myHRP, theirHRP) then
-                                myHRP.CFrame = theirHRP.CFrame
-                            end
+                    local myHRP = getHRP()
+                    if theirHRP and myHRP then
+                        if not fireTeleportToPart(myHRP, theirHRP) then
+                            myHRP.CFrame = CFrame.new(theirHRP.Position, theirHRP.Position + theirHRP.CFrame.LookVector)
                         end
                         task.wait(0.1)
                         pcall(function()
@@ -1114,6 +1114,7 @@ window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
                     end
                 end
             end
+            task.wait(0.1)
         end
 
         if spinConn then spinConn:Disconnect() end
