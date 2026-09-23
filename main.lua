@@ -75,6 +75,12 @@ local coinCountSetter = nil
 
 local RoleCache = {}
 
+local HeroWatcher = {
+    active = false,
+    thread = nil,
+    originalSheriffName = nil,
+}
+
 local function getHRP()
     local c = LocalPlayer.Character
     return c and c:FindFirstChild("HumanoidRootPart")
@@ -151,11 +157,25 @@ local function getSheriff()
     end
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
+            if getRoleFromCache(plr) == "Hero" then return plr end
+        end
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
             local char = plr.Character
             local bp = plr:FindFirstChild("Backpack")
             if (char and char:FindFirstChild("Gun")) or (bp and bp:FindFirstChild("Gun")) then
                 return plr
             end
+        end
+    end
+    return nil
+end
+
+local function getHero()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            if getRoleFromCache(plr) == "Hero" then return plr end
         end
     end
     return nil
@@ -285,6 +305,7 @@ local ESP_COLORS = {
     MM2 = {
         Murderer = Color3.fromRGB(255, 0, 0),
         Sheriff  = Color3.fromRGB(0, 132, 255),
+        Hero     = Color3.fromRGB(255, 200, 0),
         Innocent = Color3.fromRGB(56, 255, 112),
     },
     OG = Color3.fromRGB(255, 255, 255),
@@ -316,7 +337,6 @@ local function applyESP(plr)
             local h = Instance.new("Highlight")
             h.Name = "HH_MM2"
             h.FillColor = color
-            h.OutlineColor = color
             h.FillTransparency = 0.2
             h.OutlineTransparency = 1
             h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
@@ -324,7 +344,6 @@ local function applyESP(plr)
             ESP.highlights.MM2[plr] = h
         else
             ESP.highlights.MM2[plr].FillColor = color
-            ESP.highlights.MM2[plr].OutlineColor = color
         end
     elseif ESP.highlights.MM2[plr] then
         ESP.highlights.MM2[plr]:Destroy()
@@ -336,7 +355,6 @@ local function applyESP(plr)
             local h = Instance.new("Highlight")
             h.Name = "HH_OG"
             h.FillColor = ESP_COLORS.OG
-            h.OutlineColor = ESP_COLORS.OG
             h.FillTransparency = 0.5
             h.OutlineTransparency = 1
             h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
@@ -402,6 +420,9 @@ local function startNameTagUpdater()
                 elseif role == "Sheriff" then
                     label = "Sheriff · " .. plr.DisplayName
                     color = ESP_COLORS.MM2.Sheriff
+                elseif role == "Hero" then
+                    label = "Hero · " .. plr.DisplayName
+                    color = ESP_COLORS.MM2.Hero
                 else
                     label = plr.DisplayName
                     color = Color3.fromRGB(255, 255, 255)
@@ -430,6 +451,108 @@ local function getFadeEvent()
     return gameplay:FindFirstChild("Fade")
 end
 
+local function findGunHolder()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local char = plr.Character
+            local bp = plr:FindFirstChildOfClass("Backpack")
+            if (char and char:FindFirstChild("Gun")) or (bp and bp:FindFirstChild("Gun")) then
+                return plr
+            end
+        end
+    end
+    return nil
+end
+
+local function isSheriffDead()
+    for username, info in pairs(RoleCache) do
+        if info.Role == "Sheriff" and info.Dead then
+            return true, username
+        end
+    end
+    return false, nil
+end
+
+local function clearHeroFlags()
+    for username, info in pairs(RoleCache) do
+        if info.Role == "Hero" then
+            info.Role = "Innocent"
+            info.IsHero = false
+        end
+    end
+end
+
+local function stopHeroWatcher()
+    HeroWatcher.active = false
+    if HeroWatcher.thread then
+        task.cancel(HeroWatcher.thread)
+        HeroWatcher.thread = nil
+    end
+end
+
+local function startHeroWatcher()
+    if HeroWatcher.active then return end
+    HeroWatcher.active = true
+    HeroWatcher.thread = task.spawn(function()
+        while HeroWatcher.active do
+            task.wait(0.4)
+            if not HeroWatcher.active then break end
+
+            local sheriffDead, sheriffName = isSheriffDead()
+            if sheriffDead then
+                local holder = findGunHolder()
+                if holder then
+                    local currentInfo = RoleCache[holder.Name]
+                    if currentInfo then
+                        if currentInfo.Role == "Sheriff" then
+                            task.wait(0.3)
+                        else
+                            currentInfo.Role = "Hero"
+                            currentInfo.IsHero = true
+                            HeroWatcher.originalSheriffName = sheriffName
+                            if holder.Character then
+                                applyESP(holder)
+                            end
+                            HeroWatcher.active = false
+                            break
+                        end
+                    else
+                        RoleCache[holder.Name] = {
+                            UserId = holder.UserId,
+                            Role = "Hero",
+                            Dead = false,
+                            IsHero = true,
+                        }
+                        if holder.Character then
+                            applyESP(holder)
+                        end
+                        HeroWatcher.originalSheriffName = sheriffName
+                        HeroWatcher.active = false
+                        break
+                    end
+                end
+            end
+        end
+        HeroWatcher.thread = nil
+    end)
+end
+
+local function onRoundBegin()
+    clearHeroFlags()
+    stopHeroWatcher()
+    task.delay(1.5, function()
+        if roundActive then
+            startHeroWatcher()
+        end
+    end)
+end
+
+local function onRoundEnd()
+    stopHeroWatcher()
+    HeroWatcher.originalSheriffName = nil
+    clearHeroFlags()
+end
+
 local function updateRoleCache(data)
     if type(data) ~= "table" then return end
     for username, info in pairs(data) do
@@ -444,6 +567,13 @@ local function updateRoleCache(data)
                 XP     = info.XP,
                 Killed = info.Killed or false,
             }
+            if info.Role == "Sheriff" and info.Dead then
+                task.defer(function()
+                    if HeroWatcher.active == false then
+                        startHeroWatcher()
+                    end
+                end)
+            end
         end
     end
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -814,13 +944,16 @@ registerControl(MovementSettings, "TPAll", tpAllToggleRef)
 
 window:CreateLabel(playersTab, "Role Teleport")
 _G.__HH_TpTarget = "Murder"
-window:CreateDropdown(playersTab, "Target", { "Murder", "Sheriff" }, "Murder", function(v)
+window:CreateDropdown(playersTab, "Target", { "Murder", "Sheriff", "Hero" }, "Murder", function(v)
     _G.__HH_TpTarget = v
 end)
 
 window:CreateButton(playersTab, "Teleport to Target", function()
     local target = _G.__HH_TpTarget
-    local plr = (target == "Sheriff") and getSheriff() or getMurderer()
+    local plr
+    if target == "Sheriff" then plr = getSheriff()
+    elseif target == "Hero" then plr = getHero()
+    else plr = getMurderer() end
     if teleportToPlayer(plr) then
         notify("Teleported to " .. target)
     else
@@ -1461,6 +1594,7 @@ if roundStartEvent then
                 applyESP(plr)
             end
         end
+        onRoundBegin()
     end)
 end
 
@@ -1469,6 +1603,7 @@ if roundEndFadeEvent then
         roundActive = false
         stopCoinCollector()
         RoleCache = {}
+        onRoundEnd()
         task.wait(0.05)
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer then
