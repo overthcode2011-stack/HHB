@@ -1,10 +1,10 @@
-local Lib
+local API
 do
     local ok, err = pcall(function()
-        Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/template.lua"))()
+        API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/template.lua"))()
     end)
-    if not ok or type(Lib) ~= "table" then
-        warn("[HappyHub] API load failed: " .. tostring(err))
+    if not ok or type(API) ~= "table" then
+        warn("[HappyHub] Template load failed: " .. tostring(err))
         return
     end
 end
@@ -46,8 +46,8 @@ local MovementSettings = {
 local AvatarSettings = { Korblox = false, Shoulder = false, Invisible = false, NoobFace = false, Rainbow = false }
 local FarmSettings = { AutoFarm = false, ManualCollect = false, CoinSpeed = 20, PickupRadius = 3 }
 
-local function notify(msg, dur) pcall(function() Lib:Notify(msg, dur) end) end
-local function registerControl(t, k, c) pcall(function() Lib:RegisterControl(t, k, c) end) end
+local function notify(msg, dur) pcall(function() API:Notify(msg, dur) end) end
+local function registerControl(t, k, c) pcall(function() API:RegisterControl(t, k, c) end) end
 
 local noclipConn, godConn, antiAFKConn, flyConn, flyBV, flyBG
 local mm2Conn, silentAimConn, triggerBotConn, autoFireConn
@@ -72,6 +72,8 @@ local bagProgress = {}
 local totalCoins = 0
 local coinStatusSetter = nil
 local coinCountSetter = nil
+
+local RoleCache = {}
 
 local function getHRP()
     local c = LocalPlayer.Character
@@ -106,8 +108,16 @@ local function hasTool(parent, toolName)
     return false
 end
 
+local function getRoleFromCache(plr)
+    local info = RoleCache[plr.Name]
+    if info and info.Role then return info.Role end
+    return nil
+end
+
 local function getMM2Role(plr)
     if plr == LocalPlayer then return "Innocent" end
+    local cached = getRoleFromCache(plr)
+    if cached then return cached end
     local char = plr.Character
     local bp = plr:FindFirstChildOfClass("Backpack")
     if hasTool(char, "Knife") or hasTool(bp, "Knife") then return "Murderer" end
@@ -116,6 +126,11 @@ local function getMM2Role(plr)
 end
 
 local function getMurderer()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            if getRoleFromCache(plr) == "Murderer" then return plr end
+        end
+    end
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             local char = plr.Character
@@ -129,6 +144,11 @@ local function getMurderer()
 end
 
 local function getSheriff()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            if getRoleFromCache(plr) == "Sheriff" then return plr end
+        end
+    end
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             local char = plr.Character
@@ -155,6 +175,8 @@ local function getPlayerWithItem(itemName)
 end
 
 local function isLocalMurderer()
+    local cached = getRoleFromCache(LocalPlayer)
+    if cached == "Murderer" then return true end
     local char = LocalPlayer.Character
     local bp = LocalPlayer:FindFirstChild("Backpack")
     if (char and char:FindFirstChild("Knife")) or (bp and bp:FindFirstChild("Knife")) then return true end
@@ -282,7 +304,10 @@ local function applyESP(plr)
     local char = plr.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then return end
+    if not hum or hum.Health <= 0 then
+        clearHighlights(plr)
+        return
+    end
 
     if ESP.active.MM2 then
         local role = getMM2Role(plr)
@@ -302,7 +327,8 @@ local function applyESP(plr)
             ESP.highlights.MM2[plr].OutlineColor = color
         end
     elseif ESP.highlights.MM2[plr] then
-        ESP.highlights.MM2[plr]:Destroy(); ESP.highlights.MM2[plr] = nil
+        ESP.highlights.MM2[plr]:Destroy()
+        ESP.highlights.MM2[plr] = nil
     end
 
     if ESP.active.OG then
@@ -318,7 +344,8 @@ local function applyESP(plr)
             ESP.highlights.OG[plr] = h
         end
     elseif ESP.highlights.OG[plr] then
-        ESP.highlights.OG[plr]:Destroy(); ESP.highlights.OG[plr] = nil
+        ESP.highlights.OG[plr]:Destroy()
+        ESP.highlights.OG[plr] = nil
     end
 
     if ESP.active.NameTag then
@@ -327,7 +354,7 @@ local function applyESP(plr)
             if hrp then
                 local bb = Instance.new("BillboardGui")
                 bb.Name = "HH_NameTag"
-                bb.Size = UDim2.new(0, 110, 0, 32)
+                bb.Size = UDim2.new(0, 140, 0, 32)
                 bb.StudsOffset = Vector3.new(0, 3.5, 0)
                 bb.AlwaysOnTop = true
                 bb.Adornee = hrp
@@ -336,10 +363,9 @@ local function applyESP(plr)
                 lbl.Size = UDim2.new(1, 0, 1, 0)
                 lbl.BackgroundTransparency = 1
                 lbl.TextColor3 = Color3.new(1, 1, 1)
-                lbl.Font = Enum.Font.GothamBold
+                lbl.FontFace = Font.fromEnum(Enum.Font.Code)
                 lbl.TextSize = 13
-                lbl.TextStrokeTransparency = 0.4
-                lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+                lbl.TextStrokeTransparency = 1
                 lbl.Parent = bb
                 ESP.nameTags[plr] = { bb = bb, lbl = lbl }
             end
@@ -367,12 +393,26 @@ local function startNameTagUpdater()
         for plr, data in pairs(ESP.nameTags) do
             if plr.Character and data.lbl then
                 local theirHRP = plr.Character:FindFirstChild("HumanoidRootPart")
+                local role = getMM2Role(plr)
+                local label
+                local color
+                if role == "Murderer" then
+                    label = "Murderer · " .. plr.DisplayName
+                    color = ESP_COLORS.MM2.Murderer
+                elseif role == "Sheriff" then
+                    label = "Sheriff · " .. plr.DisplayName
+                    color = ESP_COLORS.MM2.Sheriff
+                else
+                    label = plr.DisplayName
+                    color = Color3.fromRGB(255, 255, 255)
+                end
                 if theirHRP then
                     local dist = math.floor((myHRP.Position - theirHRP.Position).Magnitude)
-                    data.lbl.Text = plr.DisplayName .. "\n" .. dist .. "m"
+                    data.lbl.Text = label .. "\n" .. dist .. "m"
                 else
-                    data.lbl.Text = plr.DisplayName
+                    data.lbl.Text = label
                 end
+                data.lbl.TextColor3 = color
             end
         end
     end)
@@ -381,6 +421,58 @@ end
 local function stopNameTagUpdater()
     if nameTagUpdater then nameTagUpdater:Disconnect(); nameTagUpdater = nil end
 end
+
+local function getFadeEvent()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    if not remotes then return nil end
+    local gameplay = remotes:FindFirstChild("Gameplay")
+    if not gameplay then return nil end
+    return gameplay:FindFirstChild("Fade")
+end
+
+local function updateRoleCache(data)
+    if type(data) ~= "table" then return end
+    for username, info in pairs(data) do
+        if type(info) == "table" and info.Role then
+            RoleCache[username] = {
+                UserId = info.UserId,
+                Role   = info.Role,
+                Dead   = info.Dead or false,
+                Perk   = info.Perk,
+                Knife  = info.Knife,
+                Gun    = info.Gun,
+                XP     = info.XP,
+                Killed = info.Killed or false,
+            }
+        end
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            if plr.Character then applyESP(plr) else clearHighlights(plr) end
+        end
+    end
+end
+
+local fadeConn = nil
+local function hookFadeEvent()
+    if fadeConn then fadeConn:Disconnect(); fadeConn = nil end
+    local ev = getFadeEvent()
+    if not ev then return end
+    fadeConn = ev.OnClientEvent:Connect(function(...)
+        updateRoleCache(...)
+    end)
+end
+
+hookFadeEvent()
+
+task.spawn(function()
+    while true do
+        task.wait(3)
+        if not fadeConn or not getFadeEvent() then
+            hookFadeEvent()
+        end
+    end
+end)
 
 for _, plr in ipairs(Players:GetPlayers()) do
     if plr ~= LocalPlayer then
@@ -395,7 +487,10 @@ Players.PlayerAdded:Connect(function(plr)
         task.wait(0.3); clearHighlights(plr); applyESP(plr)
     end)
 end)
-Players.PlayerRemoving:Connect(function(plr) clearHighlights(plr) end)
+Players.PlayerRemoving:Connect(function(plr)
+    clearHighlights(plr)
+    RoleCache[plr.Name] = nil
+end)
 
 local function applyKorblox()
     local char = LocalPlayer.Character; if not char then return end
@@ -646,7 +741,7 @@ end
 local window
 do
     local ok, err = pcall(function()
-        window = Lib:CreateWindow("Happy Hub", "MM2 · Keyless · by replicatedman")
+        window = API:CreateWindow("Happy Hub", "MM2 · Keyless · by replicatedman")
     end)
     if not ok or not window then
         warn("[HappyHub] CreateWindow failed: " .. tostring(err))
@@ -1360,6 +1455,12 @@ if roundStartEvent then
         if FarmSettings.AutoFarm or FarmSettings.ManualCollect then
             task.wait(1); startCoinCollector()
         end
+        task.wait(0.1)
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                applyESP(plr)
+            end
+        end
     end)
 end
 
@@ -1367,6 +1468,13 @@ if roundEndFadeEvent then
     roundEndFadeEvent.OnClientEvent:Connect(function()
         roundActive = false
         stopCoinCollector()
+        RoleCache = {}
+        task.wait(0.05)
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer then
+                clearHighlights(plr)
+            end
+        end
     end)
 end
 
@@ -1502,7 +1610,7 @@ local function snapshotSettings()
             CoinSpeed     = FarmSettings.CoinSpeed,
             PickupRadius  = FarmSettings.PickupRadius,
         },
-        Theme = Lib:GetTheme(),
+        Theme = API:GetTheme(),
     }
 end
 
@@ -1528,8 +1636,8 @@ local function applyConfig(data)
         for k, v in pairs(data.Farm) do FarmSettings[k] = v end
     end
 
-    if data.Theme and data.Theme ~= Lib:GetTheme() then
-        Lib:SetTheme(data.Theme)
+    if data.Theme and data.Theme ~= API:GetTheme() then
+        API:SetTheme(data.Theme)
     end
 
     if MovementSettings.Fly then startFly() else stopFly() end
@@ -1571,7 +1679,7 @@ local function applyConfig(data)
     refreshAllESP()
     if VisualSettings.NameTags then startNameTagUpdater() else stopNameTagUpdater() end
 
-    Lib:SyncUIControls()
+    API:SyncUIControls()
     if window.UpdateThemeButtons then window:UpdateThemeButtons() end
 end
 
@@ -1579,4 +1687,4 @@ window:SetConfigSnapshot(snapshotSettings)
 window:SetConfigApply(applyConfig)
 window:BuildConfigPage()
 
-Lib:Notify("Happy Hub loaded")
+API:Notify("Happy Hub loaded")
