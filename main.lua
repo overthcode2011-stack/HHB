@@ -4,7 +4,7 @@ do
         Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/template.lua"))()
     end)
     if not ok or type(Lib) ~= "table" then
-        warn("[HappyHub] Template load failed: " .. tostring(err))
+        warn("[HappyHub] API load failed: " .. tostring(err))
         return
     end
 end
