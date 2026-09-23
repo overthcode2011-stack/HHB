@@ -1310,10 +1310,11 @@ window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
     end
     if killAllRunning then return end
     killAllRunning = true
-    notify("Killing everyone...")
+    notify("Killing everyone · 7s")
 
     task.spawn(function()
         local startTime = tick()
+        local duration = 7
         local spinAngle = 0
 
         local spinConn = RunService.RenderStepped:Connect(function(dt)
@@ -1323,15 +1324,22 @@ window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
             hrp.CFrame = hrp.CFrame * CFrame.Angles(0, spinAngle, 0)
         end)
 
-        while killAllRunning and tick() - startTime < 3 do
+        while killAllRunning and tick() - startTime < duration do
             for _, plr in ipairs(Players:GetPlayers()) do
                 if not killAllRunning then break end
+                if tick() - startTime >= duration then break end
                 if plr ~= LocalPlayer and plr.Character then
                     local theirHRP = plr.Character:FindFirstChild("HumanoidRootPart")
                     local myHRP = getHRP()
                     if theirHRP and myHRP then
                         if not fireTeleportToPart(myHRP, theirHRP) then
                             myHRP.CFrame = CFrame.new(theirHRP.Position, theirHRP.Position + theirHRP.CFrame.LookVector)
+                        else
+                            task.wait(0.03)
+                            local h = getHRP()
+                            if h and (h.Position - theirHRP.Position).Magnitude > 3 then
+                                h.CFrame = CFrame.new(theirHRP.Position, theirHRP.Position + theirHRP.CFrame.LookVector)
+                            end
                         end
                         task.wait(0.1)
                         pcall(function()
@@ -1347,6 +1355,7 @@ window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
 
         if spinConn then spinConn:Disconnect() end
         killAllRunning = false
+        notify("Done · 7s elapsed")
     end)
 end)
 
