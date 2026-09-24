@@ -33,6 +33,7 @@ local FARM_ICON = "74133076168703"
 local AimbotSettings = {
     MM2LockOn = false, MM2Smooth = 8, MM2Range = 500, MM2Target = "Head",
     TriggerBot = false, TriggerRange = 150, AutoFire = false, WallCheck = true,
+    FOVCircle = false, FOVRadius = 120,
 }
 local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false }
 local MiscSettings = {
@@ -52,6 +53,7 @@ local function registerControl(t, k, c) pcall(function() API:RegisterControl(t, 
 local noclipConn, godConn, antiAFKConn, flyConn, flyBV, flyBG
 local mm2Conn, silentAimConn, triggerBotConn, autoFireConn
 local autoTpGunThread, flingTask, tpAllTask, nameTagUpdater, mm2PeriodicThread, gunESPThread
+local fovConn, fovGui, fovFrame
 local antiFlingConnections = {}
 local antiFlingActive = false
 local flingRunning = false
@@ -66,12 +68,13 @@ local CoinConnection = nil
 local CoinVelocity = nil
 local CoinGyro = nil
 local CoinSpeed = 20
-local CoinRadius = 10
+local CoinRadius = 3
 local roundActive = false
 local bagProgress = {}
 local totalCoins = 0
 local coinStatusSetter = nil
 local coinCountSetter = nil
+local currentIdleTrack = nil
 
 local RoleCache = {}
 
@@ -135,12 +138,39 @@ end
 
 local function getMM2Role(plr)
     if plr == LocalPlayer then return "Innocent" end
+
     local cached = getRoleFromCache(plr)
-    if cached then return cached end
+    if cached then
+        if cached == "Hero" then return "Hero" end
+        if cached == "Sheriff" then return "Sheriff" end
+        if cached == "Murderer" then return "Murderer" end
+    end
+
     local char = plr.Character
     local bp = plr:FindFirstChildOfClass("Backpack")
-    if hasTool(char, "Knife") or hasTool(bp, "Knife") then return "Murderer" end
-    if hasTool(char, "Gun") or hasTool(bp, "Gun") then return "Sheriff" end
+
+    if hasTool(char, "Knife") or hasTool(bp, "Knife") then
+        return "Murderer"
+    end
+
+    if hasTool(char, "Gun") or hasTool(bp, "Gun") then
+        local sheriffAlive = false
+        for _, info in pairs(RoleCache) do
+            if info.Role == "Sheriff" then
+                if not info.Dead then
+                    sheriffAlive = true
+                end
+                break
+            end
+        end
+
+        if sheriffAlive then
+            return "Sheriff"
+        end
+
+        return "Hero"
+    end
+
     return "Innocent"
 end
 
@@ -655,6 +685,7 @@ local function startHeroWatcher()
                             currentInfo.IsHero = true
                             HeroWatcher.originalSheriffName = sheriffName
                             if holder.Character then
+                                clearHighlights(holder)
                                 applyESP(holder)
                             end
                             HeroWatcher.active = false
@@ -668,6 +699,7 @@ local function startHeroWatcher()
                             IsHero = true,
                         }
                         if holder.Character then
+                            clearHighlights(holder)
                             applyESP(holder)
                         end
                         HeroWatcher.originalSheriffName = sheriffName
@@ -723,7 +755,12 @@ local function updateRoleCache(data)
     end
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
-            if plr.Character then applyESP(plr) else clearHighlights(plr) end
+            if plr.Character then
+                clearHighlights(plr)
+                applyESP(plr)
+            else
+                clearHighlights(plr)
+            end
         end
     end
 end
@@ -775,10 +812,20 @@ local function applyKorblox()
         local rl = char:FindFirstChild("RightLowerLeg")
         local ru = char:FindFirstChild("RightUpperLeg")
         if ru and rl and rf then
-            rf.Transparency = 1; rl.Transparency = 1
-            ru.MeshId = "rbxassetid://902942096"
-            ru.TextureID = "rbxassetid://902843398"
-            ru.Color = Color3.new(1, 1, 1); ru.Transparency = 0
+            rf.Transparency = 1
+            rl.Transparency = 1
+            local mesh = ru:FindFirstChildOfClass("SpecialMesh")
+            if not mesh then
+                mesh = Instance.new("SpecialMesh")
+                mesh.Parent = ru
+            end
+            mesh.MeshType = Enum.MeshType.FileMesh
+            mesh.MeshId = "rbxassetid://902942096"
+            mesh.TextureId = "rbxassetid://902843398"
+            mesh.Scale = Vector3.new(1, 1, 1)
+            ru.Color = Color3.new(1, 1, 1)
+            ru.Transparency = 0
+            ru.Massless = false
         end
     else
         local rightLeg = char:FindFirstChild("Right Leg"); if not rightLeg then return end
@@ -804,7 +851,10 @@ local function removeKorblox()
         local ru = char:FindFirstChild("RightUpperLeg")
         if rf then rf.Transparency = 0 end
         if rl then rl.Transparency = 0 end
-        if ru then ru.MeshId = ""; ru.TextureID = "" end
+        if ru then
+            local mesh = ru:FindFirstChildOfClass("SpecialMesh")
+            if mesh then mesh:Destroy() end
+        end
     else
         local rightLeg = char:FindFirstChild("Right Leg"); if not rightLeg then return end
         local mesh = rightLeg:FindFirstChildOfClass("SpecialMesh")
@@ -842,36 +892,17 @@ local function getBestCoin()
     if not coinContainer then return nil end
     local myHRP = getHRP()
     if not myHRP then return nil end
-    local cam = workspace.CurrentCamera
-    local camDir = cam and cam.CFrame.LookVector or Vector3.new(0, 0, -1)
     local myPos = myHRP.Position
-    local bestPart, bestScore = nil, -math.huge
+    local bestPart, bestDist = nil, math.huge
     for _, child in ipairs(coinContainer:GetChildren()) do
         local part = child:IsA("BasePart") and child or (child:IsA("Model") and child.PrimaryPart)
         if part and part:IsA("BasePart") then
-            local delta = part.Position - myPos
-            local dist = delta.Magnitude
-            if dist > 0.1 then
-                local dir = delta.Unit
-                local dot = dir:Dot(camDir)
-                if dot > -0.2 then
-                    local score = (dot * 100) - (dist * 0.5)
-                    if dot > 0.8 and dist < 15 then score = score + 200 end
-                    if score > bestScore then bestScore = score; bestPart = part end
-                end
+            local d = (part.Position - myPos).Magnitude
+            if d < bestDist then
+                bestDist = d
+                bestPart = part
             end
         end
-    end
-    if not bestPart then
-        local closest, minDist = nil, math.huge
-        for _, child in ipairs(coinContainer:GetChildren()) do
-            local part = child:IsA("BasePart") and child or (child:IsA("Model") and child.PrimaryPart)
-            if part and part:IsA("BasePart") then
-                local d = (part.Position - myPos).Magnitude
-                if d < minDist then minDist = d; closest = part end
-            end
-        end
-        bestPart = closest
     end
     return bestPart
 end
@@ -879,13 +910,25 @@ end
 local function playIdleAnimation(hum)
     local animator = hum:FindFirstChildOfClass("Animator")
     if not animator then return end
+    if currentIdleTrack then
+        pcall(function() currentIdleTrack:Stop() end)
+        currentIdleTrack = nil
+    end
     local idleAnim = Instance.new("Animation")
     idleAnim.AnimationId = "rbxassetid://507766666"
     local track = animator:LoadAnimation(idleAnim)
     track.Priority = Enum.AnimationPriority.Idle
     track.Looped = true
     track:Play()
+    currentIdleTrack = track
     return track
+end
+
+local function stopIdleAnimation()
+    if currentIdleTrack then
+        pcall(function() currentIdleTrack:Stop() end)
+        currentIdleTrack = nil
+    end
 end
 
 local function stopCoinCollector()
@@ -896,7 +939,19 @@ local function stopCoinCollector()
     if CoinGyro then CoinGyro:Destroy(); CoinGyro = nil end
     if coinStatusSetter then coinStatusSetter("Idle") end
     local hum = getHumanoid()
-    if hum then hum.PlatformStand = false end
+    if hum then
+        hum.PlatformStand = false
+    end
+    stopIdleAnimation()
+    local char = LocalPlayer.Character
+    if char then
+        local animateScript = char:FindFirstChild("Animate")
+        if animateScript then
+            pcall(function() animateScript.Disabled = true end)
+            task.wait()
+            pcall(function() animateScript.Disabled = false end)
+        end
+    end
 end
 
 local function startCoinCollector()
@@ -960,7 +1015,6 @@ local function startCoinCollector()
         if not target then
             CoinVelocity.Velocity = Vector3.zero
             if coinStatusSetter then coinStatusSetter("Idle") end
-            stopCoinCollector()
             return
         end
 
@@ -1038,6 +1092,51 @@ end
 local function stopFly()
     if flyConn then flyConn:Disconnect(); flyConn = nil end
     detachFlyBodyMovers()
+end
+
+local function startFOVCircle()
+    if fovConn then return end
+    if not fovGui then
+        fovGui = Instance.new("ScreenGui")
+        fovGui.Name = "HH_FOV"
+        fovGui.ResetOnSpawn = false
+        fovGui.IgnoreGuiInset = true
+        pcall(function() fovGui.Parent = game:GetService("CoreGui") end)
+        if not fovGui.Parent then fovGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+        fovFrame = Instance.new("Frame")
+        fovFrame.Name = "FOVCircle"
+        fovFrame.BackgroundTransparency = 1
+        fovFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+        fovFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+        fovFrame.Size = UDim2.new(0, 200, 0, 200)
+        fovFrame.Parent = fovGui
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Name = "CircleStroke"
+        stroke.Thickness = 2
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Transparency = 0.3
+        stroke.Parent = fovFrame
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(1, 0)
+        corner.Parent = fovFrame
+    end
+    fovGui.Enabled = true
+
+    fovConn = RunService.RenderStepped:Connect(function()
+        if not AimbotSettings.FOVCircle then return end
+        if not fovFrame then return end
+        local radius = AimbotSettings.FOVRadius
+        fovFrame.Size = UDim2.new(0, radius * 2, 0, radius * 2)
+        fovFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+    end)
+end
+
+local function stopFOVCircle()
+    if fovConn then fovConn:Disconnect(); fovConn = nil end
+    if fovGui then fovGui.Enabled = false end
 end
 
 local window
@@ -1401,6 +1500,20 @@ local mm2LockRef = window:CreateToggle(aimbotTab, "Default aimbot", false, funct
             if not targetPart or not myHRP then return end
             local dist = (myHRP.Position - targetPart.Position).Magnitude
             if dist > AimbotSettings.MM2Range then return end
+
+            if AimbotSettings.FOVCircle then
+                local cam = workspace.CurrentCamera
+                if cam then
+                    local sp, on = cam:WorldToViewportPoint(targetPart.Position)
+                    if on then
+                        local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+                        if (Vector2.new(sp.X, sp.Y) - center).Magnitude > AimbotSettings.FOVRadius then
+                            return
+                        end
+                    end
+                end
+            end
+
             local camera = workspace.CurrentCamera
             local targetCF = CFrame.new(camera.CFrame.Position, targetPart.Position)
             local alpha = math.clamp(1 / AimbotSettings.MM2Smooth, 0.02, 1)
@@ -1422,6 +1535,15 @@ end)
 registerControl(AimbotSettings, "MM2Target", mm2TargetRef)
 
 window:CreateParagraph(aimbotTab, "Small Avatar = HumanoidRootPart. Use it for short/tiny avatars.")
+
+local fovToggleRef = window:CreateToggle(aimbotTab, "FOV Circle", false, function(v)
+    AimbotSettings.FOVCircle = v
+    if v then startFOVCircle() else stopFOVCircle() end
+end)
+registerControl(AimbotSettings, "FOVCircle", fovToggleRef)
+
+local fovRadiusRef = window:CreateSlider(aimbotTab, "FOV Radius", 40, 500, 120, function(v) AimbotSettings.FOVRadius = v end)
+registerControl(AimbotSettings, "FOVRadius", fovRadiusRef)
 
 window:CreateLabel(aimbotTab, "Trigger Bot")
 local triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function(v)
@@ -1917,6 +2039,8 @@ local function snapshotSettings()
             TriggerRange= AimbotSettings.TriggerRange,
             AutoFire    = AimbotSettings.AutoFire,
             WallCheck   = AimbotSettings.WallCheck,
+            FOVCircle   = AimbotSettings.FOVCircle,
+            FOVRadius   = AimbotSettings.FOVRadius,
         },
         Visual = {
             MM2ESP   = VisualSettings.MM2ESP,
@@ -2024,6 +2148,8 @@ local function applyConfig(data)
     refreshAllESP()
     applyGunESP()
     if VisualSettings.NameTags then startNameTagUpdater() else stopNameTagUpdater() end
+
+    if AimbotSettings.FOVCircle then startFOVCircle() else stopFOVCircle() end
 
     API:SyncUIControls()
     if window.UpdateThemeButtons then window:UpdateThemeButtons() end
