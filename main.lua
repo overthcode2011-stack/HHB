@@ -4,7 +4,7 @@ do
         API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/template.lua"))()
     end)
     if not ok or type(API) ~= "table" then
-        warn("[HappyHub] Template load failed: " .. tostring(err))
+        warn("[HappyHub] API load failed: " .. tostring(err))
         return
     end
 end
@@ -31,7 +31,7 @@ local AVT_ICON  = "116651535114885"
 local FARM_ICON = "74133076168703"
 
 local AimbotSettings = {
-    MM2LockOn = false, MM2Smooth = 8, MM2Range = 500, MM2Target = "Small Avatar",
+    MM2LockOn = false, MM2Smooth = 8, MM2Range = 500, MM2Target = "Head",
     TriggerBot = false, TriggerRange = 150, AutoFire = false, WallCheck = true,
 }
 local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false }
@@ -66,7 +66,7 @@ local CoinConnection = nil
 local CoinVelocity = nil
 local CoinGyro = nil
 local CoinSpeed = 20
-local CoinRadius = 3
+local CoinRadius = 10
 local roundActive = false
 local bagProgress = {}
 local totalCoins = 0
@@ -1053,9 +1053,9 @@ end
 
 local homeTab      = window:CreateTab("Home", HOME_ICON)
 local playersTab   = window:CreateTab("Players", PLR_ICON)
-local espTab       = window:CreateTab("ESP", VIS_ICON)
+local espTab       = window:CreateTab("Visuals", VIS_ICON)
 local movementTab  = window:CreateTab("Movement", MOV_ICON)
-local aimbotTab    = window:CreateTab("Aimbot", AIM_ICON)
+local aimbotTab    = window:CreateTab("Combat", AIM_ICON)
 local avatarTab    = window:CreateTab("Avatar", AVT_ICON)
 local farmTab      = window:CreateTab("Farm", FARM_ICON)
 local miscTab      = window:CreateTab("Misc", MISC_ICON)
@@ -1155,8 +1155,8 @@ window:CreateButton(playersTab, "Server Hop", function()
     end)
 end)
 
-window:CreateLabel(espTab, "Role Viewer")
-local mm2ESPToggleRef = window:CreateToggle(espTab, "Murder Mystery 2", false, function(v)
+window:CreateLabel(espTab, "ESP")
+local mm2ESPToggleRef = window:CreateToggle(espTab, "Roles", false, function(v)
     ESP.active.MM2 = v
     VisualSettings.MM2ESP = v
     refreshAllESP()
@@ -1182,7 +1182,7 @@ local ogESPToggleRef = window:CreateToggle(espTab, "Neutral", false, function(v)
 end)
 registerControl(VisualSettings, "OGESP", ogESPToggleRef)
 
-window:CreateLabel(espTab, "Options")
+window:CreateLabel(espTab, "Aditional")
 local nameTagToggleRef = window:CreateToggle(espTab, "Nametag", false, function(v)
     ESP.active.NameTag = v
     VisualSettings.NameTags = v
@@ -1191,7 +1191,7 @@ local nameTagToggleRef = window:CreateToggle(espTab, "Nametag", false, function(
 end)
 registerControl(VisualSettings, "NameTags", nameTagToggleRef)
 
-local gunESPToggleRef = window:CreateToggle(espTab, "Gun ESP", false, function(v)
+local gunESPToggleRef = window:CreateToggle(espTab, "Gun", false, function(v)
     VisualSettings.GunESP = v
     applyGunESP()
     if v then
@@ -1337,7 +1337,7 @@ end)
 registerControl(MovementSettings, "AntiFling", antiFlingRef)
 
 window:CreateLabel(movementTab, "Animations")
-window:CreateButton(movementTab, "Play /e laugh", function()
+window:CreateButton(movementTab, "laugh", function()
     local tcs = TextChatService
     if tcs.ChatVersion == Enum.ChatVersion.TextChatService then
         local channel = tcs.TextChannels:FindFirstChild("RBXGeneral")
@@ -1358,7 +1358,7 @@ window:CreateButton(movementTab, "Autokill", function()
 end)
 
 window:CreateLabel(movementTab, "Fling")
-local flingRef = window:CreateToggle(movementTab, "Fling All", false, function(v)
+local flingRef = window:CreateToggle(movementTab, "Touch fling", false, function(v)
     MovementSettings.Fling = v
     if v then
         if flingRunning then return end
@@ -1387,8 +1387,8 @@ local flingRef = window:CreateToggle(movementTab, "Fling All", false, function(v
 end)
 registerControl(MovementSettings, "Fling", flingRef)
 
-window:CreateLabel(aimbotTab, "Murder Mystery")
-local mm2LockRef = window:CreateToggle(aimbotTab, "Lock-On Murderer", false, function(v)
+window:CreateLabel(aimbotTab, "Aimbot")
+local mm2LockRef = window:CreateToggle(aimbotTab, "Default aimbot", false, function(v)
     AimbotSettings.MM2LockOn = v
     if mm2Conn then mm2Conn:Disconnect(); mm2Conn = nil end
     if v then
@@ -1416,7 +1416,7 @@ registerControl(AimbotSettings, "MM2Smooth", mm2SmoothRef)
 local mm2RangeRef = window:CreateSlider(aimbotTab, "Distance", 50, 1000, 500, function(v) AimbotSettings.MM2Range = v end)
 registerControl(AimbotSettings, "MM2Range", mm2RangeRef)
 
-local mm2TargetRef = window:CreateDropdown(aimbotTab, "Target Bone", { "Head", "Torso", "Small Avatar" }, "Small Avatar", function(v)
+local mm2TargetRef = window:CreateDropdown(aimbotTab, "Target Bone", { "Head", "Torso", "Small Avatar" }, "Head", function(v)
     AimbotSettings.MM2Target = v
 end)
 registerControl(AimbotSettings, "MM2Target", mm2TargetRef)
@@ -1458,7 +1458,7 @@ registerControl(AimbotSettings, "TriggerBot", triggerRef)
 local triggerRangeRef = window:CreateSlider(aimbotTab, "Trigger Range", 20, 400, 150, function(v) AimbotSettings.TriggerRange = v end)
 registerControl(AimbotSettings, "TriggerRange", triggerRangeRef)
 
-window:CreateLabel(aimbotTab, "Auto Fire")
+window:CreateLabel(aimbotTab, "AutoShoot")
 local autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire  [B]", false, function(v)
     AimbotSettings.AutoFire = v
     if autoFireConn then autoFireConn:Disconnect(); autoFireConn = nil end
@@ -1492,19 +1492,19 @@ local wallCheckRef = window:CreateToggle(aimbotTab, "Wall Check", true, function
 end)
 registerControl(AimbotSettings, "WallCheck", wallCheckRef)
 
-window:CreateLabel(aimbotTab, "Kill Everyone")
-window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
+window:CreateLabel(aimbotTab, "Murderer OP")
+window:CreateButton(aimbotTab, "Kill Everyone", function()
     if not isLocalMurderer() then
         notify("You are not the Murderer")
         return
     end
     if killAllRunning then return end
     killAllRunning = true
-    notify("Killing everyone · 5s")
+    notify("Killing everyone")
 
     task.spawn(function()
         local startTime = tick()
-        local duration = 5
+        local duration = 3
         local spinAngle = 0
         local lastEquip = 0
 
@@ -1555,7 +1555,7 @@ window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
         if spinConn then spinConn:Disconnect() end
         restoreHitboxes()
         killAllRunning = false
-        notify("Done · 5s elapsed")
+        notify("Done!")
     end)
 end)
 
@@ -1745,16 +1745,16 @@ end)
 registerControl(FarmSettings, "PickupRadius", pickupRadiusRef)
 
 window:CreateLabel(farmTab, "Live Stats")
-local coinCountFrame = window:CreateParagraph(farmTab, "Coins: 0")
+local coinCountFrame = window:CreateParagraph(farmTab, "0")
 local coinCountLabel = coinCountFrame:FindFirstChildOfClass("TextLabel")
-local statusFrame = window:CreateParagraph(farmTab, "Status: Idle")
+local statusFrame = window:CreateParagraph(farmTab, "Idle")
 local statusLabel = statusFrame:FindFirstChildOfClass("TextLabel")
 
 coinCountSetter = function(n)
-    if coinCountLabel then coinCountLabel.Text = "Coins: " .. tostring(n) end
+    if coinCountLabel then coinCountLabel.Text = "" .. tostring(n) end
 end
 coinStatusSetter = function(txt)
-    if statusLabel then statusLabel.Text = "Status: " .. txt end
+    if statusLabel then statusLabel.Text = "" .. txt end
 end
 
 local remotes = ReplicatedStorage:FindFirstChild("Remotes")
@@ -1823,13 +1823,13 @@ if roundEndFadeEvent then
 end
 
 window:CreateLabel(miscTab, "Gun")
-window:CreateButton(miscTab, "Bring Gun", function()
+window:CreateButton(miscTab, "Pick up Gun", function()
     local ok, reason = bringGunToPlayer()
     if ok then notify("Gun incoming (" .. tostring(reason) .. ")")
     else notify("Failed: " .. tostring(reason)) end
 end)
 
-local autoTpGunRef = window:CreateToggle(miscTab, "Auto Bring Gun", false, function(v)
+local autoTpGunRef = window:CreateToggle(miscTab, "Auto pick up Gun", false, function(v)
     MiscSettings.AutoTpGun = v
     if v then
         if autoTpGunThread then return end
@@ -1848,7 +1848,7 @@ end)
 registerControl(MiscSettings, "AutoTpGun", autoTpGunRef)
 
 window:CreateLabel(miscTab, "Silent Aim")
-local silentRef = window:CreateToggle(miscTab, "Silent Aim (Macro)", false, function(v)
+local silentRef = window:CreateToggle(miscTab, "Silent Aim", false, function(v)
     MiscSettings.SilentAim = v
     if silentAimConn then silentAimConn:Disconnect(); silentAimConn = nil end
     if v then
@@ -2033,4 +2033,4 @@ window:SetConfigSnapshot(snapshotSettings)
 window:SetConfigApply(applyConfig)
 window:BuildConfigPage()
 
-API:Notify("Happy Hub loaded")
+API:Notify("Hello again "..LocalPlayer.DisplayName, 3)
