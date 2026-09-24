@@ -34,7 +34,7 @@ local AimbotSettings = {
     MM2LockOn = false, MM2Smooth = 8, MM2Range = 500, MM2Target = "Small Avatar",
     TriggerBot = false, TriggerRange = 150, AutoFire = false, WallCheck = true,
 }
-local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false }
+local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false }
 local MiscSettings = {
     InfJump = false, AntiAFK = false, AutoTpGun = false,
     SilentAim = false, MusicCompanion = false,
@@ -51,7 +51,7 @@ local function registerControl(t, k, c) pcall(function() API:RegisterControl(t, 
 
 local noclipConn, godConn, antiAFKConn, flyConn, flyBV, flyBG
 local mm2Conn, silentAimConn, triggerBotConn, autoFireConn
-local autoTpGunThread, flingTask, tpAllTask, nameTagUpdater, mm2PeriodicThread
+local autoTpGunThread, flingTask, tpAllTask, nameTagUpdater, mm2PeriodicThread, gunESPThread
 local antiFlingConnections = {}
 local antiFlingActive = false
 local flingRunning = false
@@ -79,6 +79,19 @@ local HeroWatcher = {
     active = false,
     thread = nil,
     originalSheriffName = nil,
+}
+
+local GunESP = {
+    active = false,
+    highlights = {},
+    billboards = {},
+    trackedGun = nil,
+}
+
+local HitboxExpander = {
+    active = false,
+    savedSizes = {},
+    size = Vector3.new(40, 40, 40),
 }
 
 local function getHRP()
@@ -217,6 +230,76 @@ local function getMM2TargetPart(character)
     end
 end
 
+local function equipKnife()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") and tool.Name:lower():find("knife", 1, true) then
+            hum:EquipTool(tool)
+            return true
+        end
+    end
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if bp then
+        for _, tool in ipairs(bp:GetChildren()) do
+            if tool:IsA("Tool") and tool.Name:lower():find("knife", 1, true) then
+                hum:EquipTool(tool)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function expandHitbox(plr)
+    if not plr or plr == LocalPlayer then return end
+    if not plr.Character then return end
+    local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    if HitboxExpander.savedSizes[plr] then return end
+    HitboxExpander.savedSizes[plr] = {
+        size = hrp.Size,
+        transparency = hrp.Transparency,
+        cancollide = hrp.CanCollide,
+        massless = hrp.Massless,
+        anchored = hrp.Anchored,
+    }
+    hrp.Size = HitboxExpander.size
+    hrp.Transparency = 1
+    hrp.CanCollide = false
+    hrp.Massless = false
+    hrp.Anchored = false
+end
+
+local function expandHitboxForAll()
+    for _, plr in ipairs(Players:GetPlayers()) do expandHitbox(plr) end
+    HitboxExpander.active = true
+end
+
+local function restoreHitbox(plr)
+    local data = HitboxExpander.savedSizes[plr]
+    if not data then return end
+    if plr and plr.Parent and plr.Character then
+        local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.Size = data.size
+            hrp.Transparency = data.transparency
+            hrp.CanCollide = data.cancollide
+            hrp.Massless = data.massless
+            hrp.Anchored = data.anchored
+        end
+    end
+    HitboxExpander.savedSizes[plr] = nil
+end
+
+local function restoreHitboxes()
+    for plr, _ in pairs(HitboxExpander.savedSizes) do restoreHitbox(plr) end
+    HitboxExpander.savedSizes = {}
+    HitboxExpander.active = false
+end
+
 local tpEvent = nil
 local function getTpEvent()
     if tpEvent and tpEvent.Parent then return tpEvent end
@@ -309,6 +392,7 @@ local ESP_COLORS = {
         Innocent = Color3.fromRGB(56, 255, 112),
     },
     OG = Color3.fromRGB(255, 255, 255),
+    Gun = Color3.fromRGB(255, 200, 0),
 }
 
 local function clearHighlights(plr)
@@ -317,6 +401,65 @@ local function clearHighlights(plr)
     if ESP.nameTags[plr] then
         if ESP.nameTags[plr].bb and ESP.nameTags[plr].bb.Parent then ESP.nameTags[plr].bb:Destroy() end
         ESP.nameTags[plr] = nil
+    end
+end
+
+local function clearGunESP()
+    for _, h in pairs(GunESP.highlights) do
+        if h and h.Parent then h:Destroy() end
+    end
+    for _, bb in pairs(GunESP.billboards) do
+        if bb and bb.Parent then bb:Destroy() end
+    end
+    GunESP.highlights = {}
+    GunESP.billboards = {}
+    GunESP.trackedGun = nil
+end
+
+local function applyGunESP()
+    if not VisualSettings.GunESP then
+        clearGunESP()
+        return
+    end
+    local gun = findGunDrop()
+    if not gun then
+        clearGunESP()
+        return
+    end
+    if GunESP.trackedGun ~= gun then
+        clearGunESP()
+        GunESP.trackedGun = gun
+    end
+
+    if not GunESP.highlights[gun] then
+        local h = Instance.new("Highlight")
+        h.Name = "HH_GunESP"
+        h.FillColor = ESP_COLORS.Gun
+        h.FillTransparency = 0.3
+        h.OutlineTransparency = 1
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Parent = gun
+        GunESP.highlights[gun] = h
+    end
+
+    if not GunESP.billboards[gun] then
+        local bb = Instance.new("BillboardGui")
+        bb.Name = "HH_GunTag"
+        bb.Size = UDim2.new(0, 160, 0, 24)
+        bb.StudsOffset = Vector3.new(0, 3, 0)
+        bb.AlwaysOnTop = true
+        bb.Adornee = gun
+        bb.Parent = gun
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, 0, 1, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = "Gun Dropped here!"
+        lbl.TextColor3 = ESP_COLORS.Gun
+        lbl.FontFace = Font.fromEnum(Enum.Font.Code)
+        lbl.TextSize = 13
+        lbl.TextStrokeTransparency = 1
+        lbl.Parent = bb
+        GunESP.billboards[gun] = bb
     end
 end
 
@@ -378,7 +521,7 @@ local function applyESP(plr)
                 bb.Adornee = hrp
                 bb.Parent = hrp
                 local lbl = Instance.new("TextLabel")
-                lbl.Size = UDim2.new(1, 0, 1, 0)
+                lbl.Size = UDim2.new(1, 0, 1, 1)
                 lbl.BackgroundTransparency = 1
                 lbl.TextColor3 = Color3.new(1, 1, 1)
                 lbl.FontFace = Font.fromEnum(Enum.Font.Code)
@@ -400,6 +543,7 @@ local function refreshAllESP()
             if not plr.Character then clearHighlights(plr) else applyESP(plr) end
         end
     end
+    applyGunESP()
 end
 
 local function startNameTagUpdater()
@@ -551,6 +695,7 @@ local function onRoundEnd()
     stopHeroWatcher()
     HeroWatcher.originalSheriffName = nil
     clearHeroFlags()
+    clearGunESP()
 end
 
 local function updateRoleCache(data)
@@ -731,6 +876,18 @@ local function getBestCoin()
     return bestPart
 end
 
+local function playIdleAnimation(hum)
+    local animator = hum:FindFirstChildOfClass("Animator")
+    if not animator then return end
+    local idleAnim = Instance.new("Animation")
+    idleAnim.AnimationId = "rbxassetid://507766666"
+    local track = animator:LoadAnimation(idleAnim)
+    track.Priority = Enum.AnimationPriority.Idle
+    track.Looped = true
+    track:Play()
+    return track
+end
+
 local function stopCoinCollector()
     if not CoinCollecting then return end
     CoinCollecting = false
@@ -738,6 +895,8 @@ local function stopCoinCollector()
     if CoinVelocity then CoinVelocity:Destroy(); CoinVelocity = nil end
     if CoinGyro then CoinGyro:Destroy(); CoinGyro = nil end
     if coinStatusSetter then coinStatusSetter("Idle") end
+    local hum = getHumanoid()
+    if hum then hum.PlatformStand = false end
 end
 
 local function startCoinCollector()
@@ -750,21 +909,32 @@ local function startCoinCollector()
     if coinStatusSetter then coinStatusSetter("Collecting") end
 
     local hrp = getHRP()
-    if not hrp then stopCoinCollector(); return end
+    local hum = getHumanoid()
+    if not hrp or not hum then stopCoinCollector(); return end
+
+    hum.PlatformStand = true
+    playIdleAnimation(hum)
 
     CoinVelocity = Instance.new("BodyVelocity")
     CoinVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    CoinVelocity.P = 1250
     CoinVelocity.Parent = hrp
 
     CoinGyro = Instance.new("BodyGyro")
     CoinGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
     CoinGyro.P = 1e4
+    CoinGyro.D = 500
     CoinGyro.CFrame = hrp.CFrame
     CoinGyro.Parent = hrp
 
     CoinConnection = RunService.Heartbeat:Connect(function()
         local currentHRP = getHRP()
-        if not currentHRP then stopCoinCollector(); return end
+        local currentHum = getHumanoid()
+        if not currentHRP or not currentHum then stopCoinCollector(); return end
+
+        if currentHum.PlatformStand == false then
+            currentHum.PlatformStand = true
+        end
 
         local murderer = getMurderer()
         local evadeDirection = nil
@@ -783,10 +953,6 @@ local function startCoinCollector()
             local targetVel = evadeDirection * math.min(CoinSpeed * 1.5, 75)
             CoinVelocity.Velocity = targetVel
             CoinGyro.CFrame = CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection)
-            local cam = workspace.CurrentCamera
-            if cam then
-                cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection), 0.2)
-            end
             return
         end
 
@@ -799,12 +965,18 @@ local function startCoinCollector()
         end
 
         local direction = (target.Position - currentHRP.Position).Unit
-        CoinVelocity.Velocity = direction * CoinSpeed
-        CoinGyro.CFrame = CFrame.lookAt(currentHRP.Position, target.Position)
-        local cam = workspace.CurrentCamera
-        if cam then
-            cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(currentHRP.Position, target.Position), 0.2)
+        local distance = (target.Position - currentHRP.Position).Magnitude
+
+        local speed = CoinSpeed
+        if distance < 5 then
+            speed = CoinSpeed * 0.4
+        elseif distance < 15 then
+            speed = CoinSpeed * 0.7
         end
+
+        CoinVelocity.Velocity = direction * speed
+        CoinGyro.CFrame = CFrame.lookAt(currentHRP.Position, target.Position)
+
         if coinStatusSetter then coinStatusSetter("Collecting") end
     end)
 end
@@ -991,15 +1163,14 @@ local mm2ESPToggleRef = window:CreateToggle(espTab, "Murder Mystery 2", false, f
     if v then
         if not mm2PeriodicThread then
             mm2PeriodicThread = task.spawn(function()
-                while ESP.active.MM2 do
+                while ESP.active.MM2 or VisualSettings.GunESP do
                     task.wait(1)
                     if ESP.active.MM2 then refreshAllESP() end
+                    if VisualSettings.GunESP then applyGunESP() end
                 end
                 mm2PeriodicThread = nil
             end)
         end
-    else
-        if mm2PeriodicThread then task.cancel(mm2PeriodicThread); mm2PeriodicThread = nil end
     end
 end)
 registerControl(VisualSettings, "MM2ESP", mm2ESPToggleRef)
@@ -1019,6 +1190,25 @@ local nameTagToggleRef = window:CreateToggle(espTab, "Nametag", false, function(
     if v then startNameTagUpdater() else stopNameTagUpdater() end
 end)
 registerControl(VisualSettings, "NameTags", nameTagToggleRef)
+
+local gunESPToggleRef = window:CreateToggle(espTab, "Gun ESP", false, function(v)
+    VisualSettings.GunESP = v
+    applyGunESP()
+    if v then
+        if not gunESPThread then
+            gunESPThread = task.spawn(function()
+                while VisualSettings.GunESP do
+                    task.wait(0.5)
+                    if VisualSettings.GunESP then applyGunESP() end
+                end
+                gunESPThread = nil
+            end)
+        end
+    else
+        clearGunESP()
+    end
+end)
+registerControl(VisualSettings, "GunESP", gunESPToggleRef)
 
 window:CreateLabel(movementTab, "Fly")
 local flyToggleRef = window:CreateToggle(movementTab, "Active Fly", false, function(v)
@@ -1310,12 +1500,15 @@ window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
     end
     if killAllRunning then return end
     killAllRunning = true
-    notify("Killing everyone · 7s")
+    notify("Killing everyone · 5s")
 
     task.spawn(function()
         local startTime = tick()
-        local duration = 7
+        local duration = 5
         local spinAngle = 0
+        local lastEquip = 0
+
+        expandHitboxForAll()
 
         local spinConn = RunService.RenderStepped:Connect(function(dt)
             local hrp = getHRP()
@@ -1325,6 +1518,12 @@ window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
         end)
 
         while killAllRunning and tick() - startTime < duration do
+            local now = tick()
+            if now - lastEquip > 0.5 then
+                lastEquip = now
+                equipKnife()
+            end
+
             for _, plr in ipairs(Players:GetPlayers()) do
                 if not killAllRunning then break end
                 if tick() - startTime >= duration then break end
@@ -1354,8 +1553,9 @@ window:CreateButton(aimbotTab, "Kill Everyone (Murderer only)", function()
         end
 
         if spinConn then spinConn:Disconnect() end
+        restoreHitboxes()
         killAllRunning = false
-        notify("Done · 7s elapsed")
+        notify("Done · 5s elapsed")
     end)
 end)
 
@@ -1722,6 +1922,7 @@ local function snapshotSettings()
             MM2ESP   = VisualSettings.MM2ESP,
             OGESP    = VisualSettings.OGESP,
             NameTags = VisualSettings.NameTags,
+            GunESP   = VisualSettings.GunESP,
         },
         Misc = {
             InfJump        = MiscSettings.InfJump,
@@ -1821,6 +2022,7 @@ local function applyConfig(data)
     ESP.active.OG      = VisualSettings.OGESP
     ESP.active.NameTag = VisualSettings.NameTags
     refreshAllESP()
+    applyGunESP()
     if VisualSettings.NameTags then startNameTagUpdater() else stopNameTagUpdater() end
 
     API:SyncUIControls()
