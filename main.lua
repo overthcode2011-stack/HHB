@@ -43,6 +43,7 @@ local MiscSettings = {
 local MovementSettings = {
     Noclip = false, God = false, Fly = false, WalkSpeed = 16, JumpPower = 50,
     FlySpeed = 40, AntiFling = false, Fling = false, TPAll = false,
+    FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, Shoulder = false, Invisible = false, NoobFace = false, Rainbow = false }
 local FarmSettings = { AutoFarm = false, ManualCollect = false, CoinSpeed = 20, PickupRadius = 3 }
@@ -54,6 +55,11 @@ local noclipConn, godConn, antiAFKConn, flyConn, flyBV, flyBG
 local mm2Conn, silentAimConn, triggerBotConn, autoFireConn
 local autoTpGunThread, flingTask, tpAllTask, nameTagUpdater, mm2PeriodicThread, gunESPThread
 local fovConn, fovGui, fovFrame
+local flingTargetThread, flingTargetRunning = false
+local flingOriginalCFrame = nil
+local flingOriginalPosition = nil
+local flingWasFlingOn = false
+local flingToggleRef = nil
 local antiFlingConnections = {}
 local antiFlingActive = false
 local flingRunning = false
@@ -228,7 +234,7 @@ local function getPlayerWithItem(itemName)
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             local char = plr.Character
-            local bp = plr:FindFirstChild("Backpack")
+            local bp = plr:FindFirstChildOfClass("Backpack")
             if (char and char:FindFirstChild(itemName)) or (bp and bp:FindFirstChild(itemName)) then
                 return plr
             end
@@ -1035,6 +1041,208 @@ local function startCoinCollector()
     end)
 end
 
+-- ============ FLING SYSTEM ============
+local function getFlingTargetByName(name)
+    if not name then return nil end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and (plr.Name == name or plr.DisplayName == name) then
+            return plr
+        end
+    end
+    return nil
+end
+
+local function autoEnableFling()
+    flingWasFlingOn = MovementSettings.Fling
+    if not MovementSettings.Fling then
+        MovementSettings.Fling = true
+        if flingToggleRef and flingToggleRef.SetState then
+            pcall(function() flingToggleRef.SetState(true) end)
+        end
+        if not flingRunning then
+            flingRunning = true
+            flingTask = task.spawn(function()
+                while flingRunning do
+                    task.wait()
+                    local character = LocalPlayer.Character
+                    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local velo = hrp.Velocity
+                        hrp.Velocity = velo * 10000 + Vector3.new(0, 10000, 0)
+                        RunService.RenderStepped:Wait()
+                        hrp.Velocity = velo
+                        RunService.Stepped:Wait()
+                    end
+                end
+                flingTask = nil
+            end)
+        end
+    end
+end
+
+local function autoDisableFling()
+    if not flingWasFlingOn then
+        MovementSettings.Fling = false
+        if flingToggleRef and flingToggleRef.SetState then
+            pcall(function() flingToggleRef.SetState(false) end)
+        end
+        flingRunning = false
+        if flingTask then task.cancel(flingTask); flingTask = nil end
+        local hrp = getHRP()
+        if hrp then hrp.Velocity = Vector3.zero end
+    end
+    flingWasFlingOn = false
+end
+
+local function stopFlingTarget()
+    flingTargetRunning = false
+    if flingTargetThread then
+        task.cancel(flingTargetThread)
+        flingTargetThread = nil
+    end
+    local hrp = getHRP()
+    if hrp then
+        hrp.Velocity = Vector3.zero
+        hrp.RotVelocity = Vector3.zero
+        if flingOriginalCFrame then
+            hrp.CFrame = flingOriginalCFrame
+        end
+    end
+    flingOriginalCFrame = nil
+    flingOriginalPosition = nil
+    autoDisableFling()
+end
+
+local function startFlingTarget(targetPlr)
+    if not targetPlr then
+        notify("No target selected")
+        return
+    end
+    if targetPlr == LocalPlayer then
+        notify("Cannot fling yourself")
+        return
+    end
+    if flingTargetRunning then
+        stopFlingTarget()
+    end
+
+    local myHRP = getHRP()
+    if not myHRP then
+        notify("No character")
+        return
+    end
+
+    flingOriginalCFrame = myHRP.CFrame
+    flingOriginalPosition = myHRP.Position
+
+    autoEnableFling()
+
+    flingTargetRunning = true
+    notify("Flinging " .. targetPlr.DisplayName)
+
+    flingTargetThread = task.spawn(function()
+        local startTime = tick()
+        local duration = MovementSettings.FlingDuration or 3
+        local maxDist = MovementSettings.FlingDistance or 500
+        local flinged = false
+
+        while flingTargetRunning and tick() - startTime < duration do
+            local currentHRP = getHRP()
+            local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
+            if not currentHRP or not theirHRP then
+                break
+            end
+
+            local dist = (currentHRP.Position - theirHRP.Position).Magnitude
+            if dist >= maxDist then
+                flinged = true
+                notify(targetPlr.DisplayName .. " FLINGED!")
+                break
+            end
+
+            local elapsed = tick() - startTime
+            local phase = elapsed * 12
+            local offsetX = math.sin(phase) * 3
+            local offsetY = math.cos(phase * 1.3) * 3
+            local offsetZ = math.sin(phase * 0.7) * 3
+
+            local theirPos = theirHRP.Position
+            local baseCFrame = CFrame.new(
+                theirPos.X + offsetX,
+                theirPos.Y + offsetY + 3,
+                theirPos.Z + offsetZ
+            )
+
+            local spin = CFrame.Angles(
+                math.sin(phase * 1.1) * 0.8,
+                phase * 2,
+                math.cos(phase * 0.9) * 0.8
+            )
+
+            local newCFrame = baseCFrame * spin
+
+            if not fireTeleportToPart(currentHRP, theirHRP) then
+                currentHRP.CFrame = newCFrame
+            else
+                task.wait(0.02)
+                local h = getHRP()
+                if h then
+                    h.CFrame = newCFrame
+                end
+            end
+
+            local velo = currentHRP.Velocity
+            currentHRP.Velocity = velo * 5000 + Vector3.new(
+                math.sin(phase) * 8000,
+                math.cos(phase * 1.3) * 8000 + 5000,
+                math.cos(phase) * 8000
+            )
+            currentHRP.RotVelocity = Vector3.new(
+                math.sin(phase * 1.5) * 300,
+                math.cos(phase * 1.2) * 300,
+                math.sin(phase * 0.9) * 300
+            )
+
+            RunService.RenderStepped:Wait()
+            currentHRP.Velocity = velo
+            currentHRP.RotVelocity = Vector3.zero
+            RunService.Stepped:Wait()
+        end
+
+        flingTargetRunning = false
+
+        if not flinged then
+            notify(targetPlr.DisplayName .. " not flinged (no 500m in 3s)")
+        end
+
+        local h = getHRP()
+        if h then
+            h.Velocity = Vector3.zero
+            h.RotVelocity = Vector3.zero
+            if flingOriginalCFrame then
+                h.CFrame = flingOriginalCFrame
+            end
+        end
+
+        flingOriginalCFrame = nil
+        flingOriginalPosition = nil
+        flingTargetThread = nil
+
+        autoDisableFling()
+    end)
+end
+
+local function getPlayerNames()
+    local names = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            table.insert(names, plr.Name)
+        end
+    end
+    return names
+end
+-- ==========================================
+
 local function attachFlyBodyMovers()
     local hrp = getHRP(); local hum = getHumanoid()
     if not hrp or not hum then return end
@@ -1230,6 +1438,52 @@ window:CreateButton(playersTab, "Teleport to Target", function()
     else
         notify("No " .. target .. " found")
     end
+end)
+
+window:CreateLabel(playersTab, "Fling")
+_G.__HH_FlingTarget = nil
+local flingDropdownRef = window:CreateDropdown(playersTab, "Player", getPlayerNames(), "", function(v)
+    _G.__HH_FlingTarget = v
+end)
+
+Players.PlayerAdded:Connect(function()
+    task.wait(1)
+    if flingDropdownRef and flingDropdownRef.Refresh then
+        pcall(function() flingDropdownRef:Refresh(getPlayerNames()) end)
+    end
+end)
+Players.PlayerRemoving:Connect(function()
+    task.wait(0.2)
+    if flingDropdownRef and flingDropdownRef.Refresh then
+        pcall(function() flingDropdownRef:Refresh(getPlayerNames()) end)
+    end
+end)
+
+window:CreateButton(playersTab, "Fling Target", function()
+    local plr = getFlingTargetByName(_G.__HH_FlingTarget)
+    if not plr then
+        notify("Select a player")
+        return
+    end
+    startFlingTarget(plr)
+end)
+
+window:CreateButton(playersTab, "Fling Murderer", function()
+    local plr = getMurderer()
+    if not plr then
+        notify("No Murderer found")
+        return
+    end
+    startFlingTarget(plr)
+end)
+
+window:CreateButton(playersTab, "Fling Sheriff", function()
+    local plr = getSheriff()
+    if not plr then
+        notify("No Sheriff/Hero found")
+        return
+    end
+    startFlingTarget(plr)
 end)
 
 window:CreateLabel(playersTab, "Server")
@@ -1457,7 +1711,7 @@ window:CreateButton(movementTab, "Autokill", function()
 end)
 
 window:CreateLabel(movementTab, "Fling")
-local flingRef = window:CreateToggle(movementTab, "Touch fling", false, function(v)
+flingToggleRef = window:CreateToggle(movementTab, "Touch fling", false, function(v)
     MovementSettings.Fling = v
     if v then
         if flingRunning then return end
@@ -1484,7 +1738,7 @@ local flingRef = window:CreateToggle(movementTab, "Touch fling", false, function
         if hrp then hrp.Velocity = Vector3.zero end
     end
 end)
-registerControl(MovementSettings, "Fling", flingRef)
+registerControl(MovementSettings, "Fling", flingToggleRef)
 
 window:CreateLabel(aimbotTab, "Aimbot")
 local mm2LockRef = window:CreateToggle(aimbotTab, "Default aimbot", false, function(v)
@@ -1933,6 +2187,7 @@ if roundEndFadeEvent then
     roundEndFadeEvent.OnClientEvent:Connect(function()
         roundActive = false
         stopCoinCollector()
+        stopFlingTarget()
         RoleCache = {}
         onRoundEnd()
         task.wait(0.05)
@@ -2056,15 +2311,18 @@ local function snapshotSettings()
             MusicCompanion = MiscSettings.MusicCompanion,
         },
         Movement = {
-            Noclip    = MovementSettings.Noclip,
-            God       = MovementSettings.God,
-            Fly       = MovementSettings.Fly,
-            WalkSpeed = MovementSettings.WalkSpeed,
-            JumpPower = MovementSettings.JumpPower,
-            FlySpeed  = MovementSettings.FlySpeed,
-            AntiFling = MovementSettings.AntiFling,
-            Fling     = MovementSettings.Fling,
-            TPAll     = MovementSettings.TPAll,
+            Noclip       = MovementSettings.Noclip,
+            God          = MovementSettings.God,
+            Fly          = MovementSettings.Fly,
+            WalkSpeed    = MovementSettings.WalkSpeed,
+            JumpPower    = MovementSettings.JumpPower,
+            FlySpeed     = MovementSettings.FlySpeed,
+            AntiFling    = MovementSettings.AntiFling,
+            Fling        = MovementSettings.Fling,
+            TPAll        = MovementSettings.TPAll,
+            FlingTarget  = MovementSettings.FlingTarget,
+            FlingDuration= MovementSettings.FlingDuration,
+            FlingDistance= MovementSettings.FlingDistance,
         },
         Avatar = {
             Korblox   = AvatarSettings.Korblox,
