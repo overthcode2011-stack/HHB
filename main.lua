@@ -266,6 +266,117 @@ local function getMM2TargetPart(character)
     end
 end
 
+local function getGunRaycastCFrame()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    local att = hrp:FindFirstChild("GunRaycastAttachment")
+    return att and att.WorldCFrame
+end
+
+local function getEquippedGun()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    for _, t in ipairs(char:GetChildren()) do
+        if t:IsA("Tool") and t.Name:lower():find("gun", 1, true) then
+            return t
+        end
+    end
+    return nil
+end
+
+local function predictAim(targetPart)
+    if not targetPart then return nil end
+    local ok, ping = pcall(function() return LocalPlayer:GetNetworkPing() end)
+    if not ok or not ping then ping = 0.05 end
+    local vel = targetPart.AssemblyLinearVelocity
+    return CFrame.new(targetPart.Position + vel * (ping * 1.15))
+end
+
+local function fireGunAt(targetPart)
+    local gun = getEquippedGun()
+    if not gun then return false end
+    local shootRemote = gun:FindFirstChild("Shoot")
+    if not shootRemote or not shootRemote:IsA("RemoteEvent") then return false end
+    local origin = getGunRaycastCFrame()
+    if not origin then return false end
+    local targetCF = predictAim(targetPart)
+    if not targetCF then return false end
+    pcall(function()
+        shootRemote:FireServer(origin, targetCF)
+    end)
+    return true
+end
+
+local function isGunShootRemote(remote)
+    if not remote or not remote:IsA("RemoteEvent") then return false end
+    if remote.Name ~= "Shoot" then return false end
+    local parent = remote.Parent
+    if parent and parent:IsA("Tool") then
+        return parent.Name:lower():find("gun", 1, true) ~= nil
+    end
+    return false
+end
+
+local silentAimHookInstalled = false
+local hookNamecall = nil
+local getNamecall = nil
+
+pcall(function()
+    hookNamecall = hookmetamethod
+    getNamecall  = getnamecallmethod
+end)
+
+if type(hookNamecall) == "function" and type(getNamecall) == "function" then
+    local ok = pcall(function()
+        local oldNamecall
+        oldNamecall = hookNamecall(game, "__namecall", function(self, ...)
+            if getNamecall() == "FireServer" and isGunShootRemote(self) then
+                if MiscSettings.SilentAim then
+                    local murderer = getMurderer()
+                    if murderer and murderer.Character then
+                        local targetPart = getMM2TargetPart(murderer.Character)
+                        if targetPart then
+                            local cam = workspace.CurrentCamera
+                            if not AimbotSettings.WallCheck
+                               or isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then
+                                local args = table.pack(...)
+                                local newTarget = predictAim(targetPart)
+                                if newTarget then
+                                    args[2] = newTarget
+                                    return oldNamecall(self, table.unpack(args, 1, args.n))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end)
+    silentAimHookInstalled = ok
+end
+
+if not silentAimHookInstalled then
+    UserInputService.InputBegan:Connect(function(input, gp)
+        if gp then return end
+        if not MiscSettings.SilentAim then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+           and input.UserInputType ~= Enum.UserInputType.Touch then return end
+        local murderer = getMurderer()
+        if not murderer or not murderer.Character then return end
+        local targetPart = getMM2TargetPart(murderer.Character)
+        if not targetPart then return end
+        local cam = workspace.CurrentCamera
+        if AimbotSettings.WallCheck
+           and not isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then return end
+        task.spawn(function()
+            fireGunAt(targetPart)
+        end)
+    end)
+end
+
 local function equipKnife()
     local char = LocalPlayer.Character
     if not char then return false end
@@ -1815,6 +1926,7 @@ local triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function
     AimbotSettings.TriggerBot = v
     if triggerBotConn then triggerBotConn:Disconnect(); triggerBotConn = nil end
     if v then
+        local lastShot = 0
         triggerBotConn = RunService.RenderStepped:Connect(function()
             if not AimbotSettings.TriggerBot then return end
             local murderer = getMurderer()
@@ -1824,18 +1936,18 @@ local triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function
             local myHRP = getHRP()
             if not myHRP then return end
             if AimbotSettings.WallCheck then
-                if not isVisible(workspace.CurrentCamera.CFrame.Position, targetPart.Position, murderer.Character) then return end
+                local cam = workspace.CurrentCamera
+                if not isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then return end
             end
-            local camera = workspace.CurrentCamera
-            local sp, on = camera:WorldToViewportPoint(targetPart.Position)
+            local cam = workspace.CurrentCamera
+            local sp, on = cam:WorldToViewportPoint(targetPart.Position)
             if not on then return end
             local mouse = UserInputService:GetMouseLocation()
             if (Vector2.new(sp.X, sp.Y) - mouse).Magnitude < 12 then
-                pcall(function()
-                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                    task.wait(0.03)
-                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-                end)
+                local now = tick()
+                if now - lastShot < 0.08 then return end
+                lastShot = now
+                fireGunAt(targetPart)
             end
         end)
     end
@@ -1850,7 +1962,7 @@ local autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire  [B]", false, func
     AimbotSettings.AutoFire = v
     if autoFireConn then autoFireConn:Disconnect(); autoFireConn = nil end
     if v then
-        local lastShotTime = 0
+        local lastShot = 0
         autoFireConn = RunService.RenderStepped:Connect(function()
             if not AimbotSettings.AutoFire then return end
             local murderer = getMurderer()
@@ -1858,17 +1970,13 @@ local autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire  [B]", false, func
             local targetPart = getMM2TargetPart(murderer.Character)
             if not targetPart then return end
             if AimbotSettings.WallCheck then
-                local camera = workspace.CurrentCamera
-                if not isVisible(camera.CFrame.Position, targetPart.Position, murderer.Character) then return end
+                local cam = workspace.CurrentCamera
+                if not isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then return end
             end
             local now = tick()
-            if now - lastShotTime < 0.15 then return end
-            lastShotTime = now
-            pcall(function()
-                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                task.wait(0.03)
-                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-            end)
+            if now - lastShot < 0.15 then return end
+            lastShot = now
+            fireGunAt(targetPart)
         end)
     end
 end)
@@ -1895,6 +2003,9 @@ window:CreateButton(aimbotTab, "Kill Everyone", function()
         local spinAngle = 0
         local lastEquip = 0
 
+        local myHRP = getHRP()
+        local originalCFrame = myHRP and myHRP.CFrame or nil
+
         expandHitboxForAll()
 
         local spinConn = RunService.RenderStepped:Connect(function(dt)
@@ -1916,10 +2027,10 @@ window:CreateButton(aimbotTab, "Kill Everyone", function()
                 if tick() - startTime >= duration then break end
                 if plr ~= LocalPlayer and plr.Character then
                     local theirHRP = plr.Character:FindFirstChild("HumanoidRootPart")
-                    local myHRP = getHRP()
-                    if theirHRP and myHRP then
-                        if not fireTeleportToPart(myHRP, theirHRP) then
-                            myHRP.CFrame = CFrame.new(theirHRP.Position, theirHRP.Position + theirHRP.CFrame.LookVector)
+                    local curHRP = getHRP()
+                    if theirHRP and curHRP then
+                        if not fireTeleportToPart(curHRP, theirHRP) then
+                            curHRP.CFrame = CFrame.new(theirHRP.Position, theirHRP.Position + theirHRP.CFrame.LookVector)
                         else
                             task.wait(0.03)
                             local h = getHRP()
@@ -1941,8 +2052,19 @@ window:CreateButton(aimbotTab, "Kill Everyone", function()
 
         if spinConn then spinConn:Disconnect() end
         restoreHitboxes()
+
+        local finalHRP = getHRP()
+        if finalHRP and originalCFrame then
+            finalHRP.Velocity = Vector3.zero
+            finalHRP.RotVelocity = Vector3.zero
+            finalHRP.CFrame = originalCFrame
+            task.wait(0.05)
+            finalHRP.Velocity = Vector3.zero
+            finalHRP.RotVelocity = Vector3.zero
+        end
+
         killAllRunning = false
-        notify("Done!")
+        notify("Done! Back to origin.")
     end)
 end)
 
@@ -2243,37 +2365,6 @@ registerControl(MiscSettings, "AutoTpGun", autoTpGunRef)
 window:CreateLabel(miscTab, "Silent Aim")
 local silentRef = window:CreateToggle(miscTab, "Silent Aim", false, function(v)
     MiscSettings.SilentAim = v
-    if silentAimConn then silentAimConn:Disconnect(); silentAimConn = nil end
-    if v then
-        local lastShot = 0
-        silentAimConn = RunService.RenderStepped:Connect(function()
-            if not MiscSettings.SilentAim then return end
-            local murderer = getMurderer()
-            if not murderer or not murderer.Character then return end
-            local targetPart = getMM2TargetPart(murderer.Character)
-            if not targetPart then return end
-            local camera = workspace.CurrentCamera
-
-            if AimbotSettings.WallCheck then
-                if not isVisible(camera.CFrame.Position, targetPart.Position, murderer.Character) then return end
-            end
-
-            pcall(function()
-                local mouse = LocalPlayer:GetMouse()
-                mouse.Hit = CFrame.new(camera.CFrame.Position, targetPart.Position)
-                mouse.Target = targetPart
-            end)
-
-            local now = tick()
-            if now - lastShot < 0.15 then return end
-            lastShot = now
-            pcall(function()
-                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                task.wait(0.03)
-                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-            end)
-        end)
-    end
 end)
 registerControl(MiscSettings, "SilentAim", silentRef)
 
