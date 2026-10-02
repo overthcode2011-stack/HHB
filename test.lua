@@ -108,8 +108,8 @@ local THEMES = {
 local savedTheme = "Green"
 if hasFileSystem then
     pcall(function()
-        if isfile("HappyHub/theme.txt") then
-            local t = readfile("HappyHub/theme.txt")
+        if isfile("HappyHub/theme.ode") then
+            local t = readfile("HappyHub/theme.ode")
             if t and THEMES[t] then savedTheme = t end
         end
     end)
@@ -134,7 +134,6 @@ local openDropdowns = {}
 local typingTokens = {}
 local notifOrder = 0
 local screenGui, mainFrame, tabContainer, contentArea, playerCard
-local toggleBtn
 local currentWindow = nil
 local cleanupConnections = {}
 local searchIndex = {}
@@ -402,7 +401,7 @@ function API:SetTheme(name)
     for k, v in pairs(THEMES[name]) do Colors[k] = v end
     applyTheme()
     if hasFileSystem then
-        pcall(function() writefile("HappyHub/theme.txt", currentThemeName) end)
+        pcall(function() writefile("HappyHub/theme.ode", currentThemeName) end)
     end
 end
 
@@ -422,7 +421,7 @@ end
 
 function API:SaveTheme()
     if hasFileSystem then
-        pcall(function() writefile("HappyHub/theme.txt", currentThemeName) end)
+        pcall(function() writefile("HappyHub/theme.ode", currentThemeName) end)
     end
 end
 
@@ -1039,6 +1038,7 @@ function API:CreateWindow(title, subtitle)
         ScreenGui = screenGui, MainFrame = mainFrame, TabContainer = tabContainer,
         ContentArea = contentArea, PlayerCard = playerCard, Tabs = {}, ActiveTab = nil,
         IsVisible = true, Minimized = false, FullyHidden = false,
+        MobileButtons = {},
     }
 
     local configSnapshotFn = nil
@@ -1067,8 +1067,8 @@ function API:CreateWindow(title, subtitle)
         local ok, files = pcall(function() return listfiles(folder) end)
         if ok and files then
             for _, f in ipairs(files) do
-                if f:sub(-5) == ".json" then
-                    out[#out+1] = f:match("([^/\\]+)%.json$") or f
+                if f:sub(-4) == ".ode" then
+                    out[#out+1] = f:match("([^/\\]+)%.ode$") or f
                 end
             end
         end
@@ -1111,7 +1111,7 @@ function API:CreateWindow(title, subtitle)
             if name == "" then NotifyImpl("Enter a name") return end
             local folder = getConfigFolder()
             if not folder then NotifyImpl("No config folder") return end
-            local path = folder .. "/" .. safeFileName(name) .. ".json"
+            local path = folder .. "/" .. safeFileName(name) .. ".ode"
             local ok, encoded = pcall(function()
                 return HttpService:JSONEncode(configSnapshotFn())
             end)
@@ -1127,7 +1127,7 @@ function API:CreateWindow(title, subtitle)
             if name == "" then NotifyImpl("Enter a name") return end
             local folder = getConfigFolder()
             if not folder then NotifyImpl("No config folder") return end
-            local path = folder .. "/" .. safeFileName(name) .. ".json"
+            local path = folder .. "/" .. safeFileName(name) .. ".ode"
             if not isfile(path) then NotifyImpl("Not found: " .. name) return end
             local ok, data = pcall(function()
                 return HttpService:JSONDecode(readfile(path))
@@ -1144,7 +1144,7 @@ function API:CreateWindow(title, subtitle)
             if name == "" then NotifyImpl("Enter a name") return end
             local folder = getConfigFolder()
             if not folder then NotifyImpl("No config folder") return end
-            local path = folder .. "/" .. safeFileName(name) .. ".json"
+            local path = folder .. "/" .. safeFileName(name) .. ".ode"
             if not isfile(path) then NotifyImpl("Not found") return end
             pcall(function() delfile(path) end)
             NotifyImpl("Deleted: " .. name)
@@ -1192,13 +1192,15 @@ function API:CreateWindow(title, subtitle)
         if themeDropdownRef then themeDropdownRef:SetValue(API:GetTheme()) end
     end
 
-    local dragging, dragStart, startPos, dragInput = false, nil, nil, nil
+    -- ===== DRAG PC (arreglado) =====
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
 
     local function beginDrag(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
-            dragInput = input
             dragStart = input.Position
             startPos = mainFrame.Position
             closeAllDropdowns()
@@ -1207,7 +1209,8 @@ function API:CreateWindow(title, subtitle)
 
     local function updateDrag(input)
         if not dragging then return end
-        if input ~= dragInput then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+        and input.UserInputType ~= Enum.UserInputType.Touch then return end
         local delta = input.Position - dragStart
         mainFrame.Position = UDim2.new(
             startPos.X.Scale, startPos.X.Offset + delta.X,
@@ -1215,10 +1218,9 @@ function API:CreateWindow(title, subtitle)
         )
     end
 
-    local function endDrag(input)
-        if input and dragInput and input ~= dragInput then return end
+    local function endDrag()
         dragging = false
-        dragInput = nil
+        dragStart = nil
     end
 
     TopBar.InputBegan:Connect(beginDrag)
@@ -1232,15 +1234,12 @@ function API:CreateWindow(title, subtitle)
     end)
 
     table.insert(cleanupConnections, UserInputService.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch then
-            updateDrag(input)
-        end
+        updateDrag(input)
     end))
     table.insert(cleanupConnections, UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
-            endDrag(input)
+            endDrag()
         end
     end))
 
@@ -1287,7 +1286,10 @@ function API:CreateWindow(title, subtitle)
     window.Destroy = function()
         closeAllDropdowns()
         if globalClickConn then pcall(function() globalClickConn:Disconnect() end); globalClickConn = nil end
-        if toggleBtn and toggleBtn.Parent then toggleBtn:Destroy() end
+        for _, btn in ipairs(window.MobileButtons) do
+            if btn and btn.Parent then btn:Destroy() end
+        end
+        window.MobileButtons = {}
         if screenGui and screenGui.Parent then screenGui:Destroy() end
         for _, conn in ipairs(cleanupConnections) do
             pcall(function() conn:Disconnect() end)
@@ -1299,6 +1301,102 @@ function API:CreateWindow(title, subtitle)
         NamedControls = {}
         openDropdowns = {}
     end
+
+    -- ===== BOTONES MÓVILES (hasta 3) =====
+    local function positionMobileButtons()
+        local total = #window.MobileButtons
+        for i, btn in ipairs(window.MobileButtons) do
+            btn.Position = UDim2.new(1, -58, 0, 58 + (i - 1) * 54)
+        end
+    end
+
+    function window:AddMobileButton(config)
+        if not isMobile then return nil end
+        if type(config) ~= "table" then return nil end
+        if #self.MobileButtons >= 3 then
+            warn("[HappyHub] Maximo 3 botones moviles alcanzado")
+            return nil
+        end
+
+        local btn = Instance.new("ImageButton")
+        btn.Name = "HappyHubMobileBtn" .. (#self.MobileButtons + 1)
+        btn.Size = UDim2.fromOffset(44, 44)
+        btn.BackgroundColor3 = Colors.Background
+        btn.BackgroundTransparency = 0.15
+        btn.Image = config.Icon or MAIN_ICON
+        btn.ImageColor3 = Colors.Accent
+        btn.ScaleType = Enum.ScaleType.Fit
+        btn.BorderSizePixel = 0
+        btn.AutoButtonColor = false
+        btn.ZIndex = 3
+        btn.Parent = screenGui
+        makeCorner(btn, 6)
+        register(reg.panels, btn)
+        register(reg.accentIcons, btn)
+
+        table.insert(self.MobileButtons, btn)
+        positionMobileButtons()
+
+        local bDrag, bStart, bStartPos, bMoved = false, nil, nil, false
+
+        btn.InputBegan:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1
+            or i.UserInputType == Enum.UserInputType.Touch then
+                if bDrag then return end
+                bDrag = true
+                bStart = i.Position
+                bStartPos = btn.Position
+                bMoved = false
+            end
+        end)
+        table.insert(cleanupConnections, UserInputService.InputChanged:Connect(function(i)
+            if not bDrag then return end
+            if i.UserInputType == Enum.UserInputType.MouseMovement
+            or i.UserInputType == Enum.UserInputType.Touch then
+                local d = i.Position - bStart
+                if math.abs(d.X) > 3 or math.abs(d.Y) > 3 then bMoved = true end
+                btn.Position = UDim2.new(
+                    bStartPos.X.Scale, bStartPos.X.Offset + d.X,
+                    bStartPos.Y.Scale, bStartPos.Y.Offset + d.Y
+                )
+            end
+        end))
+        table.insert(cleanupConnections, UserInputService.InputEnded:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1
+            or i.UserInputType == Enum.UserInputType.Touch then
+                bDrag = false
+            end
+        end))
+
+        btn.MouseButton1Click:Connect(function()
+            if bMoved then bMoved = false; return end
+            if config.OnClick then pcall(config.OnClick) end
+        end)
+
+        if config.Tooltip then attachTooltip(btn, config.Tooltip) end
+
+        return btn
+    end
+
+    function window:ClearMobileButtons()
+        for _, btn in ipairs(self.MobileButtons) do
+            if btn and btn.Parent then btn:Destroy() end
+        end
+        self.MobileButtons = {}
+    end
+
+    -- Default: si el dev no agrega ninguno, auto-crear toggle UI
+    task.defer(function()
+        if isMobile and currentWindow == window and #window.MobileButtons == 0 then
+            window:AddMobileButton({
+                Icon = MAIN_ICON,
+                Tooltip = "Toggle UI",
+                OnClick = function()
+                    if window.IsVisible then window.HideUI() else window.ShowUI() end
+                end,
+            })
+        end
+    end)
 
     SearchButton.MouseEnter:Connect(function()
         TweenService:Create(SearchButton, TweenInfo.new(0.15), {BackgroundTransparency = 0.85}):Play()
@@ -2192,62 +2290,6 @@ function API:CreateWindow(title, subtitle)
         ctrl.Refresh = ctrl.SetOptions
         NamedControls[text] = ctrl
         return ctrl
-    end
-
-    if isMobile then
-        toggleBtn = Instance.new("ImageButton")
-        toggleBtn.Name = "HappyHubToggle"
-        toggleBtn.Size = UDim2.fromOffset(44, 44)
-        toggleBtn.Position = UDim2.new(1, -58, 0, 58)
-        toggleBtn.BackgroundColor3 = Colors.Background
-        toggleBtn.BackgroundTransparency = 0.15
-        toggleBtn.Image = MAIN_ICON
-        toggleBtn.ImageColor3 = Colors.Accent
-        toggleBtn.ScaleType = Enum.ScaleType.Fit
-        toggleBtn.BorderSizePixel = 0
-        toggleBtn.AutoButtonColor = false
-        toggleBtn.ZIndex = 3
-        toggleBtn.Parent = screenGui
-        makeCorner(toggleBtn, 6)
-        register(reg.panels, toggleBtn)
-        register(reg.accentIcons, toggleBtn)
-
-        local tDrag, tStart, tStartPos, tInput, tMoved = false, nil, nil, nil, false
-
-        toggleBtn.InputBegan:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1
-            or i.UserInputType == Enum.UserInputType.Touch then
-                if tDrag then return end
-                tDrag = true
-                tInput = i
-                tStart = i.Position
-                tStartPos = toggleBtn.Position
-                tMoved = false
-            end
-        end)
-        table.insert(cleanupConnections, UserInputService.InputChanged:Connect(function(i)
-            if not tDrag then return end
-            if i ~= tInput then return end
-            if i.UserInputType == Enum.UserInputType.MouseMovement
-            or i.UserInputType == Enum.UserInputType.Touch then
-                local d = i.Position - tStart
-                if math.abs(d.X) > 3 or math.abs(d.Y) > 3 then tMoved = true end
-                toggleBtn.Position = UDim2.new(
-                    tStartPos.X.Scale, tStartPos.X.Offset + d.X,
-                    tStartPos.Y.Scale, tStartPos.Y.Offset + d.Y
-                )
-            end
-        end))
-        table.insert(cleanupConnections, UserInputService.InputEnded:Connect(function(i)
-            if i == tInput then
-                tDrag = false
-                tInput = nil
-            end
-        end))
-        toggleBtn.MouseButton1Click:Connect(function()
-            if tMoved then tMoved = false; return end
-            if window.IsVisible then hideUI() else showUI() end
-        end)
     end
 
     currentWindow = window
