@@ -3,6 +3,7 @@ local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcod
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -15,6 +16,7 @@ local AimbotSettings = {
     Enabled = false, SilentAim = false, FOV = 150, Smoothing = 0.35,
     WallCheck = false, MaxDistance = 150, Target = "Head", ShowFOV = false,
     TeamCheck = false, RotateRig = true, TriggerBot = false, TriggerRange = 150, AutoFire = false,
+    MatchOnly = true,
 }
 local VisualSettings = { RivalsESP = false, NameTags = false }
 local MiscSettings = { InfJump = false, AntiAFK = false }
@@ -26,6 +28,74 @@ local noclipConn, godConn, antiAFKConn = nil, nil, nil
 local triggerBotConn = nil
 local autoFireConn = nil
 local fovCircle = nil
+
+local activeFighters = {}
+
+local function markActive(name)
+    if typeof(name) == "string" and #name > 0 then
+        activeFighters[name] = os.clock()
+    end
+end
+
+local function walkForPlayers(value, depth)
+    depth = depth or 0
+    if depth > 6 then return end
+    local t = typeof(value)
+    if t == "Instance" then
+        if value:IsA("Player") then
+            markActive(value.Name)
+        end
+    elseif t == "string" then
+        local p = Players:FindFirstChild(value)
+        if p then markActive(p.Name) end
+    elseif t == "table" then
+        for k, v in pairs(value) do
+            walkForPlayers(k, depth + 1)
+            walkForPlayers(v, depth + 1)
+        end
+    end
+end
+
+pcall(function()
+    local rep = ReplicatedStorage:FindFirstChild("Remotes")
+    rep = rep and rep:FindFirstChild("Replication")
+    if not rep then return end
+
+    local duel = rep:FindFirstChild("Duel")
+    if duel then
+        local ev = duel:FindFirstChild("Replicate")
+        if ev then
+            ev.OnClientEvent:Connect(function(...)
+                for _, a in ipairs({ ... }) do
+                    walkForPlayers(a)
+                end
+            end)
+        end
+    end
+
+    local fighter = rep:FindFirstChild("Fighter")
+    if fighter then
+        local ev = fighter:FindFirstChild("UpdateCameraRotations")
+        if ev then
+            ev.OnClientEvent:Connect(function(...)
+                for _, a in ipairs({ ... }) do
+                    walkForPlayers(a)
+                end
+            end)
+        end
+    end
+end)
+
+local function isActiveFighter(p)
+    if not p then return false end
+    local t = activeFighters[p.Name]
+    if not t then return false end
+    if os.clock() - t > 30 then
+        activeFighters[p.Name] = nil
+        return false
+    end
+    return true
+end
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -154,6 +224,7 @@ end
 
 local function isEnemy(p)
     if not p or p == LocalPlayer then return false end
+    if AimbotSettings.MatchOnly and not isActiveFighter(p) then return false end
     if not AimbotSettings.TeamCheck then return true end
     return not isTeammate(p)
 end
@@ -190,7 +261,7 @@ local function getAimTarget(crosshair)
         local c = lockedTarget.Character
         local part = c and getTargetPart(c)
         local hu = c and c:FindFirstChildOfClass("Humanoid")
-        if part and hu and hu.Health > 0 then
+        if part and hu and hu.Health > 0 and isEnemy(lockedTarget) then
             local d = (lr.Position - part.Position).Magnitude
             if d <= AimbotSettings.MaxDistance then
                 if not AimbotSettings.WallCheck or hasLineOfSight(part) then
@@ -283,13 +354,31 @@ if mt and setreadonly and hookmetamethod then
     local oldNamecall = mt.__namecall
     mt.__namecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
-        if silentAimEnabled and (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") then
-            local crosshair = getCrosshairPosition()
-            local target = getAimTarget(crosshair)
-            if target then
-                local camera = workspace.CurrentCamera
-                local newRay = Ray.new(camera.CFrame.Position, (target.Position - camera.CFrame.Position).Unit * 1000)
-                return oldNamecall(self, newRay, ...)
+        if silentAimEnabled and not UserInputService:GetFocusedTextBox() then
+            if method == "Raycast" and self == workspace then
+                local origin, direction, params = ...
+                if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+                    local camPos = Camera and Camera.CFrame.Position
+                    if camPos and (origin - camPos).Magnitude < 15 then
+                        local crosshair = getCrosshairPosition()
+                        local target = getAimTarget(crosshair)
+                        if target then
+                            local dir = target.Position - origin
+                            if dir.Magnitude > 0 then
+                                local newDir = dir.Unit * direction.Magnitude
+                                return oldNamecall(self, origin, newDir, params)
+                            end
+                        end
+                    end
+                end
+            elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist" then
+                local crosshair = getCrosshairPosition()
+                local target = getAimTarget(crosshair)
+                if target then
+                    local cam = workspace.CurrentCamera
+                    local newRay = Ray.new(cam.CFrame.Position, (target.Position - cam.CFrame.Position).Unit * 1000)
+                    return oldNamecall(self, newRay, ...)
+                end
             end
         end
         return oldNamecall(self, ...)
@@ -308,7 +397,6 @@ pcall(function()
     end
 end)
 
-local RivalsESP = { active = false, highlights = {}, nameTags = {}, updateThread = nil, nameTagUpdater = nil }
 local ESP_COLORS = {
     Enemy = Color3.fromRGB(255, 60, 60),
     Ally = Color3.fromRGB(60, 160, 255),
@@ -321,136 +409,218 @@ local function getRivalsESPColor(plr)
     return ESP_COLORS.Enemy
 end
 
-local function clearRivalsHighlight(plr)
-    if RivalsESP.highlights[plr] then
-        RivalsESP.highlights[plr]:Destroy()
-        RivalsESP.highlights[plr] = nil
+local RivalsESP = {
+    active = false, boxes = {}, updaters = {}, heartbeat = nil, refreshThread = nil,
+}
+
+local function clearRivalsBox(plr)
+    local data = RivalsESP.boxes[plr]
+    if data then
+        if data.bb and data.bb.Parent then data.bb:Destroy() end
+        RivalsESP.boxes[plr] = nil
     end
-    if RivalsESP.nameTags[plr] then
-        if RivalsESP.nameTags[plr].bb and RivalsESP.nameTags[plr].bb.Parent then
-            RivalsESP.nameTags[plr].bb:Destroy()
-        end
-        RivalsESP.nameTags[plr] = nil
+    RivalsESP.updaters[plr] = nil
+end
+
+local function applyBoxColor(data, color)
+    for _, l in ipairs(data.lines) do
+        if l and l.Parent then l.BackgroundColor3 = color end
+    end
+    if data.nameTag and data.nameTag.Parent then
+        data.nameTag.TextColor3 = color
     end
 end
 
-local function applyRivalsESP(plr)
+local function createRivalsBox(plr)
     if plr == LocalPlayer then return end
     local char = plr.Character
     if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then return end
 
     local color = getRivalsESPColor(plr)
 
-    if not RivalsESP.highlights[plr] then
-        local h = Instance.new("Highlight")
-        h.Name = "HappyHub_ESP"
-        h.FillColor = color
-        h.OutlineColor = color
-        h.FillTransparency = 0.35
-        h.OutlineTransparency = 0
-        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        h.Parent = char
-        RivalsESP.highlights[plr] = h
-    else
-        RivalsESP.highlights[plr].FillColor = color
-        RivalsESP.highlights[plr].OutlineColor = color
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "HappyHub_Box"
+    bb.AlwaysOnTop = true
+    bb.Adornee = hrp
+    bb.LightInfluence = 0
+    bb.ResetOnSpawn = false
+    bb.Size = UDim2.fromOffset(60, 100)
+    bb.Parent = hrp
+
+    local box = Instance.new("Frame")
+    box.Name = "Box"
+    box.BackgroundTransparency = 1
+    box.Size = UDim2.new(1, 0, 1, 0)
+    box.Parent = bb
+
+    local t = 2
+
+    local function makeLine(n, size, pos)
+        local l = Instance.new("Frame")
+        l.Name = n
+        l.Size = size
+        l.Position = pos
+        l.BackgroundColor3 = color
+        l.BorderSizePixel = 0
+        l.Parent = box
+        return l
     end
 
+    local top = makeLine("Top", UDim2.new(1, 0, 0, t), UDim2.new(0, 0, 0, 0))
+    local bottom = makeLine("Bottom", UDim2.new(1, 0, 0, t), UDim2.new(0, 0, 1, -t))
+    local left = makeLine("Left", UDim2.new(0, t, 1, 0), UDim2.new(0, 0, 0, 0))
+    local right = makeLine("Right", UDim2.new(0, t, 1, 0), UDim2.new(1, -t, 0, 0))
+
+    local nameTag = nil
     if VisualSettings.NameTags then
-        if not RivalsESP.nameTags[plr] then
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local bb = Instance.new("BillboardGui")
-                bb.Name = "HappyHub_NameTag"
-                bb.Size = UDim2.new(0, 120, 0, 34)
-                bb.StudsOffset = Vector3.new(0, 3.5, 0)
-                bb.AlwaysOnTop = true
-                bb.Adornee = hrp
-                bb.Parent = hrp
-
-                local lbl = Instance.new("TextLabel")
-                lbl.Size = UDim2.new(1, 0, 1, 0)
-                lbl.BackgroundTransparency = 1
-                lbl.TextColor3 = color
-                lbl.Font = Enum.Font.GothamBold
-                lbl.TextSize = 13
-                lbl.TextStrokeTransparency = 0.4
-                lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
-                lbl.Parent = bb
-
-                RivalsESP.nameTags[plr] = { bb = bb, lbl = lbl }
-            end
-        end
-    elseif RivalsESP.nameTags[plr] then
-        RivalsESP.nameTags[plr].bb:Destroy()
-        RivalsESP.nameTags[plr] = nil
+        nameTag = Instance.new("TextLabel")
+        nameTag.Name = "NameTag"
+        nameTag.Size = UDim2.new(1, 0, 0, 14)
+        nameTag.Position = UDim2.new(0, 0, 1, 3)
+        nameTag.BackgroundTransparency = 1
+        nameTag.TextColor3 = color
+        nameTag.Font = Enum.Font.GothamBold
+        nameTag.TextSize = 12
+        nameTag.TextStrokeTransparency = 0.4
+        nameTag.TextStrokeColor3 = Color3.new(0, 0, 0)
+        nameTag.Text = plr.DisplayName
+        nameTag.Parent = bb
     end
+
+    RivalsESP.boxes[plr] = {
+        bb = bb,
+        box = box,
+        lines = { top, bottom, left, right },
+        nameTag = nameTag,
+    }
+
+    local function updateSize()
+        local data = RivalsESP.boxes[plr]
+        if not data or not data.bb or not data.bb.Parent then
+            RivalsESP.updaters[plr] = nil
+            return
+        end
+        local c = plr.Character
+        if not c then return end
+        local root = c:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        local dist = (root.Position - cam.CFrame.Position).Magnitude
+        if dist < 1 then dist = 1 end
+        local vpY = cam.ViewportSize.Y
+        local fovRad = math.rad(cam.FieldOfView)
+        local pixelsPerStud = (vpY / 2) / (dist * math.tan(fovRad / 2))
+        local pixW = 3 * pixelsPerStud
+        local pixH = 5 * pixelsPerStud
+        data.bb.Size = UDim2.fromOffset(pixW, pixH)
+    end
+
+    RivalsESP.updaters[plr] = updateSize
+    updateSize()
 end
 
 local function refreshAllRivalsESP()
+    if not RivalsESP.active then return end
+    local seen = {}
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
-            if not plr.Character then
-                clearRivalsHighlight(plr)
+            seen[plr] = true
+            local char = plr.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hrp and hum and hum.Health > 0 then
+                if not RivalsESP.boxes[plr] then
+                    createRivalsBox(plr)
+                else
+                    applyBoxColor(RivalsESP.boxes[plr], getRivalsESPColor(plr))
+                end
             else
-                applyRivalsESP(plr)
+                clearRivalsBox(plr)
             end
         end
+    end
+    for plr in pairs(RivalsESP.boxes) do
+        if not seen[plr] then clearRivalsBox(plr) end
     end
 end
 
 local function startRivalsESP()
     RivalsESP.active = true
-    if not RivalsESP.updateThread then
-        RivalsESP.updateThread = task.spawn(function()
-            while RivalsESP.active do
-                task.wait(0.5)
-                if RivalsESP.active then refreshAllRivalsESP() end
-            end
-            RivalsESP.updateThread = nil
-        end)
-    end
     refreshAllRivalsESP()
-end
-
-local function stopRivalsESP()
-    RivalsESP.active = false
-    if RivalsESP.updateThread then
-        task.cancel(RivalsESP.updateThread)
-        RivalsESP.updateThread = nil
-    end
-    for _, plr in ipairs(Players:GetPlayers()) do
-        clearRivalsHighlight(plr)
-    end
-end
-
-local function startNameTagUpdater()
-    if not RivalsESP.nameTagUpdater then
-        RivalsESP.nameTagUpdater = RunService.Heartbeat:Connect(function()
-            if not VisualSettings.NameTags then return end
+    if not RivalsESP.heartbeat then
+        RivalsESP.heartbeat = RunService.RenderStepped:Connect(function()
+            if not RivalsESP.active then return end
             local myHRP = getHRP()
-            if not myHRP then return end
-            for plr, data in pairs(RivalsESP.nameTags) do
-                if plr.Character and data.lbl then
+            for plr, updater in pairs(RivalsESP.updaters) do
+                pcall(updater)
+                local data = RivalsESP.boxes[plr]
+                if data and data.nameTag and data.nameTag.Parent and myHRP and plr.Character then
                     local theirHRP = plr.Character:FindFirstChild("HumanoidRootPart")
                     if theirHRP then
-                        local dist = math.floor((myHRP.Position - theirHRP.Position).Magnitude)
-                        data.lbl.Text = plr.DisplayName .. "\n" .. dist .. "m"
-                    else
-                        data.lbl.Text = plr.DisplayName
+                        local d = math.floor((myHRP.Position - theirHRP.Position).Magnitude)
+                        data.nameTag.Text = plr.DisplayName .. " [" .. d .. "m]"
                     end
                 end
             end
         end)
     end
+    if not RivalsESP.refreshThread then
+        RivalsESP.refreshThread = task.spawn(function()
+            while RivalsESP.active do
+                task.wait(0.5)
+                if RivalsESP.active then refreshAllRivalsESP() end
+            end
+            RivalsESP.refreshThread = nil
+        end)
+    end
 end
 
-local function stopNameTagUpdater()
-    if RivalsESP.nameTagUpdater then
-        RivalsESP.nameTagUpdater:Disconnect()
-        RivalsESP.nameTagUpdater = nil
+local function stopRivalsESP()
+    RivalsESP.active = false
+    if RivalsESP.refreshThread then
+        task.cancel(RivalsESP.refreshThread)
+        RivalsESP.refreshThread = nil
+    end
+    if RivalsESP.heartbeat then
+        RivalsESP.heartbeat:Disconnect()
+        RivalsESP.heartbeat = nil
+    end
+    for plr in pairs(RivalsESP.boxes) do
+        clearRivalsBox(plr)
+    end
+    RivalsESP.boxes = {}
+    RivalsESP.updaters = {}
+end
+
+local function updateNameTagVisibility()
+    for plr, data in pairs(RivalsESP.boxes) do
+        if VisualSettings.NameTags then
+            if not data.nameTag or not data.nameTag.Parent then
+                local nt = Instance.new("TextLabel")
+                nt.Name = "NameTag"
+                nt.Size = UDim2.new(1, 0, 0, 14)
+                nt.Position = UDim2.new(0, 0, 1, 3)
+                nt.BackgroundTransparency = 1
+                nt.TextColor3 = getRivalsESPColor(plr)
+                nt.Font = Enum.Font.GothamBold
+                nt.TextSize = 12
+                nt.TextStrokeTransparency = 0.4
+                nt.TextStrokeColor3 = Color3.new(0, 0, 0)
+                nt.Text = plr.DisplayName
+                nt.Parent = data.bb
+                data.nameTag = nt
+            end
+        else
+            if data.nameTag and data.nameTag.Parent then
+                data.nameTag:Destroy()
+                data.nameTag = nil
+            end
+        end
     end
 end
 
@@ -506,6 +676,12 @@ win:CreateToggle(aimbotTab, "Silent Aim", AimbotSettings.SilentAim, function(v)
     AimbotSettings.SilentAim = v
     silentAimEnabled = v
     API:Notify(v and "Silent Aim on" or "Silent Aim off")
+end)
+
+win:CreateToggle(aimbotTab, "Match Only", AimbotSettings.MatchOnly, function(v)
+    AimbotSettings.MatchOnly = v
+    lockedTarget = nil
+    API:Notify(v and "Match filter on" or "Match filter off")
 end)
 
 win:CreateSlider(aimbotTab, "FOV", 20, 800, AimbotSettings.FOV, function(v)
@@ -608,13 +784,7 @@ end)
 
 win:CreateToggle(visualsTab, "Name Tags", VisualSettings.NameTags, function(v)
     VisualSettings.NameTags = v
-    if v then
-        startNameTagUpdater()
-        refreshAllRivalsESP()
-    else
-        stopNameTagUpdater()
-        refreshAllRivalsESP()
-    end
+    updateNameTagVisibility()
 end)
 
 win:CreateLabel(miscTab, "Movement")
@@ -685,6 +855,7 @@ end)
 win:CreateLabel(playerListTab, "Players in Server")
 
 local playerInfoContainer = Instance.new("Frame")
+playerInfoContainer.Name = "PlayerInfoContainer"
 playerInfoContainer.Size = UDim2.new(1, -40, 0, 0)
 playerInfoContainer.AutomaticSize = Enum.AutomaticSize.Y
 playerInfoContainer.BackgroundTransparency = 1
@@ -696,70 +867,151 @@ infoLayout.Padding = UDim.new(0, 6)
 infoLayout.SortOrder = Enum.SortOrder.LayoutOrder
 infoLayout.Parent = playerInfoContainer
 
+local playerRows = {}
+
+local function buildRow(plr)
+    local row = Instance.new("Frame")
+    row.Name = "Row_" .. plr.Name
+    row.Size = UDim2.new(1, 0, 0, 62)
+    row.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    row.BackgroundTransparency = 0.15
+    row.BorderSizePixel = 0
+    row.Parent = playerInfoContainer
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = row
+
+    local avatar = Instance.new("Frame")
+    avatar.Size = UDim2.fromOffset(38, 38)
+    avatar.Position = UDim2.new(0, 10, 0.5, -19)
+    avatar.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
+    avatar.BackgroundTransparency = 0.7
+    avatar.BorderSizePixel = 0
+    avatar.Parent = row
+
+    local ac = Instance.new("UICorner")
+    ac.CornerRadius = UDim.new(0, 19)
+    ac.Parent = avatar
+
+    local img = Instance.new("ImageLabel")
+    img.Name = "Avatar"
+    img.Size = UDim2.new(1, -4, 1, -4)
+    img.Position = UDim2.new(0, 2, 0, 2)
+    img.BackgroundTransparency = 1
+    img.Image = "rbxthumb://type=AvatarHeadShot&id=" .. plr.UserId .. "&w=150&h=150"
+    img.ScaleType = Enum.ScaleType.Fit
+    img.Parent = avatar
+
+    local ic = Instance.new("UICorner")
+    ic.CornerRadius = UDim.new(0, 19)
+    ic.Parent = img
+
+    local nameLbl = Instance.new("TextLabel")
+    nameLbl.Name = "Name"
+    nameLbl.Size = UDim2.new(1, -70, 0, 16)
+    nameLbl.Position = UDim2.new(0, 58, 0, 10)
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Text = plr.DisplayName .. " (@" .. plr.Name .. ")"
+    nameLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameLbl.Font = Enum.Font.GothamSemibold
+    nameLbl.TextSize = 12
+    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+    nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+    nameLbl.Parent = row
+
+    local infoLbl = Instance.new("TextLabel")
+    infoLbl.Name = "Info"
+    infoLbl.Size = UDim2.new(1, -70, 0, 14)
+    infoLbl.Position = UDim2.new(0, 58, 0, 28)
+    infoLbl.BackgroundTransparency = 1
+    infoLbl.Text = ""
+    infoLbl.TextColor3 = Color3.fromRGB(180, 180, 180)
+    infoLbl.Font = Enum.Font.Gotham
+    infoLbl.TextSize = 10
+    infoLbl.TextXAlignment = Enum.TextXAlignment.Left
+    infoLbl.Parent = row
+
+    local badge = Instance.new("TextLabel")
+    badge.Name = "Badge"
+    badge.Size = UDim2.fromOffset(70, 18)
+    badge.Position = UDim2.new(1, -78, 0, 8)
+    badge.BackgroundTransparency = 1
+    badge.Font = Enum.Font.GothamBold
+    badge.TextSize = 10
+    badge.Text = ""
+    badge.TextXAlignment = Enum.TextXAlignment.Right
+    badge.Parent = row
+
+    return {
+        row = row,
+        avatar = avatar,
+        name = nameLbl,
+        info = infoLbl,
+        badge = badge,
+    }
+end
+
+local function updateRow(refs, plr, myHRP)
+    refs.name.Text = plr.DisplayName .. " (@" .. plr.Name .. ")"
+    local dist = 0
+    local health = 0
+    local maxHealth = 100
+    if plr.Character then
+        local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            health = math.floor(hum.Health)
+            maxHealth = math.floor(hum.MaxHealth)
+        end
+        local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+        if hrp and myHRP then
+            dist = (myHRP.Position - hrp.Position).Magnitude
+        end
+    end
+    local team = "No Team"
+    if plr.Team then team = plr.Team.Name end
+    refs.info.Text = string.format("%.0fm · %d/%d HP · %s", dist, health, maxHealth, team)
+
+    if plr == LocalPlayer then
+        refs.badge.Text = "YOU"
+        refs.badge.TextColor3 = Color3.fromRGB(0, 255, 100)
+    elseif isTeammate(plr) then
+        refs.badge.Text = "ALLY"
+        refs.badge.TextColor3 = Color3.fromRGB(60, 160, 255)
+    elseif AimbotSettings.MatchOnly and isActiveFighter(plr) then
+        refs.badge.Text = "ENEMY"
+        refs.badge.TextColor3 = Color3.fromRGB(255, 60, 60)
+    elseif isActiveFighter(plr) then
+        refs.badge.Text = "FIGHT"
+        refs.badge.TextColor3 = Color3.fromRGB(255, 180, 60)
+    else
+        refs.badge.Text = "LOBBY"
+        refs.badge.TextColor3 = Color3.fromRGB(140, 140, 140)
+    end
+end
+
 local function refreshPlayerList()
-    for _, ch in ipairs(playerInfoContainer:GetChildren()) do
-        if ch:IsA("Frame") then ch:Destroy() end
+    local current = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        current[p] = true
+    end
+
+    for p, refs in pairs(playerRows) do
+        if not current[p] then
+            if refs.row and refs.row.Parent then refs.row:Destroy() end
+            playerRows[p] = nil
+        end
     end
 
     local myHRP = getHRP()
     for idx, plr in ipairs(Players:GetPlayers()) do
-        local row = Instance.new("Frame")
-        row.LayoutOrder = idx
-        row.Size = UDim2.new(1, 0, 0, 62)
-        row.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
-        row.BackgroundTransparency = 0.2
-        row.BorderSizePixel = 0
-        row.Parent = playerInfoContainer
-
-        local avatar = Instance.new("Frame")
-        avatar.Size = UDim2.fromOffset(38, 38)
-        avatar.Position = UDim2.new(0, 10, 0.5, -19)
-        avatar.BackgroundColor3 = Color3.fromRGB(0, 255, 63)
-        avatar.BackgroundTransparency = 0.7
-        avatar.BorderSizePixel = 0
-        avatar.Parent = row
-
-        local img = Instance.new("ImageLabel")
-        img.Size = UDim2.new(1, -4, 1, -4)
-        img.Position = UDim2.new(0, 2, 0, 2)
-        img.BackgroundTransparency = 1
-        img.Image = "rbxthumb://type=AvatarHeadShot&id=" .. plr.UserId .. "&w=150&h=150"
-        img.ScaleType = Enum.ScaleType.Fit
-        img.Parent = avatar
-
-        local nameLbl = Instance.new("TextLabel")
-        nameLbl.Size = UDim2.new(1, -70, 0, 16)
-        nameLbl.Position = UDim2.new(0, 58, 0, 8)
-        nameLbl.BackgroundTransparency = 1
-        nameLbl.Text = plr.DisplayName .. " (@" .. plr.Name .. ")"
-        nameLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-        nameLbl.Font = Enum.Font.GothamSemibold
-        nameLbl.TextSize = 12
-        nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-        nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
-        nameLbl.Parent = row
-
-        local infoLbl = Instance.new("TextLabel")
-        infoLbl.Size = UDim2.new(1, -70, 0, 14)
-        infoLbl.Position = UDim2.new(0, 58, 0, 26)
-        infoLbl.BackgroundTransparency = 1
-        local dist = 0
-        if myHRP and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-            dist = (myHRP.Position - plr.Character.HumanoidRootPart.Position).Magnitude
+        local refs = playerRows[plr]
+        if not refs then
+            refs = buildRow(plr)
+            playerRows[plr] = refs
         end
-        local health = 0
-        local team = "No Team"
-        if plr.Character then
-            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-            if hum then health = math.floor(hum.Health) end
-        end
-        if plr.Team then team = plr.Team.Name end
-        infoLbl.Text = string.format("%.0fm · %d HP · %s", dist, health, team)
-        infoLbl.TextColor3 = Color3.fromRGB(180, 180, 180)
-        infoLbl.Font = Enum.Font.Gotham
-        infoLbl.TextSize = 10
-        infoLbl.TextXAlignment = Enum.TextXAlignment.Left
-        infoLbl.Parent = row
+        refs.row.LayoutOrder = idx
+        updateRow(refs, plr, myHRP)
     end
 end
 
@@ -767,18 +1019,25 @@ refreshPlayerList()
 
 Players.PlayerAdded:Connect(function(plr)
     plr.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        if RivalsESP.active then applyRivalsESP(plr) end
+        task.wait(0.3)
         refreshPlayerList()
+        if RivalsESP.active then refreshAllRivalsESP() end
     end)
-    task.wait(0.5)
+    task.wait(0.2)
     refreshPlayerList()
 end)
 
 Players.PlayerRemoving:Connect(function(plr)
-    clearRivalsHighlight(plr)
-    task.wait(0.2)
+    clearRivalsBox(plr)
+    task.wait(0.1)
     refreshPlayerList()
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(refreshPlayerList)
+    end
 end)
 
 UserInputService.InputBegan:Connect(function(input, gp)
