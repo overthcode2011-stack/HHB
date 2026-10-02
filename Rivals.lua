@@ -781,45 +781,6 @@ Players.PlayerRemoving:Connect(function(plr)
     refreshPlayerList()
 end)
 
-win:SetConfigSnapshot(function()
-    return {
-        Aimbot = {
-            Enabled = AimbotSettings.Enabled, SilentAim = AimbotSettings.SilentAim,
-            FOV = AimbotSettings.FOV, Smoothing = AimbotSettings.Smoothing,
-            WallCheck = AimbotSettings.WallCheck, MaxDistance = AimbotSettings.MaxDistance,
-            Target = AimbotSettings.Target, ShowFOV = AimbotSettings.ShowFOV,
-            TeamCheck = AimbotSettings.TeamCheck, RotateRig = AimbotSettings.RotateRig,
-            TriggerBot = AimbotSettings.TriggerBot, TriggerRange = AimbotSettings.TriggerRange,
-            AutoFire = AimbotSettings.AutoFire,
-        },
-        Visual = { RivalsESP = VisualSettings.RivalsESP, NameTags = VisualSettings.NameTags },
-        Misc = { InfJump = MiscSettings.InfJump, AntiAFK = MiscSettings.AntiAFK },
-        Movement = { Noclip = MovementSettings.Noclip, God = MovementSettings.God },
-    }
-end)
-
-win:SetConfigApply(function(data)
-    if not data then return end
-    if data.Aimbot then for k, v in pairs(data.Aimbot) do AimbotSettings[k] = v end end
-    if data.Visual then for k, v in pairs(data.Visual) do VisualSettings[k] = v end end
-    if data.Misc then for k, v in pairs(data.Misc) do MiscSettings[k] = v end end
-    if data.Movement then for k, v in pairs(data.Movement) do MovementSettings[k] = v end end
-    if aimbotToggleRef and aimbotToggleRef.SetState then aimbotToggleRef.SetState(AimbotSettings.Enabled) end
-    if espToggleRef and espToggleRef.SetState then espToggleRef.SetState(VisualSettings.RivalsESP) end
-    if VisualSettings.RivalsESP then
-        startRivalsESP()
-    else
-        stopRivalsESP()
-    end
-    if VisualSettings.NameTags then
-        startNameTagUpdater()
-    else
-        stopNameTagUpdater()
-    end
-end)
-
-win:BuildConfigPage()
-
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if UserInputService:GetFocusedTextBox() then return end
@@ -933,5 +894,7 @@ end
 RunService:BindToRenderStep("HappyHub", Enum.RenderPriority.Camera.Value + 1, onRenderStep)
 
 setupAutoReload()
+
+win:BuildConfigPage()
 
 API:Notify("Happy Hub loaded")
