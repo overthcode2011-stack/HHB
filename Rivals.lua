@@ -3,7 +3,6 @@ local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcod
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -455,16 +454,30 @@ local function stopNameTagUpdater()
     end
 end
 
-Players.PlayerAdded:Connect(function(plr)
-    plr.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        if RivalsESP.active then applyRivalsESP(plr) end
+local function setupAutoReload()
+    local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+    if not queue then return end
+    local src = nil
+    pcall(function()
+        local genv = getgenv and getgenv() or _G
+        src = genv.__HAPPYHUB_SOURCE
     end)
-end)
-
-Players.PlayerRemoving:Connect(function(plr)
-    clearRivalsHighlight(plr)
-end)
+    if not src then
+        pcall(function()
+            local info = debug.getinfo(1, "s")
+            if info and info.source then
+                local s = info.source
+                if s:sub(1, 1) == "@" or s:sub(1, 1) == "=" then
+                    s = s:sub(2)
+                    if isfile and isfile(s) then src = readfile(s) end
+                end
+            end
+        end)
+    end
+    if src and #src > 100 then
+        pcall(function() queue(src) end)
+    end
+end
 
 local win = API:CreateWindow("Happy Hub", "Rivals · Keyless · by replicatedman")
 
@@ -472,7 +485,6 @@ local aimbotTab = win:CreateTab("Aimbot", "93310349660228")
 local visualsTab = win:CreateTab("Visuals", "13321848320")
 local playerListTab = win:CreateTab("PlayerList", "122086195900803")
 local miscTab = win:CreateTab("Misc", "109962716823639")
-local configsTab = win:CreateTab("Configs", "111467744253591")
 
 local aimbotToggleRef, espToggleRef
 
@@ -684,7 +696,7 @@ infoLayout.Padding = UDim.new(0, 6)
 infoLayout.SortOrder = Enum.SortOrder.LayoutOrder
 infoLayout.Parent = playerInfoContainer
 
-local refreshPlayerList = function()
+local function refreshPlayerList()
     for _, ch in ipairs(playerInfoContainer:GetChildren()) do
         if ch:IsA("Frame") then ch:Destroy() end
     end
@@ -753,17 +765,23 @@ end
 
 refreshPlayerList()
 
-Players.PlayerAdded:Connect(function()
+Players.PlayerAdded:Connect(function(plr)
+    plr.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if RivalsESP.active then applyRivalsESP(plr) end
+        refreshPlayerList()
+    end)
     task.wait(0.5)
     refreshPlayerList()
 end)
 
-Players.PlayerRemoving:Connect(function()
+Players.PlayerRemoving:Connect(function(plr)
+    clearRivalsHighlight(plr)
     task.wait(0.2)
     refreshPlayerList()
 end)
 
-local function snapshotSettings()
+win:SetConfigSnapshot(function()
     return {
         Aimbot = {
             Enabled = AimbotSettings.Enabled, SilentAim = AimbotSettings.SilentAim,
@@ -778,26 +796,28 @@ local function snapshotSettings()
         Misc = { InfJump = MiscSettings.InfJump, AntiAFK = MiscSettings.AntiAFK },
         Movement = { Noclip = MovementSettings.Noclip, God = MovementSettings.God },
     }
-end
+end)
 
-local function applyConfig(data)
+win:SetConfigApply(function(data)
     if not data then return end
-    if data.Aimbot then
-        for k, v in pairs(data.Aimbot) do AimbotSettings[k] = v end
+    if data.Aimbot then for k, v in pairs(data.Aimbot) do AimbotSettings[k] = v end end
+    if data.Visual then for k, v in pairs(data.Visual) do VisualSettings[k] = v end end
+    if data.Misc then for k, v in pairs(data.Misc) do MiscSettings[k] = v end end
+    if data.Movement then for k, v in pairs(data.Movement) do MovementSettings[k] = v end end
+    if aimbotToggleRef and aimbotToggleRef.SetState then aimbotToggleRef.SetState(AimbotSettings.Enabled) end
+    if espToggleRef and espToggleRef.SetState then espToggleRef.SetState(VisualSettings.RivalsESP) end
+    if VisualSettings.RivalsESP then
+        startRivalsESP()
+    else
+        stopRivalsESP()
     end
-    if data.Visual then
-        for k, v in pairs(data.Visual) do VisualSettings[k] = v end
+    if VisualSettings.NameTags then
+        startNameTagUpdater()
+    else
+        stopNameTagUpdater()
     end
-    if data.Misc then
-        for k, v in pairs(data.Misc) do MiscSettings[k] = v end
-    end
-    if data.Movement then
-        for k, v in pairs(data.Movement) do MovementSettings[k] = v end
-    end
-end
+end)
 
-win:SetConfigSnapshot(snapshotSettings)
-win:SetConfigApply(applyConfig)
 win:BuildConfigPage()
 
 UserInputService.InputBegan:Connect(function(input, gp)
@@ -805,11 +825,11 @@ UserInputService.InputBegan:Connect(function(input, gp)
     if UserInputService:GetFocusedTextBox() then return end
     if input.KeyCode == Enum.KeyCode.T then
         local newState = not AimbotSettings.Enabled
-        if aimbotToggleRef then aimbotToggleRef.SetState(newState) end
+        if aimbotToggleRef and aimbotToggleRef.SetState then aimbotToggleRef.SetState(newState) end
         API:Notify(newState and "Aimbot enabled (T)" or "Aimbot disabled (T)")
     elseif input.KeyCode == Enum.KeyCode.O then
         local newState = not VisualSettings.RivalsESP
-        if espToggleRef then espToggleRef.SetState(newState) end
+        if espToggleRef and espToggleRef.SetState then espToggleRef.SetState(newState) end
         API:Notify(newState and "ESP enabled (O)" or "ESP disabled (O)")
     end
 end)
@@ -820,7 +840,7 @@ if isMobile then
         Tooltip = "Toggle Aimbot",
         OnClick = function()
             local newState = not AimbotSettings.Enabled
-            if aimbotToggleRef then aimbotToggleRef.SetState(newState) end
+            if aimbotToggleRef and aimbotToggleRef.SetState then aimbotToggleRef.SetState(newState) end
             API:Notify(newState and "Aimbot enabled" or "Aimbot disabled")
         end,
     })
@@ -829,7 +849,7 @@ if isMobile then
         Tooltip = "Toggle ESP",
         OnClick = function()
             local newState = not VisualSettings.RivalsESP
-            if espToggleRef then espToggleRef.SetState(newState) end
+            if espToggleRef and espToggleRef.SetState then espToggleRef.SetState(newState) end
             API:Notify(newState and "ESP enabled" or "ESP disabled")
         end,
     })
@@ -912,31 +932,6 @@ end
 
 RunService:BindToRenderStep("HappyHub", Enum.RenderPriority.Camera.Value + 1, onRenderStep)
 
-local function setupAutoReload()
-    local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
-    if not queue then return end
-    local src = nil
-    pcall(function()
-        local genv = getgenv and getgenv() or _G
-        src = genv.__HAPPYHUB_SOURCE
-    end)
-    if not src then
-        pcall(function()
-            local info = debug.getinfo(1, "s")
-            if info and info.source then
-                local s = info.source
-                if s:sub(1, 1) == "@" or s:sub(1, 1) == "=" then
-                    s = s:sub(2)
-                    if isfile and isfile(s) then src = readfile(s) end
-                end
-            end
-        end)
-    end
-    if src and #src > 100 then
-        pcall(function() queue(src) end)
-    end
-end
-
 setupAutoReload()
-window:BuildConfigPage()
+
 API:Notify("Happy Hub loaded")
