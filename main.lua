@@ -18,7 +18,6 @@ local TextChatService = game:GetService("TextChatService")
 local TeleportService = game:GetService("TeleportService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
-local GuiService = game:GetService("GuiService")
 local LocalPlayer = Players.LocalPlayer
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
@@ -69,9 +68,6 @@ local killAllRunning = false
 local musicSound = nil
 local _origTransparencies = {}
 local _origBodyColors = {}
-local mobileButtonsGui = nil
-local mobileFlyVec = Vector3.zero
-local mobileFlyDragging = false
 
 local CoinCollecting = false
 local CoinConnection = nil
@@ -276,8 +272,7 @@ local function getGunRaycastCFrame()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
     local att = hrp:FindFirstChild("GunRaycastAttachment")
-    if att then return att.WorldCFrame end
-    return hrp.CFrame
+    return att and att.WorldCFrame
 end
 
 local function getEquippedGun()
@@ -286,19 +281,6 @@ local function getEquippedGun()
     for _, t in ipairs(char:GetChildren()) do
         if t:IsA("Tool") and t.Name:lower():find("gun", 1, true) then
             return t
-        end
-    end
-    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
-    if bp then
-        for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") and t.Name:lower():find("gun", 1, true) then
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum then
-                    pcall(function() hum:EquipTool(t) end)
-                    task.wait(0.1)
-                end
-                return t
-            end
         end
     end
     return nil
@@ -331,12 +313,10 @@ local function isGunShootRemote(remote)
     if not remote or not remote:IsA("RemoteEvent") then return false end
     if remote.Name ~= "Shoot" then return false end
     local parent = remote.Parent
-    if not parent then return false end
-    local path = parent.Name:lower()
-    if parent:IsA("Tool") then
-        return path:find("gun", 1, true) ~= nil
+    if parent and parent:IsA("Tool") then
+        return parent.Name:lower():find("gun", 1, true) ~= nil
     end
-    return path:find("gun", 1, true) ~= nil
+    return false
 end
 
 local silentAimHookInstalled = false
@@ -378,28 +358,12 @@ if type(hookNamecall) == "function" and type(getNamecall) == "function" then
     silentAimHookInstalled = ok
 end
 
-if isMobile then
-    UserInputService.TouchTapInWorld:Connect(function(position, processed)
-        if processed then return end
-        if not MiscSettings.SilentAim then return end
-        if silentAimHookInstalled then return end
-        local murderer = getMurderer()
-        if not murderer or not murderer.Character then return end
-        local targetPart = getMM2TargetPart(murderer.Character)
-        if not targetPart then return end
-        local cam = workspace.CurrentCamera
-        if AimbotSettings.WallCheck
-           and not isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then return end
-        task.spawn(function()
-            fireGunAt(targetPart)
-        end)
-    end)
-else
+if not silentAimHookInstalled then
     UserInputService.InputBegan:Connect(function(input, gp)
         if gp then return end
         if not MiscSettings.SilentAim then return end
-        if silentAimHookInstalled then return end
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+           and input.UserInputType ~= Enum.UserInputType.Touch then return end
         local murderer = getMurderer()
         if not murderer or not murderer.Character then return end
         local targetPart = getMM2TargetPart(murderer.Character)
@@ -1425,39 +1389,6 @@ local function detachFlyBodyMovers()
     if hum then hum.PlatformStand = false end
 end
 
-local function getFlyInput()
-    local mv = Vector3.zero
-    local cam = workspace.CurrentCamera
-    if isMobile then
-        local hum = getHumanoid()
-        if hum then
-            local md = hum.MoveDirection
-            if md.Magnitude > 0.1 then
-                mv = md * Vector3.new(1, 0, 1)
-            end
-        end
-        if mobileFlyDragging and mobileFlyVec.Magnitude > 0.1 then
-            mv = mobileFlyVec
-        end
-        return mv
-    end
-    local cf = cam.CFrame
-    if UserInputService:IsKeyDown(Enum.KeyCode.W) then mv = mv + cf.LookVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.S) then mv = mv - cf.LookVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.A) then mv = mv - cf.RightVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.D) then mv = mv + cf.RightVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then mv = mv + Vector3.yAxis end
-    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then mv = mv - Vector3.yAxis end
-    if mv.Magnitude < 0.01 then
-        local hum2 = getHumanoid()
-        if hum2 then
-            local md = hum2.MoveDirection
-            if md.Magnitude > 0.1 then mv = md * Vector3.new(1, 0, 1) end
-        end
-    end
-    return mv
-end
-
 local function startFly()
     if flyConn then return end
     attachFlyBodyMovers()
@@ -1468,9 +1399,23 @@ local function startFly()
         if not flyBV or not flyBV.Parent then attachFlyBodyMovers() end
         if not flyBV or not flyBG then return end
 
-        local mv = getFlyInput()
+        local cf = workspace.CurrentCamera.CFrame
+        local mv = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then mv = mv + cf.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then mv = mv - cf.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then mv = mv - cf.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then mv = mv + cf.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then mv = mv + Vector3.yAxis end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then mv = mv - Vector3.yAxis end
+        if mv.Magnitude < 0.01 then
+            local hum2 = getHumanoid()
+            if hum2 then
+                local md = hum2.MoveDirection
+                if md.Magnitude > 0.1 then mv = md * Vector3.new(1, 0, 1) end
+            end
+        end
         flyBV.Velocity = mv.Magnitude > 0 and mv.Unit * MovementSettings.FlySpeed or Vector3.zero
-        flyBG.CFrame = workspace.CurrentCamera.CFrame
+        flyBG.CFrame = cf
     end)
 end
 
@@ -1493,6 +1438,7 @@ local function startFOVCircle()
         fovFrame.Name = "FOVCircle"
         fovFrame.BackgroundTransparency = 1
         fovFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+        fovFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
         fovFrame.Size = UDim2.new(0, 200, 0, 200)
         fovFrame.Parent = fovGui
 
@@ -1514,119 +1460,13 @@ local function startFOVCircle()
         if not fovFrame then return end
         local radius = AimbotSettings.FOVRadius
         fovFrame.Size = UDim2.new(0, radius * 2, 0, radius * 2)
-        if isMobile then
-            local inset = GuiService:GetGuiInset()
-            local vp = workspace.CurrentCamera.ViewportSize
-            local cx = vp.X / 2
-            local cy = (vp.Y / 2) + (inset.Y / 2)
-            fovFrame.Position = UDim2.new(0, cx, 0, cy)
-        else
-            fovFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-        end
+        fovFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
     end)
 end
 
 local function stopFOVCircle()
     if fovConn then fovConn:Disconnect(); fovConn = nil end
     if fovGui then fovGui.Enabled = false end
-end
-
-local function buildMobileButtons()
-    if not isMobile then return end
-    if mobileButtonsGui then return end
-
-    mobileButtonsGui = Instance.new("ScreenGui")
-    mobileButtonsGui.Name = "HH_Mobile"
-    mobileButtonsGui.ResetOnSpawn = false
-    mobileButtonsGui.IgnoreGuiInset = true
-    pcall(function() mobileButtonsGui.Parent = game:GetService("CoreGui") end)
-    if not mobileButtonsGui.Parent then
-        mobileButtonsGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-    end
-
-    local function makeBtn(text, color, pos, onClick)
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0, 60, 0, 60)
-        btn.Position = pos
-        btn.BackgroundColor3 = color
-        btn.BackgroundTransparency = 0.2
-        btn.Text = text
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.TextSize = 12
-        btn.Font = Enum.Font.GothamBold
-        btn.AutoButtonColor = true
-        btn.Parent = mobileButtonsGui
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 12)
-        corner.Parent = btn
-        local stroke = Instance.new("UIStroke")
-        stroke.Color = Color3.fromRGB(255, 255, 255)
-        stroke.Transparency = 0.6
-        stroke.Thickness = 1
-        stroke.Parent = btn
-        btn.MouseButton1Click:Connect(function()
-            pcall(onClick)
-        end)
-        return btn
-    end
-
-    makeBtn("AIM", Color3.fromRGB(30, 90, 180), UDim2.new(0, 20, 0.4, 0), function()
-        AimbotSettings.MM2LockOn = not AimbotSettings.MM2LockOn
-        notify("Aimbot: " .. tostring(AimbotSettings.MM2LockOn))
-    end)
-    makeBtn("FIRE", Color3.fromRGB(180, 30, 30), UDim2.new(0, 20, 0.4, 70), function()
-        AimbotSettings.AutoFire = not AimbotSettings.AutoFire
-        notify("AutoFire: " .. tostring(AimbotSettings.AutoFire))
-    end)
-    makeBtn("SA", Color3.fromRGB(140, 40, 180), UDim2.new(0, 20, 0.4, 140), function()
-        MiscSettings.SilentAim = not MiscSettings.SilentAim
-        notify("SilentAim: " .. tostring(MiscSettings.SilentAim))
-    end)
-    makeBtn("ESP", Color3.fromRGB(30, 150, 90), UDim2.new(0, 20, 0.4, 210), function()
-        ESP.active.MM2 = not ESP.active.MM2
-        VisualSettings.MM2ESP = ESP.active.MM2
-        refreshAllESP()
-        notify("Roles ESP: " .. tostring(ESP.active.MM2))
-    end)
-    makeBtn("FLY", Color3.fromRGB(180, 120, 30), UDim2.new(0, 20, 0.4, 280), function()
-        MovementSettings.Fly = not MovementSettings.Fly
-        if MovementSettings.Fly then startFly() else stopFly() end
-        notify("Fly: " .. tostring(MovementSettings.Fly))
-    end)
-    makeBtn("UI", Color3.fromRGB(60, 60, 60), UDim2.new(0, 20, 0.4, 350), function()
-        if window and window.ToggleUI then window.ToggleUI() end
-    end)
-end
-
-local function startMobileFlyDrag()
-    if not isMobile then return end
-    local dragActive = false
-    local dragStart = nil
-
-    UserInputService.TouchStarted:Connect(function(input, gp)
-        if gp then return end
-        if not MovementSettings.Fly then return end
-        dragActive = true
-        dragStart = input.Position
-        mobileFlyDragging = true
-    end)
-
-    UserInputService.TouchMoved:Connect(function(input, gp)
-        if gp then return end
-        if not dragActive then return end
-        if not MovementSettings.Fly then return end
-        local delta = input.Position - dragStart
-        local cam = workspace.CurrentCamera
-        local fwd = cam.CFrame.LookVector * (-delta.Y * 0.05)
-        local right = cam.CFrame.RightVector * (delta.X * 0.05)
-        mobileFlyVec = fwd + right
-    end)
-
-    UserInputService.TouchEnded:Connect(function()
-        dragActive = false
-        mobileFlyDragging = false
-        mobileFlyVec = Vector3.zero
-    end)
 end
 
 local window
@@ -1855,11 +1695,7 @@ registerControl(MovementSettings, "Fly", flyToggleRef)
 local flySpeedRef = window:CreateSlider(movementTab, "Fly Speed", 5, 200, 40, function(v) MovementSettings.FlySpeed = v end)
 registerControl(MovementSettings, "FlySpeed", flySpeedRef)
 
-if isMobile then
-    window:CreateParagraph(movementTab, "Fly mobile: arrastra el dedo o usa el joystick")
-else
-    window:CreateParagraph(movementTab, "WASD + Space / LeftControl")
-end
+window:CreateParagraph(movementTab, "WASD + Space / LeftControl")
 
 window:CreateLabel(movementTab, "Speed")
 local walkSpeedRef = window:CreateSlider(movementTab, "Walk Speed", 4, 150, 16, function(v)
@@ -2099,24 +1935,20 @@ local triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function
             if not targetPart then return end
             local myHRP = getHRP()
             if not myHRP then return end
-            if not getEquippedGun() then return end
-            local dist = (myHRP.Position - targetPart.Position).Magnitude
-            if dist > AimbotSettings.TriggerRange then return end
             if AimbotSettings.WallCheck then
                 local cam = workspace.CurrentCamera
                 if not isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then return end
             end
-            if not isMobile then
-                local cam = workspace.CurrentCamera
-                local sp, on = cam:WorldToViewportPoint(targetPart.Position)
-                if not on then return end
-                local mouse = UserInputService:GetMouseLocation()
-                if (Vector2.new(sp.X, sp.Y) - mouse).Magnitude >= 12 then return end
+            local cam = workspace.CurrentCamera
+            local sp, on = cam:WorldToViewportPoint(targetPart.Position)
+            if not on then return end
+            local mouse = UserInputService:GetMouseLocation()
+            if (Vector2.new(sp.X, sp.Y) - mouse).Magnitude < 12 then
+                local now = tick()
+                if now - lastShot < 0.08 then return end
+                lastShot = now
+                fireGunAt(targetPart)
             end
-            local now = tick()
-            if now - lastShot < 0.08 then return end
-            lastShot = now
-            fireGunAt(targetPart)
         end)
     end
 end)
@@ -2137,7 +1969,6 @@ local autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire  [B]", false, func
             if not murderer or not murderer.Character then return end
             local targetPart = getMM2TargetPart(murderer.Character)
             if not targetPart then return end
-            if not getEquippedGun() then return end
             if AimbotSettings.WallCheck then
                 local cam = workspace.CurrentCamera
                 if not isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then return end
@@ -2547,12 +2378,8 @@ if window._makeMobileBtn and isMobile then
     window._makeMobileBtn("UI", function() window.ToggleUI() end)
 end
 
-buildMobileButtons()
-startMobileFlyDrag()
-
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if isMobile then return end
     if UserInputService:GetFocusedTextBox() then return end
     if input.KeyCode == Enum.KeyCode.T then
         if mm2LockRef then mm2LockRef.SetState(not mm2LockRef.GetState()) end
@@ -2702,21 +2529,5 @@ end
 window:SetConfigSnapshot(snapshotSettings)
 window:SetConfigApply(applyConfig)
 window:BuildConfigPage()
-
-task.delay(2, function()
-    if isMobile then
-        if silentAimHookInstalled then
-            notify("Mobile · SilentAim HOOK", 4)
-        else
-            notify("Mobile · SilentAim TOUCH FALLBACK", 4)
-        end
-    else
-        if silentAimHookInstalled then
-            notify("PC · SilentAim HOOK", 4)
-        else
-            notify("PC · SilentAim MOUSE FALLBACK", 4)
-        end
-    end
-end)
 
 API:Notify("Hello again "..LocalPlayer.DisplayName, 3)
