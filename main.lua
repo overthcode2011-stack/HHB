@@ -41,7 +41,7 @@ local AimbotSettings = {
 local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false, Beam = false, BeamGunDrop = false }
 local MiscSettings = {
     InfJump = false, AntiAFK = false, AutoTpGun = false,
-    SilentAim = false, MusicCompanion = false,
+    SilentAim = false, MusicCompanion = false, AntiVoid = false,
 }
 local MovementSettings = {
     Noclip = false, God = false, Fly = false, WalkSpeed = 16, JumpPower = 50,
@@ -62,6 +62,7 @@ local BeamSettings = {
     MaxIterations = 14,
     WaypointOffset = 3,
 }
+local AntiVoidSettings = { Threshold = -30, SafeY = 10 }
 
 local function notify(msg, dur) pcall(function() API:Notify(msg, dur) end) end
 local function registerControl(t, k, c) pcall(function() API:RegisterControl(t, k, c) end) end
@@ -70,6 +71,7 @@ local S = {
     noclipConn = nil, godConn = nil, antiAFKConn = nil,
     flyConn = nil, flyBV = nil, flyBG = nil,
     mm2Conn = nil, triggerBotConn = nil, autoFireConn = nil,
+    antiVoidConn = nil, lastSafeCFrame = nil,
     autoTpGunThread = nil, flingTask = nil, tpAllTask = nil,
     nameTagUpdater = nil, mm2PeriodicThread = nil, gunESPThread = nil,
     fovConn = nil, fovGui = nil, fovFrame = nil,
@@ -614,6 +616,34 @@ local function refreshBeam()
     if S.beamData.updateConn then
         updateBeam()
     end
+end
+
+local function startAntiVoid()
+    if S.antiVoidConn then return end
+    S.antiVoidConn = RunService.Heartbeat:Connect(function()
+        if not MiscSettings.AntiVoid then return end
+        local hrp = getHRP()
+        if not hrp then
+            S.lastSafeCFrame = nil
+            return
+        end
+        local pos = hrp.Position
+        if pos.Y >= AntiVoidSettings.SafeY then
+            S.lastSafeCFrame = hrp.CFrame
+        elseif pos.Y <= AntiVoidSettings.Threshold and S.lastSafeCFrame then
+            hrp.CFrame = S.lastSafeCFrame
+            hrp.Velocity = Vector3.zero
+            hrp.RotVelocity = Vector3.zero
+        end
+    end)
+end
+
+local function stopAntiVoid()
+    if S.antiVoidConn then
+        S.antiVoidConn:Disconnect()
+        S.antiVoidConn = nil
+    end
+    S.lastSafeCFrame = nil
 end
 
 pcall(function()
@@ -1579,32 +1609,17 @@ local function startFlingTarget(targetPlr)
 
             local elapsed = tick() - startTime
             local phase = elapsed * 12
-            local offsetX = math.sin(phase) * 3
-            local offsetY = math.cos(phase * 1.3) * 3
-            local offsetZ = math.sin(phase * 0.7) * 3
-
             local theirPos = theirHRP.Position
-            local baseCFrame = CFrame.new(
-                theirPos.X + offsetX,
-                theirPos.Y + offsetY + 3,
-                theirPos.Z + offsetZ
-            )
 
-            local spin = CFrame.Angles(
-                math.sin(phase * 1.1) * 0.8,
-                phase * 2,
-                math.cos(phase * 0.9) * 0.8
-            )
-
-            local newCFrame = baseCFrame * spin
+            local baseCFrame = CFrame.new(theirPos) * CFrame.Angles(0, phase * 2, 0)
 
             if not fireTeleportToPart(currentHRP, theirHRP) then
-                currentHRP.CFrame = newCFrame
+                currentHRP.CFrame = baseCFrame
             else
                 task.wait(0.02)
                 local h = getHRP()
                 if h then
-                    h.CFrame = newCFrame
+                    h.CFrame = baseCFrame
                 end
             end
 
@@ -2193,6 +2208,16 @@ UI.godRef = window:CreateToggle(movementTab, "God Mode", false, function(v)
     end
 end)
 registerControl(MovementSettings, "God", UI.godRef)
+
+UI.antiVoidRef = window:CreateToggle(movementTab, "Anti-Void", false, function(v)
+    MiscSettings.AntiVoid = v
+    if v then
+        startAntiVoid()
+    else
+        stopAntiVoid()
+    end
+end)
+registerControl(MiscSettings, "AntiVoid", UI.antiVoidRef)
 
 UI.ijRef = window:CreateToggle(movementTab, "Infinite Jump", false, function(v)
     MiscSettings.InfJump = v
@@ -2869,6 +2894,7 @@ local function snapshotSettings()
         Misc = {
             InfJump        = MiscSettings.InfJump,
             AntiAFK        = MiscSettings.AntiAFK,
+            AntiVoid       = MiscSettings.AntiVoid,
             AutoTpGun      = MiscSettings.AutoTpGun,
             SilentAim      = MiscSettings.SilentAim,
             MusicCompanion = MiscSettings.MusicCompanion,
@@ -2909,6 +2935,10 @@ local function snapshotSettings()
             MaxIterations = BeamSettings.MaxIterations,
             WaypointOffset = BeamSettings.WaypointOffset,
         },
+        AntiVoid = {
+            Threshold = AntiVoidSettings.Threshold,
+            SafeY = AntiVoidSettings.SafeY,
+        },
         Theme = API:GetTheme(),
     }
 end
@@ -2937,12 +2967,17 @@ local function applyConfig(data)
     if data.Beam then
         for k, v in pairs(data.Beam) do BeamSettings[k] = v end
     end
+    if data.AntiVoid then
+        for k, v in pairs(data.AntiVoid) do AntiVoidSettings[k] = v end
+    end
 
     if data.Theme and data.Theme ~= API:GetTheme() then
         API:SetTheme(data.Theme)
     end
 
     if MovementSettings.Fly then startFly() else stopFly() end
+
+    if MiscSettings.AntiVoid then startAntiVoid() else stopAntiVoid() end
 
     if MovementSettings.Noclip then
         if S.noclipConn then S.noclipConn:Disconnect() end
