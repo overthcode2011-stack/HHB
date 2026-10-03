@@ -36,7 +36,7 @@ local ICONS = {
 local AimbotSettings = {
     MM2LockOn = false, MM2Smooth = 8, MM2Range = 500, MM2Target = "Head",
     TriggerBot = false, TriggerRange = 150, AutoFire = false, WallCheck = true,
-    FOVCircle = false, FOVRadius = 120,
+    FOVCircle = false, FOVRadius = 120, AutoKillMurderer = false,
 }
 local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false, Beam = false, BeamGunDrop = false }
 local MiscSettings = {
@@ -71,7 +71,7 @@ local S = {
     noclipConn = nil, godConn = nil, antiAFKConn = nil,
     flyConn = nil, flyBV = nil, flyBG = nil,
     mm2Conn = nil, triggerBotConn = nil, autoFireConn = nil,
-    antiVoidConn = nil, lastSafeCFrame = nil,
+    autoKillConn = nil, antiVoidConn = nil, lastSafeCFrame = nil,
     autoTpGunThread = nil, flingTask = nil, tpAllTask = nil,
     nameTagUpdater = nil, mm2PeriodicThread = nil, gunESPThread = nil,
     fovConn = nil, fovGui = nil, fovFrame = nil,
@@ -138,6 +138,15 @@ local function getRoleFromCache(plr)
     return nil
 end
 
+local function isLocalSheriffOrHero()
+    local cached = getRoleFromCache(LocalPlayer)
+    if cached == "Sheriff" or cached == "Hero" then return true end
+    local char = LocalPlayer.Character
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if hasTool(char, "Gun") or hasTool(bp, "Gun") then return true end
+    return false
+end
+
 local function isPlrMurderer(plr)
     if not plr then return false end
     if plr == LocalPlayer then return false end
@@ -163,7 +172,11 @@ local function isTargetSafe(plr)
 end
 
 local function getMM2Role(plr)
-    if plr == LocalPlayer then return "Innocent" end
+    if plr == LocalPlayer then
+        local cached = getRoleFromCache(LocalPlayer)
+        if cached then return cached end
+        return "Innocent"
+    end
 
     local cached = getRoleFromCache(plr)
     if cached then
@@ -2458,6 +2471,39 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire  [B]", false, functio
 end)
 registerControl(AimbotSettings, "AutoFire", UI.autoFireRef)
 
+window:CreateLabel(aimbotTab, "Sheriff / Hero")
+UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill Murderer", false, function(v)
+    AimbotSettings.AutoKillMurderer = v
+    if S.autoKillConn then S.autoKillConn:Disconnect(); S.autoKillConn = nil end
+    if v then
+        local lastShot = 0
+        S.autoKillConn = RunService.RenderStepped:Connect(function()
+            if not AimbotSettings.AutoKillMurderer then return end
+            if not isLocalSheriffOrHero() then return end
+            local murderer = getMurderer()
+            if not isTargetSafe(murderer) then return end
+            local targetPart = getMM2TargetPart(murderer.Character)
+            if not targetPart then return end
+            local myHRP = getHRP()
+            if not myHRP then return end
+            if not getEquippedGun() then return end
+            local dist = (myHRP.Position - targetPart.Position).Magnitude
+            if dist > AimbotSettings.MM2Range then return end
+            if AimbotSettings.WallCheck and not BeamSettings.RedirectBullets then
+                local cam = workspace.CurrentCamera
+                if not isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then return end
+            end
+            local now = tick()
+            if now - lastShot < 0.1 then return end
+            lastShot = now
+            fireGunAt(targetPart, murderer)
+        end)
+    end
+end)
+registerControl(AimbotSettings, "AutoKillMurderer", UI.autoKillRef)
+
+window:CreateParagraph(aimbotTab, "Auto Kill = solo dispara si sos Sheriff/Hero con gun en mano")
+
 UI.wallCheckRef = window:CreateToggle(aimbotTab, "Wall Check", true, function(v)
     AimbotSettings.WallCheck = v
 end)
@@ -2879,6 +2925,7 @@ local function snapshotSettings()
             TriggerBot  = AimbotSettings.TriggerBot,
             TriggerRange= AimbotSettings.TriggerRange,
             AutoFire    = AimbotSettings.AutoFire,
+            AutoKillMurderer = AimbotSettings.AutoKillMurderer,
             WallCheck   = AimbotSettings.WallCheck,
             FOVCircle   = AimbotSettings.FOVCircle,
             FOVRadius   = AimbotSettings.FOVRadius,
