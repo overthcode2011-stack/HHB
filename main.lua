@@ -3246,15 +3246,15 @@ window:BuildConfigPage()
 task.delay(2, function()
     if isMobile then
         if S.silentAimHookInstalled then
-            notify("Mobile · SilentAim HOOK", 4)
+            notify("Mobile · SilentAim modeK", 4)
         else
-            notify("Mobile · SilentAim TOUCH FALLBACK", 4)
+            notify("Your Device; Mobile", 4)
         end
     else
         if S.silentAimHookInstalled then
-            notify("PC · SilentAim HOOK", 4)
+            notify("PC · Silent Aim mode", 4)
         else
-            notify("PC · SilentAim MOUSE FALLBACK", 4)
+            notify("Your Device; PC", 4)
         end
     end
 end)
