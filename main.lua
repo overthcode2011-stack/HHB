@@ -1561,7 +1561,6 @@ local function startFlingTarget(targetPlr)
         local startTime = tick()
         local duration = MovementSettings.FlingDuration or 3
         local maxDist = MovementSettings.FlingDistance or 500
-        local originPos = S.flingOriginalPosition
         local flinged = false
 
         while S.flingTargetRunning and tick() - startTime < duration do
@@ -1569,16 +1568,6 @@ local function startFlingTarget(targetPlr)
             local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
             if not currentHRP or not theirHRP then
                 break
-            end
-
-            if currentHRP.Position.Y < -50 or (originPos and (currentHRP.Position - originPos).Magnitude > 120) then
-                currentHRP.CFrame = S.flingOriginalCFrame
-                currentHRP.Velocity = Vector3.zero
-                currentHRP.RotVelocity = Vector3.zero
-                RunService.RenderStepped:Wait()
-                currentHRP = getHRP()
-                theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
-                if not currentHRP or not theirHRP then break end
             end
 
             local dist = (currentHRP.Position - theirHRP.Position).Magnitude
@@ -1590,31 +1579,45 @@ local function startFlingTarget(targetPlr)
 
             local elapsed = tick() - startTime
             local phase = elapsed * 12
+            local offsetX = math.sin(phase) * 3
+            local offsetY = math.cos(phase * 1.3) * 3
+            local offsetZ = math.sin(phase * 0.7) * 3
+
             local theirPos = theirHRP.Position
             local baseCFrame = CFrame.new(
-                theirPos.X + math.sin(phase) * 1,
-                theirPos.Y + 2,
-                theirPos.Z + math.cos(phase) * 1
-            ) * CFrame.Angles(0, phase * 2, 0)
+                theirPos.X + offsetX,
+                theirPos.Y + offsetY + 3,
+                theirPos.Z + offsetZ
+            )
+
+            local spin = CFrame.Angles(
+                math.sin(phase * 1.1) * 0.8,
+                phase * 2,
+                math.cos(phase * 0.9) * 0.8
+            )
+
+            local newCFrame = baseCFrame * spin
 
             if not fireTeleportToPart(currentHRP, theirHRP) then
-                currentHRP.CFrame = baseCFrame
+                currentHRP.CFrame = newCFrame
             else
                 task.wait(0.02)
                 local h = getHRP()
-                if h then h.CFrame = baseCFrame end
+                if h then
+                    h.CFrame = newCFrame
+                end
             end
 
             local velo = currentHRP.Velocity
-            currentHRP.Velocity = velo + Vector3.new(
-                math.sin(phase) * 2500,
-                math.cos(phase * 1.3) * 2500 + 2000,
-                math.cos(phase) * 2500
+            currentHRP.Velocity = velo * 5000 + Vector3.new(
+                math.sin(phase) * 8000,
+                math.cos(phase * 1.3) * 8000 + 5000,
+                math.cos(phase) * 8000
             )
             currentHRP.RotVelocity = Vector3.new(
-                math.sin(phase * 1.5) * 80,
-                math.cos(phase * 1.2) * 80,
-                math.sin(phase * 0.9) * 80
+                math.sin(phase * 1.5) * 300,
+                math.cos(phase * 1.2) * 300,
+                math.sin(phase * 0.9) * 300
             )
 
             RunService.RenderStepped:Wait()
