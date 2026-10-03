@@ -59,7 +59,7 @@ local AimbotSettings = {
     TriggerBot = false, TriggerRange = 150, AutoFire = false, WallCheck = true,
     FOVCircle = false, FOVRadius = 120, AutoKillMurderer = false,
 }
-local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false, Beam = false, BeamGunDrop = false }
+local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false, Beam = false }
 local MiscSettings = {
     InfJump = false, AntiAFK = false, AutoTpGun = false,
     SilentAim = false, MusicCompanion = false, AntiVoid = false,
@@ -69,17 +69,14 @@ local MovementSettings = {
     FlySpeed = 40, AntiFling = false, Fling = false, TPAll = false,
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
-local AvatarSettings = { Korblox = false, AnimPack = false }
+local AvatarSettings = { Korblox = false, Shoulder = false, Invisible = false, NoobFace = false, Rainbow = false, AnimPack = false }
 local FarmSettings = { AutoFarm = false, ManualCollect = false, CoinSpeed = 20, PickupRadius = 3 }
 local BeamSettings = {
     Enabled = false,
-    GunDropEnabled = false,
     RedirectBullets = false,
-    SafeRedirect = true,
     ClearColor = Color3.fromRGB(0, 255, 100),
     WallColor = Color3.fromRGB(255, 50, 50),
     PlayerColor = Color3.fromRGB(255, 130, 0),
-    GunColor = Color3.fromRGB(255, 200, 0),
     Thickness = 0.15,
     Transparency = 0.2,
     MaxIterations = 14,
@@ -110,9 +107,9 @@ local S = {
     currentEmoteTrack = nil,
     animPriorityConn = nil,
     korbloxPart = nil,
+    origTransparencies = {}, origBodyColors = {},
     mobileButtonsGui = nil, mobileFlyVec = Vector3.zero, mobileFlyDragging = false,
     beamData = { segments = {}, updateConn = nil },
-    gunBeamData = { segments = {}, updateConn = nil },
     coinCollecting = false, coinConnection = nil, coinVelocity = nil,
     coinGyro = nil,
     roundActive = false, bagProgress = {}, totalCoins = 0,
@@ -200,11 +197,7 @@ local function isTargetSafe(plr)
 end
 
 local function getMM2Role(plr)
-    if plr == LocalPlayer then
-        local cached = getRoleFromCache(LocalPlayer)
-        if cached then return cached end
-        return "Innocent"
-    end
+    if plr == LocalPlayer then return "Innocent" end
 
     local cached = getRoleFromCache(plr)
     if cached then
@@ -368,14 +361,6 @@ local function isGunShootRemote(remote)
     return path:find("gun", 1, true) ~= nil
 end
 
-local function getGunFiredEvent()
-    local clientServices = ReplicatedStorage:FindFirstChild("ClientServices")
-    if not clientServices then return nil end
-    local weaponService = clientServices:FindFirstChild("WeaponService")
-    if not weaponService then return nil end
-    return weaponService:FindFirstChild("GunFired")
-end
-
 local function getCharacterFromPart(part)
     if not part then return nil end
     local current = part
@@ -419,8 +404,8 @@ local function classifyPathHit(originPos, targetPos, targetChar)
     return "wall", nil
 end
 
-local function applyGracePeriod(plr, isVisible)
-    if not plr then return isVisible end
+local function applyGracePeriod(plr, isCurrentlyVisible)
+    if not plr then return isCurrentlyVisible end
     local now = tick()
     local tv = TargetVisibility[plr]
     if not tv then
@@ -428,7 +413,7 @@ local function applyGracePeriod(plr, isVisible)
         TargetVisibility[plr] = tv
     end
 
-    if isVisible then
+    if isCurrentlyVisible then
         if tv.wasHidden then
             if not tv.visibleSince then
                 tv.visibleSince = now
@@ -462,14 +447,33 @@ local function isVisibleForShot(originPos, targetPos, targetChar, targetPlr)
         return false
     end
 
+    if not AimbotSettings.WallCheck then
+        return true
+    end
+
     if hitType == "wall" then
-        if not AimbotSettings.WallCheck then
-            return applyGracePeriod(targetPlr, true)
-        end
         return applyGracePeriod(targetPlr, false)
     end
 
     return applyGracePeriod(targetPlr, true)
+end
+
+local function isVisible(originPos, targetPos, targetChar)
+    local dir = targetPos - originPos
+    local dist = dir.Magnitude
+    if dist < 0.5 then return true end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    local ignore = { workspace.CurrentCamera }
+    if LocalPlayer.Character then table.insert(ignore, LocalPlayer.Character) end
+    params.FilterDescendantsInstances = ignore
+    params.IgnoreWater = true
+    local result = workspace:Raycast(originPos, dir.Unit * (dist + 1), params)
+    if not result then return true end
+    if targetChar and (result.Instance:IsDescendantOf(targetChar) or result.Instance == targetChar) then
+        return true
+    end
+    return false
 end
 
 local function buildBeamPath(fromPos, toPos, targetChar)
@@ -553,37 +557,6 @@ local function buildBeamPath(fromPos, toPos, targetChar)
     return waypoints
 end
 
-local function findBestRedirectOrigin(waypoints, targetPos, targetChar)
-    for i = #waypoints, 1, -1 do
-        local wp = waypoints[i]
-        local hitType = classifyPathHit(wp + Vector3.new(0, 2, 0), targetPos, targetChar)
-        if hitType == "clear" or hitType == "target" then
-            return wp
-        end
-    end
-    return nil
-end
-
-local function fireGunFiredSignal(waypoint, targetPos, targetPart)
-    if not firesignal then return false end
-    local gunFired = getGunFiredEvent()
-    if not gunFired then return false end
-    local gun = getEquippedGun()
-    if not gun then return false end
-    local handle = gun:FindFirstChild("Handle")
-    if not handle then return false end
-
-    local ok = pcall(function()
-        firesignal(gunFired.OnClientEvent,
-            handle,
-            Vector3.new(waypoint.X, waypoint.Y, waypoint.Z),
-            Vector3.new(targetPos.X, targetPos.Y, targetPos.Z),
-            targetPart
-        )
-    end)
-    return ok
-end
-
 local function fireGunAt(targetPart, targetPlr)
     if targetPlr and not isTargetSafe(targetPlr) then return false end
 
@@ -609,14 +582,34 @@ local function fireGunAt(targetPart, targetPlr)
         shootRemote:FireServer(origin, targetCF)
     end)
 
-    if BeamSettings.RedirectBullets and BeamSettings.SafeRedirect and targetChar then
-        if hitType == "wall" then
-            local waypoints = buildBeamPath(myHRP.Position, targetPart.Position, targetChar)
-            local bestWp = findBestRedirectOrigin(waypoints, targetPart.Position, targetChar)
-            if bestWp then
-                fireGunFiredSignal(bestWp, targetPart.Position, targetPart)
+    if BeamSettings.RedirectBullets and targetChar and hitType == "wall" then
+        local waypoints = buildBeamPath(myHRP.Position, targetPart.Position, targetChar)
+        local originalCFrame = myHRP.CFrame
+        local fired = false
+        for i = #waypoints - 1, 2, -1 do
+            local wp = waypoints[i]
+            if isVisible(wp + Vector3.new(0, 2, 0), targetPart.Position, targetChar) then
+                myHRP.CFrame = CFrame.new(wp + Vector3.new(0, 2.5, 0))
+                RunService.RenderStepped:Wait()
+                local redirectOrigin = getGunRaycastCFrame()
+                if redirectOrigin then
+                    local redirectTargetCF = predictAim(targetPart)
+                    if redirectTargetCF then
+                        pcall(function() shootRemote:FireServer(redirectOrigin, redirectTargetCF) end)
+                        fired = true
+                    end
+                end
+                task.wait(0.03)
+                local h = getHRP()
+                if h then
+                    h.CFrame = originalCFrame
+                    h.Velocity = Vector3.zero
+                    h.RotVelocity = Vector3.zero
+                end
+                break
             end
         end
+        if fired then return true end
     end
 
     return true
@@ -738,28 +731,6 @@ local function updateBeam()
     elseif #S.beamData.segments > 0 then
         clearBeamPool(S.beamData)
     end
-
-    if BeamSettings.GunDropEnabled then
-        local myHRP = getHRP()
-        local gun = findGunDrop()
-        if myHRP and gun then
-            local waypoints = buildBeamPath(myHRP.Position, gun.Position, nil)
-            local hitType = classifyPathHit(myHRP.Position, gun.Position, nil)
-            local color
-            if hitType == "clear" then
-                color = BeamSettings.GunColor
-            elseif hitType == "innocent" then
-                color = BeamSettings.PlayerColor
-            else
-                color = BeamSettings.WallColor
-            end
-            renderBeamPath(S.gunBeamData, waypoints, color)
-        else
-            clearBeamPool(S.gunBeamData)
-        end
-    elseif #S.gunBeamData.segments > 0 then
-        clearBeamPool(S.gunBeamData)
-    end
 end
 
 local function ensureBeamConn()
@@ -768,13 +739,12 @@ local function ensureBeamConn()
 end
 
 local function stopBeamIfIdle()
-    if BeamSettings.Enabled or BeamSettings.GunDropEnabled then return end
+    if BeamSettings.Enabled then return end
     if S.beamData.updateConn then
         S.beamData.updateConn:Disconnect()
         S.beamData.updateConn = nil
     end
     clearBeamPool(S.beamData)
-    clearBeamPool(S.gunBeamData)
 end
 
 local function refreshBeam()
@@ -1360,7 +1330,6 @@ local function onRoundEnd()
     clearHeroFlags()
     clearGunESP()
     clearBeamPool(S.beamData)
-    clearBeamPool(S.gunBeamData)
 end
 
 local function updateRoleCache(data)
@@ -2382,7 +2351,7 @@ UI.ogESPToggleRef = window:CreateToggle(espTab, "Neutral", false, function(v)
 end)
 registerControl(VisualSettings, "OGESP", UI.ogESPToggleRef)
 
-window:CreateLabel(espTab, "Additional")
+window:CreateLabel(espTab, "Aditional")
 UI.nameTagToggleRef = window:CreateToggle(espTab, "Nametag", false, function(v)
     ESP.active.NameTag = v
     VisualSettings.NameTags = v
@@ -2419,23 +2388,10 @@ UI.beamToggleRef = window:CreateToggle(espTab, "Beam to Murderer", false, functi
 end)
 registerControl(VisualSettings, "Beam", UI.beamToggleRef)
 
-UI.beamGunDropRef = window:CreateToggle(espTab, "Beam to GunDrop", false, function(v)
-    BeamSettings.GunDropEnabled = v
-    VisualSettings.BeamGunDrop = v
-    if v then ensureBeamConn() end
-    stopBeamIfIdle()
-end)
-registerControl(VisualSettings, "BeamGunDrop", UI.beamGunDropRef)
-
 UI.beamRedirectRef = window:CreateToggle(espTab, "Beam Redirect Bullets", false, function(v)
     BeamSettings.RedirectBullets = v
 end)
 registerControl(BeamSettings, "RedirectBullets", UI.beamRedirectRef)
-
-UI.beamSafeRedirectRef = window:CreateToggle(espTab, "Safe Redirect (no TP)", true, function(v)
-    BeamSettings.SafeRedirect = v
-end)
-registerControl(BeamSettings, "SafeRedirect", UI.beamSafeRedirectRef)
 
 window:CreateParagraph(espTab, "Beam colors: green = clear · orange = innocent blocking · red = wall. Innocents always block shots.")
 
@@ -2450,7 +2406,7 @@ UI.flySpeedRef = window:CreateSlider(movementTab, "Fly Speed", 5, 200, 40, funct
 registerControl(MovementSettings, "FlySpeed", UI.flySpeedRef)
 
 if isMobile then
-    window:CreateParagraph(movementTab, "Fly mobile: drag your finger or use joystick")
+    window:CreateParagraph(movementTab, "Fly mobile: arrastra el dedo o usa el joystick")
 else
     window:CreateParagraph(movementTab, "WASD + Space / LeftControl")
 end
@@ -2578,6 +2534,21 @@ UI.antiFlingRef = window:CreateToggle(movementTab, "Anti-Fling", false, function
     end
 end)
 registerControl(MovementSettings, "AntiFling", UI.antiFlingRef)
+
+window:CreateLabel(movementTab, "Animations")
+window:CreateButton(movementTab, "laugh", function()
+    local tcs = TextChatService
+    if tcs.ChatVersion == Enum.ChatVersion.TextChatService then
+        local channel = tcs.TextChannels:FindFirstChild("RBXGeneral")
+        if channel then pcall(function() channel:SendAsync("/e laugh") end) end
+    else
+        local event = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+        if event then
+            local sayReq = event:FindFirstChild("SayMessageRequest")
+            if sayReq then pcall(function() sayReq:FireServer("/e laugh", "All") end) end
+        end
+    end
+end)
 
 window:CreateLabel(movementTab, "Emotes")
 for _, emote in ipairs(EMOTES) do
@@ -2866,13 +2837,94 @@ window:CreateButton(aimbotTab, "Kill Everyone", function()
 end)
 
 window:CreateLabel(avatarTab, "Avatar")
-window:CreateParagraph(avatarTab, "Korblox + custom animation pack")
+window:CreateParagraph(avatarTab, "Effects are local only. They re-apply on respawn.")
 
 UI.korbloxRef = window:CreateToggle(avatarTab, "Korblox Deathspeaker", false, function(v)
     AvatarSettings.Korblox = v
     if v then applyKorblox() else removeKorblox() end
 end)
 registerControl(AvatarSettings, "Korblox", UI.korbloxRef)
+
+UI.shoulderRef = window:CreateToggle(avatarTab, "Shoulder Accessory", false, function(v)
+    AvatarSettings.Shoulder = v
+    local char = LocalPlayer.Character; if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
+    for _, a in ipairs(char:GetChildren()) do
+        if a:IsA("Accessory") and a.Name == "HH_ShoulderAcc" then a:Destroy() end
+    end
+    if v then
+        local acc = Instance.new("Accessory")
+        acc.Name = "HH_ShoulderAcc"
+        local handle = Instance.new("Part")
+        handle.Name = "Handle"; handle.Size = Vector3.new(1, 1, 1)
+        handle.CanCollide = false; handle.Anchored = false
+        local mesh = Instance.new("SpecialMesh")
+        mesh.MeshType = Enum.MeshType.FileMesh
+        mesh.MeshId = "rbxassetid://110121730336323"
+        mesh.Parent = handle
+        local att = Instance.new("Attachment")
+        att.Name = "BodyFrontAttachment"; att.Parent = handle
+        handle.Parent = acc; acc.Parent = char
+        hum:AddAccessory(acc)
+    end
+end)
+registerControl(AvatarSettings, "Shoulder", UI.shoulderRef)
+
+UI.invisibleRef = window:CreateToggle(avatarTab, "Invisible", false, function(v)
+    AvatarSettings.Invisible = v
+    local char = LocalPlayer.Character; if not char then return end
+    if v then
+        S.origTransparencies = {}
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
+                S.origTransparencies[p] = p.Transparency
+                p.Transparency = 1
+            end
+        end
+    else
+        for p, t in pairs(S.origTransparencies) do
+            if p and p.Parent then p.Transparency = t end
+        end
+        S.origTransparencies = {}
+    end
+end)
+registerControl(AvatarSettings, "Invisible", UI.invisibleRef)
+
+UI.noobFaceRef = window:CreateToggle(avatarTab, "Classic Noob Face", false, function(v)
+    AvatarSettings.NoobFace = v
+    local char = LocalPlayer.Character; if not char then return end
+    local head = char:FindFirstChild("Head"); if not head then return end
+    local face = head:FindFirstChildOfClass("Decal")
+    if not face then face = Instance.new("Decal"); face.Name = "face"; face.Parent = head end
+    if v then face.Texture = "rbxassetid://1079" else face.Texture = "rbxassetid://1369239677" end
+end)
+registerControl(AvatarSettings, "NoobFace", UI.noobFaceRef)
+
+UI.rainbowRef = window:CreateToggle(avatarTab, "Rainbow Body", false, function(v)
+    AvatarSettings.Rainbow = v
+    local char = LocalPlayer.Character; if not char then return end
+    if v then
+        S.origBodyColors = {}
+        local parts = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg",
+            "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "LeftHand",
+            "RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg",
+            "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot" }
+        for _, n in ipairs(parts) do
+            local p = char:FindFirstChild(n)
+            if p and p:IsA("BasePart") then
+                S.origBodyColors[n] = p.Color
+                p.Color = Color3.fromHSV(math.random(), 0.9, 1)
+            end
+        end
+    else
+        for n, col in pairs(S.origBodyColors) do
+            local p = char:FindFirstChild(n)
+            if p and p:IsA("BasePart") then p.Color = col end
+        end
+        S.origBodyColors = {}
+    end
+end)
+registerControl(AvatarSettings, "Rainbow", UI.rainbowRef)
 
 window:CreateLabel(avatarTab, "Animation Pack")
 UI.animPackRef = window:CreateToggle(avatarTab, "Custom Anims", false, function(v)
@@ -2888,11 +2940,65 @@ registerControl(AvatarSettings, "AnimPack", UI.animPackRef)
 
 window:CreateParagraph(avatarTab, "Idle · Walk · Run · Fall · Climb · Jump replaced. Re-applies on respawn if active.")
 
+window:CreateButton(avatarTab, "Remove All Mods", function()
+    if UI.korbloxRef then UI.korbloxRef.SetState(false) end
+    if UI.shoulderRef then UI.shoulderRef.SetState(false) end
+    if UI.invisibleRef then UI.invisibleRef.SetState(false) end
+    if UI.noobFaceRef then UI.noobFaceRef.SetState(false) end
+    if UI.rainbowRef then UI.rainbowRef.SetState(false) end
+    if UI.animPackRef then UI.animPackRef.SetState(false) end
+end)
+
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.6)
     if MovementSettings.Fly then attachFlyBodyMovers() end
     if AvatarSettings.Korblox then pcall(applyKorblox) end
     if AvatarSettings.AnimPack then pcall(applyAnimPack) end
+    if AvatarSettings.Rainbow then
+        local char = LocalPlayer.Character
+        if char then
+            local parts = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg",
+                "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "LeftHand",
+                "RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg",
+                "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot" }
+            for _, n in ipairs(parts) do
+                local p = char:FindFirstChild(n)
+                if p and p:IsA("BasePart") then p.Color = Color3.fromHSV(math.random(), 0.9, 1) end
+            end
+        end
+    end
+    if AvatarSettings.NoobFace then
+        local char = LocalPlayer.Character
+        if char then
+            local head = char:FindFirstChild("Head")
+            if head then
+                local face = head:FindFirstChildOfClass("Decal")
+                if not face then face = Instance.new("Decal"); face.Name = "face"; face.Parent = head end
+                face.Texture = "rbxassetid://1079"
+            end
+        end
+    end
+    if AvatarSettings.Shoulder then
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                local acc = Instance.new("Accessory")
+                acc.Name = "HH_ShoulderAcc"
+                local handle = Instance.new("Part")
+                handle.Name = "Handle"; handle.Size = Vector3.new(1, 1, 1)
+                handle.CanCollide = false; handle.Anchored = false
+                local mesh = Instance.new("SpecialMesh")
+                mesh.MeshType = Enum.MeshType.FileMesh
+                mesh.MeshId = "rbxassetid://110121730336323"
+                mesh.Parent = handle
+                local att = Instance.new("Attachment")
+                att.Name = "BodyFrontAttachment"; att.Parent = handle
+                handle.Parent = acc; acc.Parent = char
+                hum:AddAccessory(acc)
+            end
+        end
+    end
     if FarmSettings.AutoFarm or FarmSettings.ManualCollect then
         task.wait(0.5)
         if not S.coinCollecting then startCoinCollector() end
@@ -3092,7 +3198,6 @@ local function snapshotSettings()
             NameTags = VisualSettings.NameTags,
             GunESP   = VisualSettings.GunESP,
             Beam     = VisualSettings.Beam,
-            BeamGunDrop = VisualSettings.BeamGunDrop,
         },
         Misc = {
             InfJump        = MiscSettings.InfJump,
@@ -3118,6 +3223,10 @@ local function snapshotSettings()
         },
         Avatar = {
             Korblox   = AvatarSettings.Korblox,
+            Shoulder  = AvatarSettings.Shoulder,
+            Invisible = AvatarSettings.Invisible,
+            NoobFace  = AvatarSettings.NoobFace,
+            Rainbow   = AvatarSettings.Rainbow,
             AnimPack  = AvatarSettings.AnimPack,
         },
         Farm = {
@@ -3128,9 +3237,7 @@ local function snapshotSettings()
         },
         Beam = {
             Enabled = BeamSettings.Enabled,
-            GunDropEnabled = BeamSettings.GunDropEnabled,
             RedirectBullets = BeamSettings.RedirectBullets,
-            SafeRedirect = BeamSettings.SafeRedirect,
             Thickness = BeamSettings.Thickness,
             Transparency = BeamSettings.Transparency,
             MaxIterations = BeamSettings.MaxIterations,
@@ -3218,7 +3325,7 @@ local function applyConfig(data)
     applyGunESP()
     if VisualSettings.NameTags then startNameTagUpdater() else stopNameTagUpdater() end
 
-    if BeamSettings.Enabled or BeamSettings.GunDropEnabled then
+    if BeamSettings.Enabled then
         ensureBeamConn()
     else
         stopBeamIfIdle()
@@ -3246,15 +3353,15 @@ window:BuildConfigPage()
 task.delay(2, function()
     if isMobile then
         if S.silentAimHookInstalled then
-            notify("Mobile · SilentAim modeK", 4)
+            notify("Mobile · SilentAim HOOK", 4)
         else
-            notify("Your Device; Mobile", 4)
+            notify("Mobile · SilentAim TOUCH FALLBACK", 4)
         end
     else
         if S.silentAimHookInstalled then
-            notify("PC · Silent Aim mode", 4)
+            notify("PC · SilentAim HOOK", 4)
         else
-            notify("Your Device; PC", 4)
+            notify("PC · SilentAim MOUSE FALLBACK", 4)
         end
     end
 end)
