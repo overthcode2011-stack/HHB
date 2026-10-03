@@ -69,7 +69,7 @@ local MovementSettings = {
     FlySpeed = 40, AntiFling = false, Fling = false, TPAll = false,
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
-local AvatarSettings = { Korblox = false, Shoulder = false, Invisible = false, NoobFace = false, Rainbow = false, AnimPack = false }
+local AvatarSettings = { Korblox = false, AnimPack = false }
 local FarmSettings = { AutoFarm = false, ManualCollect = false, CoinSpeed = 20, PickupRadius = 3 }
 local BeamSettings = {
     Enabled = false,
@@ -107,7 +107,6 @@ local S = {
     currentEmoteTrack = nil,
     animPriorityConn = nil,
     korbloxPart = nil,
-    origTransparencies = {}, origBodyColors = {},
     mobileButtonsGui = nil, mobileFlyVec = Vector3.zero, mobileFlyDragging = false,
     beamData = { segments = {}, updateConn = nil },
     coinCollecting = false, coinConnection = nil, coinVelocity = nil,
@@ -2351,7 +2350,7 @@ UI.ogESPToggleRef = window:CreateToggle(espTab, "Neutral", false, function(v)
 end)
 registerControl(VisualSettings, "OGESP", UI.ogESPToggleRef)
 
-window:CreateLabel(espTab, "Aditional")
+window:CreateLabel(espTab, "Additional")
 UI.nameTagToggleRef = window:CreateToggle(espTab, "Nametag", false, function(v)
     ESP.active.NameTag = v
     VisualSettings.NameTags = v
@@ -2406,7 +2405,7 @@ UI.flySpeedRef = window:CreateSlider(movementTab, "Fly Speed", 5, 200, 40, funct
 registerControl(MovementSettings, "FlySpeed", UI.flySpeedRef)
 
 if isMobile then
-    window:CreateParagraph(movementTab, "Fly mobile: arrastra el dedo o usa el joystick")
+    window:CreateParagraph(movementTab, "Fly mobile: drag your finger or use joystick")
 else
     window:CreateParagraph(movementTab, "WASD + Space / LeftControl")
 end
@@ -2534,21 +2533,6 @@ UI.antiFlingRef = window:CreateToggle(movementTab, "Anti-Fling", false, function
     end
 end)
 registerControl(MovementSettings, "AntiFling", UI.antiFlingRef)
-
-window:CreateLabel(movementTab, "Animations")
-window:CreateButton(movementTab, "laugh", function()
-    local tcs = TextChatService
-    if tcs.ChatVersion == Enum.ChatVersion.TextChatService then
-        local channel = tcs.TextChannels:FindFirstChild("RBXGeneral")
-        if channel then pcall(function() channel:SendAsync("/e laugh") end) end
-    else
-        local event = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
-        if event then
-            local sayReq = event:FindFirstChild("SayMessageRequest")
-            if sayReq then pcall(function() sayReq:FireServer("/e laugh", "All") end) end
-        end
-    end
-end)
 
 window:CreateLabel(movementTab, "Emotes")
 for _, emote in ipairs(EMOTES) do
@@ -2837,94 +2821,13 @@ window:CreateButton(aimbotTab, "Kill Everyone", function()
 end)
 
 window:CreateLabel(avatarTab, "Avatar")
-window:CreateParagraph(avatarTab, "Effects are local only. They re-apply on respawn.")
+window:CreateParagraph(avatarTab, "Korblox + custom animation pack")
 
 UI.korbloxRef = window:CreateToggle(avatarTab, "Korblox Deathspeaker", false, function(v)
     AvatarSettings.Korblox = v
     if v then applyKorblox() else removeKorblox() end
 end)
 registerControl(AvatarSettings, "Korblox", UI.korbloxRef)
-
-UI.shoulderRef = window:CreateToggle(avatarTab, "Shoulder Accessory", false, function(v)
-    AvatarSettings.Shoulder = v
-    local char = LocalPlayer.Character; if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
-    for _, a in ipairs(char:GetChildren()) do
-        if a:IsA("Accessory") and a.Name == "HH_ShoulderAcc" then a:Destroy() end
-    end
-    if v then
-        local acc = Instance.new("Accessory")
-        acc.Name = "HH_ShoulderAcc"
-        local handle = Instance.new("Part")
-        handle.Name = "Handle"; handle.Size = Vector3.new(1, 1, 1)
-        handle.CanCollide = false; handle.Anchored = false
-        local mesh = Instance.new("SpecialMesh")
-        mesh.MeshType = Enum.MeshType.FileMesh
-        mesh.MeshId = "rbxassetid://110121730336323"
-        mesh.Parent = handle
-        local att = Instance.new("Attachment")
-        att.Name = "BodyFrontAttachment"; att.Parent = handle
-        handle.Parent = acc; acc.Parent = char
-        hum:AddAccessory(acc)
-    end
-end)
-registerControl(AvatarSettings, "Shoulder", UI.shoulderRef)
-
-UI.invisibleRef = window:CreateToggle(avatarTab, "Invisible", false, function(v)
-    AvatarSettings.Invisible = v
-    local char = LocalPlayer.Character; if not char then return end
-    if v then
-        S.origTransparencies = {}
-        for _, p in ipairs(char:GetDescendants()) do
-            if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
-                S.origTransparencies[p] = p.Transparency
-                p.Transparency = 1
-            end
-        end
-    else
-        for p, t in pairs(S.origTransparencies) do
-            if p and p.Parent then p.Transparency = t end
-        end
-        S.origTransparencies = {}
-    end
-end)
-registerControl(AvatarSettings, "Invisible", UI.invisibleRef)
-
-UI.noobFaceRef = window:CreateToggle(avatarTab, "Classic Noob Face", false, function(v)
-    AvatarSettings.NoobFace = v
-    local char = LocalPlayer.Character; if not char then return end
-    local head = char:FindFirstChild("Head"); if not head then return end
-    local face = head:FindFirstChildOfClass("Decal")
-    if not face then face = Instance.new("Decal"); face.Name = "face"; face.Parent = head end
-    if v then face.Texture = "rbxassetid://1079" else face.Texture = "rbxassetid://1369239677" end
-end)
-registerControl(AvatarSettings, "NoobFace", UI.noobFaceRef)
-
-UI.rainbowRef = window:CreateToggle(avatarTab, "Rainbow Body", false, function(v)
-    AvatarSettings.Rainbow = v
-    local char = LocalPlayer.Character; if not char then return end
-    if v then
-        S.origBodyColors = {}
-        local parts = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg",
-            "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "LeftHand",
-            "RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg",
-            "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot" }
-        for _, n in ipairs(parts) do
-            local p = char:FindFirstChild(n)
-            if p and p:IsA("BasePart") then
-                S.origBodyColors[n] = p.Color
-                p.Color = Color3.fromHSV(math.random(), 0.9, 1)
-            end
-        end
-    else
-        for n, col in pairs(S.origBodyColors) do
-            local p = char:FindFirstChild(n)
-            if p and p:IsA("BasePart") then p.Color = col end
-        end
-        S.origBodyColors = {}
-    end
-end)
-registerControl(AvatarSettings, "Rainbow", UI.rainbowRef)
 
 window:CreateLabel(avatarTab, "Animation Pack")
 UI.animPackRef = window:CreateToggle(avatarTab, "Custom Anims", false, function(v)
@@ -2940,65 +2843,11 @@ registerControl(AvatarSettings, "AnimPack", UI.animPackRef)
 
 window:CreateParagraph(avatarTab, "Idle · Walk · Run · Fall · Climb · Jump replaced. Re-applies on respawn if active.")
 
-window:CreateButton(avatarTab, "Remove All Mods", function()
-    if UI.korbloxRef then UI.korbloxRef.SetState(false) end
-    if UI.shoulderRef then UI.shoulderRef.SetState(false) end
-    if UI.invisibleRef then UI.invisibleRef.SetState(false) end
-    if UI.noobFaceRef then UI.noobFaceRef.SetState(false) end
-    if UI.rainbowRef then UI.rainbowRef.SetState(false) end
-    if UI.animPackRef then UI.animPackRef.SetState(false) end
-end)
-
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.6)
     if MovementSettings.Fly then attachFlyBodyMovers() end
     if AvatarSettings.Korblox then pcall(applyKorblox) end
     if AvatarSettings.AnimPack then pcall(applyAnimPack) end
-    if AvatarSettings.Rainbow then
-        local char = LocalPlayer.Character
-        if char then
-            local parts = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg",
-                "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "LeftHand",
-                "RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg",
-                "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot" }
-            for _, n in ipairs(parts) do
-                local p = char:FindFirstChild(n)
-                if p and p:IsA("BasePart") then p.Color = Color3.fromHSV(math.random(), 0.9, 1) end
-            end
-        end
-    end
-    if AvatarSettings.NoobFace then
-        local char = LocalPlayer.Character
-        if char then
-            local head = char:FindFirstChild("Head")
-            if head then
-                local face = head:FindFirstChildOfClass("Decal")
-                if not face then face = Instance.new("Decal"); face.Name = "face"; face.Parent = head end
-                face.Texture = "rbxassetid://1079"
-            end
-        end
-    end
-    if AvatarSettings.Shoulder then
-        local char = LocalPlayer.Character
-        if char then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum then
-                local acc = Instance.new("Accessory")
-                acc.Name = "HH_ShoulderAcc"
-                local handle = Instance.new("Part")
-                handle.Name = "Handle"; handle.Size = Vector3.new(1, 1, 1)
-                handle.CanCollide = false; handle.Anchored = false
-                local mesh = Instance.new("SpecialMesh")
-                mesh.MeshType = Enum.MeshType.FileMesh
-                mesh.MeshId = "rbxassetid://110121730336323"
-                mesh.Parent = handle
-                local att = Instance.new("Attachment")
-                att.Name = "BodyFrontAttachment"; att.Parent = handle
-                handle.Parent = acc; acc.Parent = char
-                hum:AddAccessory(acc)
-            end
-        end
-    end
     if FarmSettings.AutoFarm or FarmSettings.ManualCollect then
         task.wait(0.5)
         if not S.coinCollecting then startCoinCollector() end
@@ -3223,10 +3072,6 @@ local function snapshotSettings()
         },
         Avatar = {
             Korblox   = AvatarSettings.Korblox,
-            Shoulder  = AvatarSettings.Shoulder,
-            Invisible = AvatarSettings.Invisible,
-            NoobFace  = AvatarSettings.NoobFace,
-            Rainbow   = AvatarSettings.Rainbow,
             AnimPack  = AvatarSettings.AnimPack,
         },
         Farm = {
