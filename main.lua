@@ -38,7 +38,7 @@ local AimbotSettings = {
     TriggerBot = false, TriggerRange = 150, AutoFire = false, WallCheck = true,
     FOVCircle = false, FOVRadius = 120,
 }
-local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false, Beam = false }
+local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false, Beam = false, BeamGunDrop = false }
 local MiscSettings = {
     InfJump = false, AntiAFK = false, AutoTpGun = false,
     SilentAim = false, MusicCompanion = false,
@@ -52,8 +52,11 @@ local AvatarSettings = { Korblox = false, Shoulder = false, Invisible = false, N
 local FarmSettings = { AutoFarm = false, ManualCollect = false, CoinSpeed = 20, PickupRadius = 3 }
 local BeamSettings = {
     Enabled = false,
+    GunDropEnabled = false,
+    RedirectBullets = false,
     ClearColor = Color3.fromRGB(0, 255, 100),
     WallColor = Color3.fromRGB(255, 50, 50),
+    GunColor = Color3.fromRGB(255, 200, 0),
     Thickness = 0.15,
     Transparency = 0.2,
     MaxIterations = 14,
@@ -79,6 +82,7 @@ local S = {
     origTransparencies = {}, origBodyColors = {},
     mobileButtonsGui = nil, mobileFlyVec = Vector3.zero, mobileFlyDragging = false,
     beamData = { segments = {}, updateConn = nil },
+    gunBeamData = { segments = {}, updateConn = nil },
     coinCollecting = false, coinConnection = nil, coinVelocity = nil,
     coinGyro = nil,
     roundActive = false, bagProgress = {}, totalCoins = 0,
@@ -309,22 +313,6 @@ local function predictAim(targetPart)
     return CFrame.new(targetPart.Position + vel * (ping * 1.15))
 end
 
-local function fireGunAt(targetPart, targetPlr)
-    if targetPlr and not isTargetSafe(targetPlr) then return false end
-    local gun = getEquippedGun()
-    if not gun then return false end
-    local shootRemote = gun:FindFirstChild("Shoot")
-    if not shootRemote or not shootRemote:IsA("RemoteEvent") then return false end
-    local origin = getGunRaycastCFrame()
-    if not origin then return false end
-    local targetCF = predictAim(targetPart)
-    if not targetCF then return false end
-    pcall(function()
-        shootRemote:FireServer(origin, targetCF)
-    end)
-    return true
-end
-
 local function isGunShootRemote(remote)
     if not remote or not remote:IsA("RemoteEvent") then return false end
     if remote.Name ~= "Shoot" then return false end
@@ -427,17 +415,69 @@ local function buildBeamPath(fromPos, toPos, targetChar)
     return waypoints
 end
 
-local function clearBeam()
-    for _, seg in ipairs(S.beamData.segments) do
+local function fireGunAt(targetPart, targetPlr)
+    if targetPlr and not isTargetSafe(targetPlr) then return false end
+    local gun = getEquippedGun()
+    if not gun then return false end
+    local shootRemote = gun:FindFirstChild("Shoot")
+    if not shootRemote or not shootRemote:IsA("RemoteEvent") then return false end
+
+    local myHRP = getHRP()
+    if not myHRP then return false end
+
+    if BeamSettings.RedirectBullets then
+        local targetChar = targetPlr and targetPlr.Character
+        local toPos = targetPart.Position
+        if not isVisible(myHRP.Position, toPos, targetChar) then
+            local waypoints = buildBeamPath(myHRP.Position, toPos, targetChar)
+            local originalCFrame = myHRP.CFrame
+            local fired = false
+            for i = #waypoints - 1, 2, -1 do
+                local wp = waypoints[i]
+                if isVisible(wp + Vector3.new(0, 2, 0), toPos, targetChar) then
+                    myHRP.CFrame = CFrame.new(wp + Vector3.new(0, 2.5, 0))
+                    RunService.RenderStepped:Wait()
+                    local origin = getGunRaycastCFrame()
+                    if origin then
+                        local targetCF = predictAim(targetPart)
+                        if targetCF then
+                            pcall(function() shootRemote:FireServer(origin, targetCF) end)
+                            fired = true
+                        end
+                    end
+                    task.wait(0.03)
+                    local h = getHRP()
+                    if h then
+                        h.CFrame = originalCFrame
+                        h.Velocity = Vector3.zero
+                        h.RotVelocity = Vector3.zero
+                    end
+                    break
+                end
+            end
+            if fired then return true end
+        end
+    end
+
+    local origin = getGunRaycastCFrame()
+    if not origin then return false end
+    local targetCF = predictAim(targetPart)
+    if not targetCF then return false end
+    pcall(function()
+        shootRemote:FireServer(origin, targetCF)
+    end)
+    return true
+end
+
+local function clearBeamPool(pool)
+    for _, seg in ipairs(pool.segments) do
         if seg.beam and seg.beam.Parent then seg.beam:Destroy() end
         if seg.att0 and seg.att0.Parent then seg.att0:Destroy() end
         if seg.att1 and seg.att1.Parent then seg.att1:Destroy() end
         if seg.startPart and seg.startPart.Parent then seg.startPart:Destroy() end
         if seg.endPart and seg.endPart.Parent then seg.endPart:Destroy() end
     end
-    S.beamData.segments = {}
-    if S.beamData.updateConn then S.beamData.updateConn:Disconnect() end
-    S.beamData.updateConn = nil
+    pool.segments = {}
 end
 
 local function createBeamSegment()
@@ -484,57 +524,29 @@ local function createBeamSegment()
     }
 end
 
-local function updateBeam()
-    if not BeamSettings.Enabled then
-        if #S.beamData.segments > 0 then clearBeam() end
-        return
+local function ensureSegments(pool, count)
+    while #pool.segments < count do
+        table.insert(pool.segments, createBeamSegment())
     end
-
-    local myHRP = getHRP()
-    if not myHRP then
-        if #S.beamData.segments > 0 then clearBeam() end
-        return
-    end
-
-    local murderer = getMurderer()
-    if not isTargetSafe(murderer) then
-        if #S.beamData.segments > 0 then clearBeam() end
-        return
-    end
-
-    local targetPart = getMM2TargetPart(murderer.Character)
-    if not targetPart then
-        if #S.beamData.segments > 0 then clearBeam() end
-        return
-    end
-
-    local fromPos = myHRP.Position
-    local toPos = targetPart.Position
-    local waypoints = buildBeamPath(fromPos, toPos, murderer.Character)
-
-    local needed = #waypoints - 1
-    if needed < 1 then
-        if #S.beamData.segments > 0 then clearBeam() end
-        return
-    end
-
-    while #S.beamData.segments < needed do
-        table.insert(S.beamData.segments, createBeamSegment())
-    end
-    while #S.beamData.segments > needed do
-        local seg = table.remove(S.beamData.segments)
+    while #pool.segments > count do
+        local seg = table.remove(pool.segments)
         if seg.beam then seg.beam:Destroy() end
         if seg.att0 then seg.att0:Destroy() end
         if seg.att1 then seg.att1:Destroy() end
         if seg.startPart then seg.startPart:Destroy() end
         if seg.endPart then seg.endPart:Destroy() end
     end
+end
 
-    local hasWall = not isVisible(fromPos, toPos, murderer.Character)
-    local color = hasWall and BeamSettings.WallColor or BeamSettings.ClearColor
-
+local function renderBeamPath(pool, waypoints, color)
+    local needed = #waypoints - 1
+    if needed < 1 then
+        ensureSegments(pool, 0)
+        return
+    end
+    ensureSegments(pool, needed)
     for i = 1, needed do
-        local seg = S.beamData.segments[i]
+        local seg = pool.segments[i]
         local a = waypoints[i]
         local b = waypoints[i + 1]
         seg.startPart.CFrame = CFrame.new(a)
@@ -546,13 +558,62 @@ local function updateBeam()
     end
 end
 
-local function startBeam()
-    clearBeam()
+local function updateBeam()
+    if BeamSettings.Enabled then
+        local myHRP = getHRP()
+        local murderer = getMurderer()
+        if myHRP and isTargetSafe(murderer) then
+            local targetPart = getMM2TargetPart(murderer.Character)
+            if targetPart then
+                local waypoints = buildBeamPath(myHRP.Position, targetPart.Position, murderer.Character)
+                local hasWall = not isVisible(myHRP.Position, targetPart.Position, murderer.Character)
+                local color = hasWall and BeamSettings.WallColor or BeamSettings.ClearColor
+                renderBeamPath(S.beamData, waypoints, color)
+            else
+                clearBeamPool(S.beamData)
+            end
+        else
+            clearBeamPool(S.beamData)
+        end
+    elseif #S.beamData.segments > 0 then
+        clearBeamPool(S.beamData)
+    end
+
+    if BeamSettings.GunDropEnabled then
+        local myHRP = getHRP()
+        local gun = findGunDrop()
+        if myHRP and gun then
+            local waypoints = buildBeamPath(myHRP.Position, gun.Position, nil)
+            local hasWall = not isVisible(myHRP.Position, gun.Position, nil)
+            local color = hasWall and BeamSettings.WallColor or BeamSettings.GunColor
+            renderBeamPath(S.gunBeamData, waypoints, color)
+        else
+            clearBeamPool(S.gunBeamData)
+        end
+    elseif #S.gunBeamData.segments > 0 then
+        clearBeamPool(S.gunBeamData)
+    end
+end
+
+local function ensureBeamConn()
+    if S.beamData.updateConn then return end
     S.beamData.updateConn = RunService.Heartbeat:Connect(updateBeam)
 end
 
-local function stopBeam()
-    clearBeam()
+local function stopBeamIfIdle()
+    if BeamSettings.Enabled or BeamSettings.GunDropEnabled then return end
+    if S.beamData.updateConn then
+        S.beamData.updateConn:Disconnect()
+        S.beamData.updateConn = nil
+    end
+    clearBeamPool(S.beamData)
+    clearBeamPool(S.gunBeamData)
+end
+
+local function refreshBeam()
+    if S.beamData.updateConn then
+        updateBeam()
+    end
 end
 
 pcall(function()
@@ -572,6 +633,7 @@ if type(S.hookNamecall) == "function" and type(S.getNamecall) == "function" then
                         if targetPart then
                             local cam = workspace.CurrentCamera
                             if not AimbotSettings.WallCheck
+                               or BeamSettings.RedirectBullets
                                or isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then
                                 local args = table.pack(...)
                                 local newTarget = predictAim(targetPart)
@@ -600,7 +662,7 @@ if isMobile then
         local targetPart = getMM2TargetPart(murderer.Character)
         if not targetPart then return end
         local cam = workspace.CurrentCamera
-        if AimbotSettings.WallCheck
+        if AimbotSettings.WallCheck and not BeamSettings.RedirectBullets
            and not isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then return end
         task.spawn(function()
             fireGunAt(targetPart, murderer)
@@ -617,7 +679,7 @@ else
         local targetPart = getMM2TargetPart(murderer.Character)
         if not targetPart then return end
         local cam = workspace.CurrentCamera
-        if AimbotSettings.WallCheck
+        if AimbotSettings.WallCheck and not BeamSettings.RedirectBullets
            and not isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then return end
         task.spawn(function()
             fireGunAt(targetPart, murderer)
@@ -1075,6 +1137,8 @@ local function onRoundEnd()
     S.heroWatcher.originalSheriffName = nil
     clearHeroFlags()
     clearGunESP()
+    clearBeamPool(S.beamData)
+    clearBeamPool(S.gunBeamData)
 end
 
 local function updateRoleCache(data)
@@ -1110,6 +1174,7 @@ local function updateRoleCache(data)
             end
         end
     end
+    refreshBeam()
 end
 
 local function hookFadeEvent()
@@ -1514,21 +1579,21 @@ local function startFlingTarget(targetPlr)
 
             local elapsed = tick() - startTime
             local phase = elapsed * 12
-            local offsetX = math.sin(phase) * 3
-            local offsetY = math.cos(phase * 1.3) * 3
-            local offsetZ = math.sin(phase * 0.7) * 3
+            local wobbleX = math.sin(phase) * 0.15
+            local wobbleY = math.cos(phase * 1.3) * 0.15
+            local wobbleZ = math.sin(phase * 0.7) * 0.15
 
             local theirPos = theirHRP.Position
             local baseCFrame = CFrame.new(
-                theirPos.X + offsetX,
-                theirPos.Y + offsetY + 3,
-                theirPos.Z + offsetZ
+                theirPos.X + wobbleX,
+                theirPos.Y + wobbleY + 0.5,
+                theirPos.Z + wobbleZ
             )
 
             local spin = CFrame.Angles(
-                math.sin(phase * 1.1) * 0.8,
+                math.sin(phase * 1.1) * 0.5,
                 phase * 2,
-                math.cos(phase * 0.9) * 0.8
+                math.cos(phase * 0.9) * 0.5
             )
 
             local newCFrame = baseCFrame * spin
@@ -1543,21 +1608,18 @@ local function startFlingTarget(targetPlr)
                 end
             end
 
-            local velo = currentHRP.Velocity
-            currentHRP.Velocity = velo * 5000 + Vector3.new(
-                math.sin(phase) * 8000,
-                math.cos(phase * 1.3) * 8000 + 5000,
-                math.cos(phase) * 8000
+            currentHRP.Velocity = Vector3.new(
+                math.sin(phase) * 15000,
+                math.cos(phase * 1.3) * 15000 + 8000,
+                math.cos(phase) * 15000
             )
             currentHRP.RotVelocity = Vector3.new(
-                math.sin(phase * 1.5) * 300,
-                math.cos(phase * 1.2) * 300,
-                math.sin(phase * 0.9) * 300
+                math.sin(phase * 1.5) * 500,
+                math.cos(phase * 1.2) * 500,
+                math.sin(phase * 0.9) * 500
             )
 
             RunService.RenderStepped:Wait()
-            currentHRP.Velocity = velo
-            currentHRP.RotVelocity = Vector3.zero
             RunService.Stepped:Wait()
         end
 
@@ -2042,9 +2104,25 @@ window:CreateLabel(espTab, "Beam")
 UI.beamToggleRef = window:CreateToggle(espTab, "Beam to Murderer", false, function(v)
     BeamSettings.Enabled = v
     VisualSettings.Beam = v
-    if v then startBeam() else stopBeam() end
+    if v then ensureBeamConn() end
+    stopBeamIfIdle()
 end)
 registerControl(VisualSettings, "Beam", UI.beamToggleRef)
+
+UI.beamGunDropRef = window:CreateToggle(espTab, "Beam to GunDrop", false, function(v)
+    BeamSettings.GunDropEnabled = v
+    VisualSettings.BeamGunDrop = v
+    if v then ensureBeamConn() end
+    stopBeamIfIdle()
+end)
+registerControl(VisualSettings, "BeamGunDrop", UI.beamGunDropRef)
+
+UI.beamRedirectRef = window:CreateToggle(espTab, "Beam Redirect Bullets", false, function(v)
+    BeamSettings.RedirectBullets = v
+end)
+registerControl(BeamSettings, "RedirectBullets", UI.beamRedirectRef)
+
+window:CreateParagraph(espTab, "Redirect Bullets = teleport through beam path so shots always land")
 
 window:CreateLabel(movementTab, "Fly")
 UI.flyToggleRef = window:CreateToggle(movementTab, "Active Fly", false, function(v)
@@ -2303,7 +2381,7 @@ UI.triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function(v)
             if not getEquippedGun() then return end
             local dist = (myHRP.Position - targetPart.Position).Magnitude
             if dist > AimbotSettings.TriggerRange then return end
-            if AimbotSettings.WallCheck then
+            if AimbotSettings.WallCheck and not BeamSettings.RedirectBullets then
                 local cam = workspace.CurrentCamera
                 if not isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then return end
             end
@@ -2339,7 +2417,7 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire  [B]", false, functio
             local targetPart = getMM2TargetPart(murderer.Character)
             if not targetPart then return end
             if not getEquippedGun() then return end
-            if AimbotSettings.WallCheck then
+            if AimbotSettings.WallCheck and not BeamSettings.RedirectBullets then
                 local cam = workspace.CurrentCamera
                 if not isVisible(cam.CFrame.Position, targetPart.Position, murderer.Character) then return end
             end
@@ -2678,6 +2756,7 @@ if roundStartEvent then
                 applyESP(plr)
             end
         end
+        refreshBeam()
         onRoundBegin()
     end)
 end
@@ -2782,6 +2861,7 @@ local function snapshotSettings()
             NameTags = VisualSettings.NameTags,
             GunESP   = VisualSettings.GunESP,
             Beam     = VisualSettings.Beam,
+            BeamGunDrop = VisualSettings.BeamGunDrop,
         },
         Misc = {
             InfJump        = MiscSettings.InfJump,
@@ -2819,6 +2899,8 @@ local function snapshotSettings()
         },
         Beam = {
             Enabled = BeamSettings.Enabled,
+            GunDropEnabled = BeamSettings.GunDropEnabled,
+            RedirectBullets = BeamSettings.RedirectBullets,
             Thickness = BeamSettings.Thickness,
             Transparency = BeamSettings.Transparency,
             MaxIterations = BeamSettings.MaxIterations,
@@ -2897,7 +2979,11 @@ local function applyConfig(data)
     applyGunESP()
     if VisualSettings.NameTags then startNameTagUpdater() else stopNameTagUpdater() end
 
-    if BeamSettings.Enabled then startBeam() else stopBeam() end
+    if BeamSettings.Enabled or BeamSettings.GunDropEnabled then
+        ensureBeamConn()
+    else
+        stopBeamIfIdle()
+    end
 
     if AimbotSettings.FOVCircle then startFOVCircle() else stopFOVCircle() end
 
