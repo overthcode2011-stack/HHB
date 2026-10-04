@@ -73,7 +73,6 @@ local AvatarSettings = { Korblox = false, AnimPack = false }
 local FarmSettings = { AutoFarm = false, ManualCollect = false, CoinSpeed = 20, PickupRadius = 3 }
 local BeamSettings = {
     Enabled = false,
-    RedirectBullets = false,
     ClearColor = Color3.fromRGB(0, 255, 100),
     WallColor = Color3.fromRGB(255, 50, 50),
     PlayerColor = Color3.fromRGB(255, 130, 0),
@@ -81,11 +80,16 @@ local BeamSettings = {
     Transparency = 0.2,
     MaxIterations = 14,
     WaypointOffset = 3,
+    RefreshRate = 0.033,
 }
 local AntiVoidSettings = { Threshold = -30, SafeY = 10 }
 
 local WALL_GRACE_TIME = 0.2
 local TargetVisibility = {}
+local MurdererCache = { plr = nil, time = 0 }
+local VisCache = {}
+local VIS_TTL = 0.05
+local MURDERER_TTL = 0.1
 
 local function notify(msg, dur) pcall(function() API:Notify(msg, dur) end) end
 local function registerControl(t, k, c) pcall(function() API:RegisterControl(t, k, c) end) end
@@ -108,7 +112,7 @@ local S = {
     animPriorityConn = nil,
     korbloxPart = nil,
     mobileButtonsGui = nil, mobileFlyVec = Vector3.zero, mobileFlyDragging = false,
-    beamData = { segments = {}, updateConn = nil },
+    beamData = { segments = {}, updateConn = nil, lastTick = 0 },
     coinCollecting = false, coinConnection = nil, coinVelocity = nil,
     coinGyro = nil,
     roundActive = false, bagProgress = {}, totalCoins = 0,
@@ -249,6 +253,18 @@ local function getMurderer()
         end
     end
     return nil
+end
+
+local function getMurdererCached()
+    local now = tick()
+    local cached = MurdererCache.plr
+    if cached and cached.Parent and cached.Character and (now - MurdererCache.time) < MURDERER_TTL then
+        return cached
+    end
+    local fresh = getMurderer()
+    MurdererCache.plr = fresh
+    MurdererCache.time = now
+    return fresh
 end
 
 local function getSheriff()
@@ -475,6 +491,22 @@ local function isVisible(originPos, targetPos, targetChar)
     return false
 end
 
+local function isVisibleCached(originPos, targetPos, targetChar, targetPlr)
+    if not targetPlr then
+        return isVisible(originPos, targetPos, targetChar)
+    end
+    local now = tick()
+    local entry = VisCache[targetPlr]
+    if entry and (now - entry.time) < VIS_TTL then
+        if (entry.originPos - originPos).Magnitude < 5 and (entry.targetPos - targetPos).Magnitude < 5 then
+            return entry.result
+        end
+    end
+    local result = isVisible(originPos, targetPos, targetChar)
+    VisCache[targetPlr] = { time = now, originPos = originPos, targetPos = targetPos, result = result }
+    return result
+end
+
 local function buildBeamPath(fromPos, toPos, targetChar)
     local waypoints = { fromPos }
     local current = fromPos
@@ -556,7 +588,37 @@ local function buildBeamPath(fromPos, toPos, targetChar)
     return waypoints
 end
 
-local function fireGunAt(targetPart, targetPlr)
+local function tpRedirectAndShoot(shootRemote, myHRP, targetPart, targetChar)
+    local waypoints = buildBeamPath(myHRP.Position, targetPart.Position, targetChar)
+    local originalCFrame = myHRP.CFrame
+    local fired = false
+    for i = #waypoints - 1, 2, -1 do
+        local wp = waypoints[i]
+        if isVisible(wp + Vector3.new(0, 2, 0), targetPart.Position, targetChar) then
+            myHRP.CFrame = CFrame.new(wp + Vector3.new(0, 2.5, 0))
+            RunService.RenderStepped:Wait()
+            local ro = getGunRaycastCFrame()
+            if ro then
+                local rtc = predictAim(targetPart)
+                if rtc then
+                    pcall(function() shootRemote:FireServer(ro, rtc) end)
+                    fired = true
+                end
+            end
+            task.wait(0.03)
+            local h = getHRP()
+            if h then
+                h.CFrame = originalCFrame
+                h.Velocity = Vector3.zero
+                h.RotVelocity = Vector3.zero
+            end
+            break
+        end
+    end
+    return fired
+end
+
+local function fireGunAt(targetPart, targetPlr, useRedirect)
     if targetPlr and not isTargetSafe(targetPlr) then return false end
 
     local myHRP = getHRP()
@@ -581,34 +643,8 @@ local function fireGunAt(targetPart, targetPlr)
         shootRemote:FireServer(origin, targetCF)
     end)
 
-    if BeamSettings.RedirectBullets and targetChar and hitType == "wall" then
-        local waypoints = buildBeamPath(myHRP.Position, targetPart.Position, targetChar)
-        local originalCFrame = myHRP.CFrame
-        local fired = false
-        for i = #waypoints - 1, 2, -1 do
-            local wp = waypoints[i]
-            if isVisible(wp + Vector3.new(0, 2, 0), targetPart.Position, targetChar) then
-                myHRP.CFrame = CFrame.new(wp + Vector3.new(0, 2.5, 0))
-                RunService.RenderStepped:Wait()
-                local redirectOrigin = getGunRaycastCFrame()
-                if redirectOrigin then
-                    local redirectTargetCF = predictAim(targetPart)
-                    if redirectTargetCF then
-                        pcall(function() shootRemote:FireServer(redirectOrigin, redirectTargetCF) end)
-                        fired = true
-                    end
-                end
-                task.wait(0.03)
-                local h = getHRP()
-                if h then
-                    h.CFrame = originalCFrame
-                    h.Velocity = Vector3.zero
-                    h.RotVelocity = Vector3.zero
-                end
-                break
-            end
-        end
-        if fired then return true end
+    if useRedirect and targetChar and hitType == "wall" then
+        tpRedirectAndShoot(shootRemote, myHRP, targetPart, targetChar)
     end
 
     return true
@@ -706,7 +742,7 @@ end
 local function updateBeam()
     if BeamSettings.Enabled then
         local myHRP = getHRP()
-        local murderer = getMurderer()
+        local murderer = getMurdererCached()
         if myHRP and isTargetSafe(murderer) then
             local targetPart = getMM2TargetPart(murderer.Character)
             if targetPart then
@@ -734,7 +770,12 @@ end
 
 local function ensureBeamConn()
     if S.beamData.updateConn then return end
-    S.beamData.updateConn = RunService.Heartbeat:Connect(updateBeam)
+    S.beamData.updateConn = RunService.Heartbeat:Connect(function()
+        local now = tick()
+        if now - S.beamData.lastTick < BeamSettings.RefreshRate then return end
+        S.beamData.lastTick = now
+        updateBeam()
+    end)
 end
 
 local function stopBeamIfIdle()
@@ -748,6 +789,7 @@ end
 
 local function refreshBeam()
     if S.beamData.updateConn then
+        S.beamData.lastTick = 0
         updateBeam()
     end
 end
@@ -818,7 +860,7 @@ if type(S.hookNamecall) == "function" and type(S.getNamecall) == "function" then
         oldNamecall = S.hookNamecall(game, "__namecall", function(self, ...)
             if S.getNamecall() == "FireServer" and isGunShootRemote(self) then
                 if MiscSettings.SilentAim then
-                    local murderer = getMurderer()
+                    local murderer = getMurdererCached()
                     if isTargetSafe(murderer) then
                         local targetPart = getMM2TargetPart(murderer.Character)
                         if targetPart then
@@ -848,7 +890,7 @@ if isMobile then
         if processed then return end
         if not MiscSettings.SilentAim then return end
         if S.silentAimHookInstalled then return end
-        local murderer = getMurderer()
+        local murderer = getMurdererCached()
         if not isTargetSafe(murderer) then return end
         local targetPart = getMM2TargetPart(murderer.Character)
         if not targetPart then return end
@@ -856,7 +898,7 @@ if isMobile then
         if not myHRP then return end
         if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
         task.spawn(function()
-            fireGunAt(targetPart, murderer)
+            fireGunAt(targetPart, murderer, false)
         end)
     end)
 else
@@ -865,7 +907,7 @@ else
         if not MiscSettings.SilentAim then return end
         if S.silentAimHookInstalled then return end
         if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-        local murderer = getMurderer()
+        local murderer = getMurdererCached()
         if not isTargetSafe(murderer) then return end
         local targetPart = getMM2TargetPart(murderer.Character)
         if not targetPart then return end
@@ -873,7 +915,7 @@ else
         if not myHRP then return end
         if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
         task.spawn(function()
-            fireGunAt(targetPart, murderer)
+            fireGunAt(targetPart, murderer, false)
         end)
     end)
 end
@@ -1404,6 +1446,7 @@ Players.PlayerRemoving:Connect(function(plr)
     clearHighlights(plr)
     S.roleCache[plr.Name] = nil
     TargetVisibility[plr] = nil
+    VisCache[plr] = nil
 end)
 
 local function applyKorblox()
@@ -1474,8 +1517,8 @@ local function removeKorblox()
 
     if S.korbloxPart and S.korbloxPart.Parent then
         S.korbloxPart:Destroy()
-        S.korbloxPart = nil
     end
+    S.korbloxPart = nil
 
     if hum.RigType == Enum.HumanoidRigType.R15 then
         local rf = char:FindFirstChild("RightFoot")
@@ -1705,7 +1748,7 @@ local function startCoinCollector()
             currentHum.PlatformStand = true
         end
 
-        local murderer = getMurderer()
+        local murderer = getMurdererCached()
         local evadeDirection = nil
         if murderer and murderer.Character then
             local murderHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
@@ -2387,11 +2430,6 @@ UI.beamToggleRef = window:CreateToggle(espTab, "Beam to Murderer", false, functi
 end)
 registerControl(VisualSettings, "Beam", UI.beamToggleRef)
 
-UI.beamRedirectRef = window:CreateToggle(espTab, "Beam Redirect Bullets", false, function(v)
-    BeamSettings.RedirectBullets = v
-end)
-registerControl(BeamSettings, "RedirectBullets", UI.beamRedirectRef)
-
 window:CreateParagraph(espTab, "Beam colors: green = clear · orange = innocent blocking · red = wall. Innocents always block shots.")
 
 window:CreateLabel(movementTab, "Fly")
@@ -2584,7 +2622,7 @@ UI.mm2LockRef = window:CreateToggle(aimbotTab, "Default aimbot", false, function
     if v then
         S.mm2Conn = RunService.RenderStepped:Connect(function()
             if not AimbotSettings.MM2LockOn then return end
-            local murderer = getMurderer()
+            local murderer = getMurdererCached()
             if not isTargetSafe(murderer) then return end
             local targetPart = getMM2TargetPart(murderer.Character)
             local myHRP = getHRP()
@@ -2648,7 +2686,7 @@ UI.triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function(v)
         local lastShot = 0
         S.triggerBotConn = RunService.RenderStepped:Connect(function()
             if not AimbotSettings.TriggerBot then return end
-            local murderer = getMurderer()
+            local murderer = getMurdererCached()
             if not isTargetSafe(murderer) then return end
             local targetPart = getMM2TargetPart(murderer.Character)
             if not targetPart then return end
@@ -2668,7 +2706,7 @@ UI.triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function(v)
             local now = tick()
             if now - lastShot < 0.08 then return end
             lastShot = now
-            fireGunAt(targetPart, murderer)
+            fireGunAt(targetPart, murderer, false)
         end)
     end
 end)
@@ -2685,7 +2723,7 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire  [B]", false, functio
         local lastShot = 0
         S.autoFireConn = RunService.RenderStepped:Connect(function()
             if not AimbotSettings.AutoFire then return end
-            local murderer = getMurderer()
+            local murderer = getMurdererCached()
             if not isTargetSafe(murderer) then return end
             local targetPart = getMM2TargetPart(murderer.Character)
             if not targetPart then return end
@@ -2696,7 +2734,7 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire  [B]", false, functio
             local now = tick()
             if now - lastShot < 0.15 then return end
             lastShot = now
-            fireGunAt(targetPart, murderer)
+            fireGunAt(targetPart, murderer, false)
         end)
     end
 end)
@@ -2711,7 +2749,7 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill Murderer", false, fun
         S.autoKillConn = RunService.RenderStepped:Connect(function()
             if not AimbotSettings.AutoKillMurderer then return end
             if not isLocalSheriffOrHero() then return end
-            local murderer = getMurderer()
+            local murderer = getMurdererCached()
             if not isTargetSafe(murderer) then return end
             local targetPart = getMM2TargetPart(murderer.Character)
             if not targetPart then return end
@@ -2720,17 +2758,16 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill Murderer", false, fun
             if not getEquippedGun() then return end
             local dist = (myHRP.Position - targetPart.Position).Magnitude
             if dist > AimbotSettings.MM2Range then return end
-            if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
             local now = tick()
             if now - lastShot < 0.1 then return end
             lastShot = now
-            fireGunAt(targetPart, murderer)
+            fireGunAt(targetPart, murderer, true)
         end)
     end
 end)
 registerControl(AimbotSettings, "AutoKillMurderer", UI.autoKillRef)
 
-window:CreateParagraph(aimbotTab, "Auto Kill = only fires if you're Sheriff/Hero with gun equipped")
+window:CreateParagraph(aimbotTab, "Auto Kill = only fires if you're Sheriff/Hero with gun equipped. Auto TP redirects through walls.")
 
 UI.wallCheckRef = window:CreateToggle(aimbotTab, "Wall Check", true, function(v)
     AimbotSettings.WallCheck = v
@@ -2844,6 +2881,22 @@ registerControl(AvatarSettings, "AnimPack", UI.animPackRef)
 window:CreateParagraph(avatarTab, "Idle · Walk · Run · Fall · Climb · Jump replaced. Re-applies on respawn if active.")
 
 LocalPlayer.CharacterAdded:Connect(function()
+    MurdererCache.plr = nil
+    MurdererCache.time = 0
+    for k in pairs(TargetVisibility) do TargetVisibility[k] = nil end
+    for k in pairs(VisCache) do VisCache[k] = nil end
+    S.korbloxPart = nil
+    S.lastSafeCFrame = nil
+    S.currentIdleTrack = nil
+    S.currentEmoteTrack = nil
+    S.flingOriginalCFrame = nil
+    S.flingOriginalPosition = nil
+    S.flingTargetRunning = false
+    S.killAllRunning = false
+    if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
+    if S.flingTargetThread then task.cancel(S.flingTargetThread); S.flingTargetThread = nil end
+    clearBeamPool(S.beamData)
+
     task.wait(0.6)
     if MovementSettings.Fly then attachFlyBodyMovers() end
     if AvatarSettings.Korblox then pcall(applyKorblox) end
@@ -3082,7 +3135,6 @@ local function snapshotSettings()
         },
         Beam = {
             Enabled = BeamSettings.Enabled,
-            RedirectBullets = BeamSettings.RedirectBullets,
             Thickness = BeamSettings.Thickness,
             Transparency = BeamSettings.Transparency,
             MaxIterations = BeamSettings.MaxIterations,
@@ -3198,15 +3250,15 @@ window:BuildConfigPage()
 task.delay(2, function()
     if isMobile then
         if S.silentAimHookInstalled then
-            notify("Mobile · SilentAim HOOK", 4)
+            notify("Mobile · SilentAim method 1", 4)
         else
-            notify("Mobile · SilentAim TOUCH FALLBACK", 4)
+            notify("Mobile · SilentAim method 1", 4)
         end
     else
         if S.silentAimHookInstalled then
-            notify("PC · SilentAim HOOK", 4)
+            notify("PC · SilentAim method 2", 4)
         else
-            notify("PC · SilentAim MOUSE FALLBACK", 4)
+            notify("PC · SilentAim method 2", 4)
         end
     end
 end)
