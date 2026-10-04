@@ -22,6 +22,63 @@ local GuiService = game:GetService("GuiService")
 local LocalPlayer = Players.LocalPlayer
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
+local HAS = {
+    RegisterControl = type(API.RegisterControl) == "function",
+    SyncUIControls  = type(API.SyncUIControls) == "function",
+    Notify          = type(API.Notify) == "function",
+    SetTheme        = type(API.SetTheme) == "function",
+    GetTheme        = type(API.GetTheme) == "function",
+}
+
+local LocalControlRegistry = {}
+
+local function registerControl(tbl, key, ctrl)
+    if not tbl or not key or not ctrl then return end
+    LocalControlRegistry[tbl] = LocalControlRegistry[tbl] or {}
+    LocalControlRegistry[tbl][key] = ctrl
+    if HAS.RegisterControl then
+        pcall(API.RegisterControl, API, tbl, key, ctrl)
+    end
+end
+
+local function syncUIControls()
+    if HAS.SyncUIControls then
+        pcall(API.SyncUIControls, API)
+        return
+    end
+    for tbl, keys in pairs(LocalControlRegistry) do
+        for key, ctrl in pairs(keys) do
+            local val = tbl[key]
+            if val ~= nil then
+                if ctrl.SetState then
+                    pcall(function() ctrl:SetState(val, true) end)
+                elseif ctrl.SetValue then
+                    pcall(function() ctrl:SetValue(val) end)
+                end
+            end
+        end
+    end
+end
+
+local function notify(msg, dur)
+    if HAS.Notify then
+        API:Notify(msg, dur)
+    end
+end
+
+local function getCurrentTheme()
+    if HAS.GetTheme then
+        local ok, t = pcall(function() return API:GetTheme() end)
+        if ok and t then return t end
+    end
+    return "Green"
+end
+
+local function setTheme(name)
+    if not HAS.SetTheme then return end
+    pcall(function() API:SetTheme(name) end)
+end
+
 local ICONS = {
     Home = "131878842124084",
     Aim  = "119272570124806",
@@ -90,9 +147,6 @@ local MurdererCache = { plr = nil, time = 0 }
 local VisCache = {}
 local VIS_TTL = 0.05
 local MURDERER_TTL = 0.1
-
-local function notify(msg, dur) pcall(function() API:Notify(msg, dur) end) end
-local function registerControl(t, k, c) pcall(function() API:RegisterControl(t, k, c) end) end
 
 local S = {
     noclipConn = nil, godConn = nil, antiAFKConn = nil,
@@ -489,22 +543,6 @@ local function isVisible(originPos, targetPos, targetChar)
         return true
     end
     return false
-end
-
-local function isVisibleCached(originPos, targetPos, targetChar, targetPlr)
-    if not targetPlr then
-        return isVisible(originPos, targetPos, targetChar)
-    end
-    local now = tick()
-    local entry = VisCache[targetPlr]
-    if entry and (now - entry.time) < VIS_TTL then
-        if (entry.originPos - originPos).Magnitude < 5 and (entry.targetPos - targetPos).Magnitude < 5 then
-            return entry.result
-        end
-    end
-    local result = isVisible(originPos, targetPos, targetChar)
-    VisCache[targetPlr] = { time = now, originPos = originPos, targetPos = targetPos, result = result }
-    return result
 end
 
 local function buildBeamPath(fromPos, toPos, targetChar)
@@ -3144,7 +3182,7 @@ local function snapshotSettings()
             Threshold = AntiVoidSettings.Threshold,
             SafeY = AntiVoidSettings.SafeY,
         },
-        Theme = API:GetTheme(),
+        Theme = getCurrentTheme(),
     }
 end
 
@@ -3176,8 +3214,8 @@ local function applyConfig(data)
         for k, v in pairs(data.AntiVoid) do AntiVoidSettings[k] = v end
     end
 
-    if data.Theme and data.Theme ~= API:GetTheme() then
-        API:SetTheme(data.Theme)
+    if data.Theme and data.Theme ~= getCurrentTheme() then
+        setTheme(data.Theme)
     end
 
     if MovementSettings.Fly then startFly() else stopFly() end
@@ -3239,7 +3277,7 @@ local function applyConfig(data)
         stopCoinCollector()
     end
 
-    API:SyncUIControls()
+    syncUIControls()
     if window.UpdateThemeButtons then window:UpdateThemeButtons() end
 end
 
@@ -3250,17 +3288,17 @@ window:BuildConfigPage()
 task.delay(2, function()
     if isMobile then
         if S.silentAimHookInstalled then
-            notify("Mobile · SilentAim method 1", 4)
+            notify("Mobile method", 4)
         else
-            notify("Mobile · SilentAim method 1", 4)
+            notify("Mobile user", 4)
         end
     else
         if S.silentAimHookInstalled then
-            notify("PC · SilentAim method 2", 4)
+            notify("PC method", 4)
         else
-            notify("PC · SilentAim method 2", 4)
+            notify("PC user", 4)
         end
     end
 end)
 
-API:Notify("Hello again "..LocalPlayer.DisplayName, 3)
+notify("Hello again "..LocalPlayer.DisplayName, 3)
