@@ -22,6 +22,17 @@ local GuiService = game:GetService("GuiService")
 local LocalPlayer = Players.LocalPlayer
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
+local function simulateTouchShoot()
+    local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+    if not viewport then return end
+    local cx, cy = viewport.X / 2, viewport.Y / 2
+    pcall(function()
+        VirtualInputManager:SendTouchEvent(1, 1, cx, cy)
+        task.wait(0.02)
+        VirtualInputManager:SendTouchEvent(1, 3, cx, cy)
+    end)
+end
+
 local HAS = {
     RegisterControl = type(API.RegisterControl) == "function",
     SyncUIControls  = type(API.SyncUIControls) == "function",
@@ -178,8 +189,6 @@ local S = {
     fadeConn = nil, tpEvent = nil,
     silentAimHookInstalled = false, hookNamecall = nil, getNamecall = nil,
 }
-
-local UI = {}
 
 local function getHRP()
     local c = LocalPlayer.Character
@@ -639,7 +648,7 @@ local function tpRedirectAndShoot(shootRemote, myHRP, targetPart, targetChar)
             if ro then
                 local rtc = predictAim(targetPart)
                 if rtc then
-                    pcall(function() shootRemote:FireServer(ro, rtc) end)
+                    pcall(function() shootRemote:FireServer("Shoot", ro, rtc) end)
                     fired = true
                 end
             end
@@ -678,7 +687,7 @@ local function fireGunAt(targetPart, targetPlr, useRedirect)
     if not targetCF then return false end
 
     pcall(function()
-        shootRemote:FireServer(origin, targetCF)
+        shootRemote:FireServer("Shoot", origin, targetCF)
     end)
 
     if useRedirect and targetChar and hitType == "wall" then
@@ -909,7 +918,7 @@ if type(S.hookNamecall) == "function" and type(S.getNamecall) == "function" then
                                 local args = table.pack(...)
                                 local newTarget = predictAim(targetPart)
                                 if newTarget then
-                                    args[2] = newTarget
+                                    args[3] = newTarget
                                     return oldNamecall(self, table.unpack(args, 1, args.n))
                                 end
                             end
@@ -2184,31 +2193,11 @@ local function buildMobileButtons()
         return btn
     end
 
-    makeBtn("AIM", Color3.fromRGB(30, 90, 180), UDim2.new(0, 20, 0.4, 0), function()
-        AimbotSettings.MM2LockOn = not AimbotSettings.MM2LockOn
-        notify("Aimbot: " .. tostring(AimbotSettings.MM2LockOn))
-    end)
-    makeBtn("FIRE", Color3.fromRGB(180, 30, 30), UDim2.new(0, 20, 0.4, 70), function()
-        AimbotSettings.AutoFire = not AimbotSettings.AutoFire
-        notify("AutoFire: " .. tostring(AimbotSettings.AutoFire))
-    end)
-    makeBtn("SA", Color3.fromRGB(140, 40, 180), UDim2.new(0, 20, 0.4, 140), function()
-        MiscSettings.SilentAim = not MiscSettings.SilentAim
-        notify("SilentAim: " .. tostring(MiscSettings.SilentAim))
-    end)
-    makeBtn("ESP", Color3.fromRGB(30, 150, 90), UDim2.new(0, 20, 0.4, 210), function()
+    makeBtn("ESP", Color3.fromRGB(30, 150, 90), UDim2.new(0, 20, 0.4, 0), function()
         ESP.active.MM2 = not ESP.active.MM2
         VisualSettings.MM2ESP = ESP.active.MM2
         refreshAllESP()
         notify("Roles ESP: " .. tostring(ESP.active.MM2))
-    end)
-    makeBtn("FLY", Color3.fromRGB(180, 120, 30), UDim2.new(0, 20, 0.4, 280), function()
-        MovementSettings.Fly = not MovementSettings.Fly
-        if MovementSettings.Fly then startFly() else stopFly() end
-        notify("Fly: " .. tostring(MovementSettings.Fly))
-    end)
-    makeBtn("UI", Color3.fromRGB(60, 60, 60), UDim2.new(0, 20, 0.4, 350), function()
-        if window and window.ToggleUI then window.ToggleUI() end
     end)
 end
 
@@ -2744,7 +2733,11 @@ UI.triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function(v)
             local now = tick()
             if now - lastShot < 0.08 then return end
             lastShot = now
-            fireGunAt(targetPart, murderer, false)
+            if isMobile then
+                simulateTouchShoot()
+            else
+                fireGunAt(targetPart, murderer, false)
+            end
         end)
     end
 end)
@@ -2772,7 +2765,11 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire  [B]", false, functio
             local now = tick()
             if now - lastShot < 0.15 then return end
             lastShot = now
-            fireGunAt(targetPart, murderer, false)
+            if isMobile then
+                simulateTouchShoot()
+            else
+                fireGunAt(targetPart, murderer, false)
+            end
         end)
     end
 end)
@@ -3092,13 +3089,9 @@ end)
 registerControl(MiscSettings, "SilentAim", UI.silentRef)
 
 if window._makeMobileBtn and isMobile then
-    window._makeMobileBtn("AIM", function()
-        if UI.mm2LockRef then UI.mm2LockRef.SetState(not UI.mm2LockRef.GetState()) end
-    end)
     window._makeMobileBtn("ESP", function()
         if UI.mm2ESPToggleRef then UI.mm2ESPToggleRef.SetState(not UI.mm2ESPToggleRef.GetState()) end
     end)
-    window._makeMobileBtn("UI", function() window.ToggleUI() end)
 end
 
 buildMobileButtons()
