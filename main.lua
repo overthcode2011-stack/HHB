@@ -939,17 +939,7 @@ if type(S.hookNamecall) == "function" and type(S.getNamecall) == "function" then
     S.silentAimHookInstalled = ok
 end
 
-if isMobile then
-    UserInputService.TouchTapInWorld:Connect(function(position, processed)
-        if not MiscSettings.SilentAim then return end
-        local now = tick()
-        if now - S.lastMobileShot < 0.12 then return end
-        S.lastMobileShot = now
-        task.spawn(function()
-            mobileSilentShot()
-        end)
-    end)
-else
+if not isMobile then
     UserInputService.InputBegan:Connect(function(input, gp)
         if gp then return end
         if not MiscSettings.SilentAim then return end
