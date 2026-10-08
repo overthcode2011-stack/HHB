@@ -1840,28 +1840,37 @@ local function startFlingTarget(targetPlr)
         notify("Cannot fling yourself")
         return
     end
-    if S.flingTargetRunning then stopFlingTarget() end
+    if flingTargetRunning then
+        stopFlingTarget()
+    end
+
     local myHRP = getHRP()
     if not myHRP then
         notify("No character")
         return
     end
-    S.flingOriginalCFrame = myHRP.CFrame
-    S.flingOriginalPosition = myHRP.Position
+
+    flingOriginalCFrame = myHRP.CFrame
+    flingOriginalPosition = myHRP.Position
+
     autoEnableFling()
-    S.flingTargetRunning = true
+
+    flingTargetRunning = true
     notify("Flinging " .. targetPlr.DisplayName)
-    S.flingTargetThread = task.spawn(function()
+
+    flingTargetThread = task.spawn(function()
         local startTime = tick()
         local duration = MovementSettings.FlingDuration or 3
         local maxDist = MovementSettings.FlingDistance or 500
         local flinged = false
         local side = 1
 
-        while S.flingTargetRunning and tick() - startTime < duration do
+        while flingTargetRunning and tick() - startTime < duration do
             local currentHRP = getHRP()
             local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
-            if not currentHRP or not theirHRP then break end
+            if not currentHRP or not theirHRP then
+                break
+            end
 
             local dist = (currentHRP.Position - theirHRP.Position).Magnitude
             if dist >= maxDist then
@@ -1870,20 +1879,22 @@ local function startFlingTarget(targetPlr)
                 break
             end
 
-            local front = theirHRP.CFrame.LookVector
-            local shakePos = theirHRP.Position + front * (side * 1.8)
-            local shakeCF = CFrame.new(shakePos, theirHRP.Position + front * 10)
+            local theirPos = theirHRP.Position
+            local shakePos = Vector3.new(theirPos.X + (side * 2), theirPos.Y + 3, theirPos.Z)
+            local shakeCF = CFrame.new(shakePos, theirPos)
 
             if not fireTeleportToPart(currentHRP, theirHRP) then
                 currentHRP.CFrame = shakeCF
             else
                 task.wait(0.015)
                 local h = getHRP()
-                if h then h.CFrame = shakeCF end
+                if h then
+                    h.CFrame = shakeCF
+                end
             end
 
             local velo = currentHRP.Velocity
-            currentHRP.Velocity = velo * 5000 + front * (side * 12000) + Vector3.new(0, 9000, 0)
+            currentHRP.Velocity = velo * 5000 + Vector3.new(side * 15000, 9000, 0)
             currentHRP.RotVelocity = Vector3.new(
                 math.sin(tick() * 30) * 250,
                 math.cos(tick() * 25) * 250,
@@ -1898,19 +1909,25 @@ local function startFlingTarget(targetPlr)
             side = -side
         end
 
-        S.flingTargetRunning = false
+        flingTargetRunning = false
+
         if not flinged then
             notify(targetPlr.DisplayName .. " not flinged (no 500m in 3s)")
         end
+
         local h = getHRP()
         if h then
             h.Velocity = Vector3.zero
             h.RotVelocity = Vector3.zero
-            if S.flingOriginalCFrame then h.CFrame = S.flingOriginalCFrame end
+            if flingOriginalCFrame then
+                h.CFrame = flingOriginalCFrame
+            end
         end
-        S.flingOriginalCFrame = nil
-        S.flingOriginalPosition = nil
-        S.flingTargetThread = nil
+
+        flingOriginalCFrame = nil
+        flingOriginalPosition = nil
+        flingTargetThread = nil
+
         autoDisableFling()
     end)
 end
