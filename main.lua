@@ -2142,7 +2142,7 @@ window:CreateLabel(homeTab, "Features")
 window:CreateParagraph(homeTab, "Players · ESP · Movement · Aimbot · Avatar · Farm · Misc · Configs")
 
 window:CreateLabel(playersTab, "Teleport")
-UI.tpAllToggleRef = window:CreateToggle(playersTab, "TP All (Loop)", false, function(v)
+UI.tpAllToggleRef = window:CreateToggle(playersTab, "TP All", false, function(v)
     MovementSettings.TPAll = v
     if v then
         S.tpAllRunning = true
@@ -2186,39 +2186,59 @@ end)
 
 window:CreateLabel(playersTab, "Fling")
 _G.__HH_FlingTarget = nil
-UI.flingDropdownRef = window:CreateDropdown(playersTab, "Player", getPlayerNames(), "", function(v)
+
+local function getFlingList()
+    local names = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            table.insert(names, plr.Name)
+        end
+    end
+    table.sort(names)
+    return names
+end
+
+local flingDropdownRef = window:CreateDropdown(playersTab, "Player", getFlingList(), "", function(v)
     _G.__HH_FlingTarget = v
 end)
 
-Players.PlayerAdded:Connect(function()
-    task.wait(1)
-    if UI.flingDropdownRef and UI.flingDropdownRef.Refresh then
-        pcall(function() UI.flingDropdownRef:Refresh(getPlayerNames()) end)
+local lastFlingSignature = table.concat(getFlingList(), "|")
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        local names = getFlingList()
+        local signature = table.concat(names, "|")
+        if signature ~= lastFlingSignature then
+            lastFlingSignature = signature
+
+            if flingDropdownRef then
+                local refreshed = false
+                if type(flingDropdownRef.Refresh) == "function" then
+                    refreshed = pcall(function() flingDropdownRef:Refresh(names) end)
+                end
+                if not refreshed and type(flingDropdownRef.SetOptions) == "function" then
+                    refreshed = pcall(function() flingDropdownRef:SetOptions(names) end)
+                end
+                if not refreshed and type(flingDropdownRef.UpdateOptions) == "function" then
+                    pcall(function() flingDropdownRef:UpdateOptions(names) end)
+                end
+            end
+
+            if _G.__HH_FlingTarget then
+                local stillHere = false
+                for _, n in ipairs(names) do
+                    if n == _G.__HH_FlingTarget then
+                        stillHere = true
+                        break
+                    end
+                end
+                if not stillHere then
+                    _G.__HH_FlingTarget = nil
+                end
+            end
+        end
     end
-end)
-Players.PlayerRemoving:Connect(function()
-    task.wait(0.2)
-    if UI.flingDropdownRef and UI.flingDropdownRef.Refresh then
-        pcall(function() UI.flingDropdownRef:Refresh(getPlayerNames()) end)
-    end
-end)
-
-window:CreateButton(playersTab, "Fling Target", function()
-    local plr = getFlingTargetByName(_G.__HH_FlingTarget)
-    if not plr then notify("Select a player") return end
-    startFlingTarget(plr)
-end)
-
-window:CreateButton(playersTab, "Fling Murderer", function()
-    local plr = getMurderer()
-    if not plr then notify("No Murderer found") return end
-    startFlingTarget(plr)
-end)
-
-window:CreateButton(playersTab, "Fling Sheriff", function()
-    local plr = getSheriff()
-    if not plr then notify("No Sheriff/Hero found") return end
-    startFlingTarget(plr)
 end)
 
 window:CreateLabel(playersTab, "Server")
