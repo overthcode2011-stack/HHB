@@ -1856,45 +1856,52 @@ local function startFlingTarget(targetPlr)
         local duration = MovementSettings.FlingDuration or 3
         local maxDist = MovementSettings.FlingDistance or 500
         local flinged = false
+        local side = 1
+
         while S.flingTargetRunning and tick() - startTime < duration do
             local currentHRP = getHRP()
             local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
             if not currentHRP or not theirHRP then break end
+
             local dist = (currentHRP.Position - theirHRP.Position).Magnitude
             if dist >= maxDist then
                 flinged = true
                 notify(targetPlr.DisplayName .. " FLINGED!")
                 break
             end
-            local elapsed = tick() - startTime
-            local phase = elapsed * 12
-            local theirPos = theirHRP.Position
-            local baseCFrame = CFrame.new(theirPos) * CFrame.Angles(0, phase * 2, 0)
+
+            local front = theirHRP.CFrame.LookVector
+            local shakePos = theirHRP.Position + front * (side * 1.8)
+            local shakeCF = CFrame.new(shakePos, theirHRP.Position + front * 10)
+
             if not fireTeleportToPart(currentHRP, theirHRP) then
-                currentHRP.CFrame = baseCFrame
+                currentHRP.CFrame = shakeCF
             else
-                task.wait(0.02)
+                task.wait(0.015)
                 local h = getHRP()
-                if h then h.CFrame = baseCFrame end
+                if h then h.CFrame = shakeCF end
             end
+
             local velo = currentHRP.Velocity
-            currentHRP.Velocity = velo * 5000 + Vector3.new(
-                math.sin(phase) * 8000,
-                math.cos(phase * 1.3) * 8000 + 5000,
-                math.cos(phase) * 8000
-            )
+            currentHRP.Velocity = velo * 5000 + front * (side * 12000) + Vector3.new(0, 9000, 0)
             currentHRP.RotVelocity = Vector3.new(
-                math.sin(phase * 1.5) * 300,
-                math.cos(phase * 1.2) * 300,
-                math.sin(phase * 0.9) * 300
+                math.sin(tick() * 30) * 250,
+                math.cos(tick() * 25) * 250,
+                math.sin(tick() * 20) * 250
             )
+
             RunService.RenderStepped:Wait()
             currentHRP.Velocity = velo
             currentHRP.RotVelocity = Vector3.zero
             RunService.Stepped:Wait()
+
+            side = -side
         end
+
         S.flingTargetRunning = false
-        if not flinged then notify(targetPlr.DisplayName .. " not flinged (no 500m in 3s)") end
+        if not flinged then
+            notify(targetPlr.DisplayName .. " not flinged (no 500m in 3s)")
+        end
         local h = getHRP()
         if h then
             h.Velocity = Vector3.zero
