@@ -14,7 +14,6 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
-local TextChatService = game:GetService("TextChatService")
 local TeleportService = game:GetService("TeleportService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
@@ -23,11 +22,11 @@ local LocalPlayer = Players.LocalPlayer
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
 local HAS = {
-    RegisterControl = type(API.RegisterControl) == "function",
-    SyncUIControls  = type(API.SyncUIControls) == "function",
-    Notify          = type(API.Notify) == "function",
-    SetTheme        = type(API.SetTheme) == "function",
-    GetTheme        = type(API.GetTheme) == "function",
+    RegisterControl   = type(API.RegisterControl) == "function",
+    SyncUIControls    = type(API.SyncUIControls) == "function",
+    Notify            = type(API.Notify) == "function",
+    SetTheme          = type(API.SetTheme) == "function",
+    GetTheme          = type(API.GetTheme) == "function",
 }
 
 local LocalControlRegistry = {}
@@ -165,7 +164,7 @@ local S = {
     currentEmoteTrack = nil,
     animPriorityConn = nil,
     korbloxPart = nil,
-    mobileButtonsGui = nil, mobileFlyVec = Vector3.zero, mobileFlyDragging = false,
+    mobileFlyVec = Vector3.zero, mobileFlyDragging = false,
     beamData = { segments = {}, updateConn = nil, lastTick = 0 },
     coinCollecting = false, coinConnection = nil, coinVelocity = nil,
     coinGyro = nil,
@@ -177,7 +176,7 @@ local S = {
     hitboxExpander = { active = false, savedSizes = {}, size = Vector3.new(40, 40, 40) },
     fadeConn = nil, tpEvent = nil,
     silentAimHookInstalled = false, hookNamecall = nil, getNamecall = nil,
-    mobileShootBtn = nil, lastMobileShot = 0,
+    lastMobileShot = 0,
 }
 
 local UI = {}
@@ -256,39 +255,26 @@ end
 
 local function getMM2Role(plr)
     if plr == LocalPlayer then return "Innocent" end
-
     local cached = getRoleFromCache(plr)
     if cached then
         if cached == "Hero" then return "Hero" end
         if cached == "Sheriff" then return "Sheriff" end
         if cached == "Murderer" then return "Murderer" end
     end
-
     local char = plr.Character
     local bp = plr:FindFirstChildOfClass("Backpack")
-
-    if hasTool(char, "Knife") or hasTool(bp, "Knife") then
-        return "Murderer"
-    end
-
+    if hasTool(char, "Knife") or hasTool(bp, "Knife") then return "Murderer" end
     if hasTool(char, "Gun") or hasTool(bp, "Gun") then
         local sheriffAlive = false
         for _, info in pairs(S.roleCache) do
             if info.Role == "Sheriff" then
-                if not info.Dead then
-                    sheriffAlive = true
-                end
+                if not info.Dead then sheriffAlive = true end
                 break
             end
         end
-
-        if sheriffAlive then
-            return "Sheriff"
-        end
-
+        if sheriffAlive then return "Sheriff" end
         return "Hero"
     end
-
     return "Innocent"
 end
 
@@ -448,29 +434,23 @@ local function classifyPathHit(originPos, targetPos, targetChar)
     local dir = targetPos - originPos
     local dist = dir.Magnitude
     if dist < 0.5 then return "clear", nil end
-
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     local ignore = { workspace.CurrentCamera }
     if LocalPlayer.Character then table.insert(ignore, LocalPlayer.Character) end
     params.FilterDescendantsInstances = ignore
     params.IgnoreWater = true
-
     local result = workspace:Raycast(originPos, dir.Unit * (dist + 1), params)
     if not result then return "clear", nil end
     if targetChar and (result.Instance:IsDescendantOf(targetChar) or result.Instance == targetChar) then
         return "target", nil
     end
-
     local hitPlr = getCharacterFromPart(result.Instance)
     if hitPlr and hitPlr ~= LocalPlayer then
         local role = getMM2Role(hitPlr)
-        if role ~= "Murderer" then
-            return "innocent", hitPlr
-        end
+        if role ~= "Murderer" then return "innocent", hitPlr end
         return "clear", nil
     end
-
     return "wall", nil
 end
 
@@ -482,12 +462,9 @@ local function applyGracePeriod(plr, isCurrentlyVisible)
         tv = { wasHidden = false, visibleSince = nil }
         TargetVisibility[plr] = tv
     end
-
     if isCurrentlyVisible then
         if tv.wasHidden then
-            if not tv.visibleSince then
-                tv.visibleSince = now
-            end
+            if not tv.visibleSince then tv.visibleSince = now end
             if (now - tv.visibleSince) >= WALL_GRACE_TIME then
                 tv.wasHidden = false
                 tv.visibleSince = nil
@@ -505,7 +482,6 @@ end
 
 local function isVisibleForShot(originPos, targetPos, targetChar, targetPlr)
     local hitType = classifyPathHit(originPos, targetPos, targetChar)
-
     if hitType == "innocent" then
         if targetPlr then
             local tv = TargetVisibility[targetPlr]
@@ -516,15 +492,8 @@ local function isVisibleForShot(originPos, targetPos, targetChar, targetPlr)
         end
         return false
     end
-
-    if not AimbotSettings.WallCheck then
-        return true
-    end
-
-    if hitType == "wall" then
-        return applyGracePeriod(targetPlr, false)
-    end
-
+    if not AimbotSettings.WallCheck then return true end
+    if hitType == "wall" then return applyGracePeriod(targetPlr, false) end
     return applyGracePeriod(targetPlr, true)
 end
 
@@ -550,20 +519,17 @@ local function buildBeamPath(fromPos, toPos, targetChar)
     local waypoints = { fromPos }
     local current = fromPos
     local iterations = 0
-
     while iterations < BeamSettings.MaxIterations do
         iterations = iterations + 1
         local diff = toPos - current
         local dist = diff.Magnitude
         if dist < 1 then break end
-
         local params = RaycastParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
         local ignore = { workspace.CurrentCamera }
         if LocalPlayer.Character then table.insert(ignore, LocalPlayer.Character) end
         params.FilterDescendantsInstances = ignore
         params.IgnoreWater = true
-
         local result = workspace:Raycast(current, diff, params)
         if not result then
             table.insert(waypoints, toPos)
@@ -573,7 +539,6 @@ local function buildBeamPath(fromPos, toPos, targetChar)
             table.insert(waypoints, toPos)
             break
         end
-
         local hitPlr = getCharacterFromPart(result.Instance)
         if hitPlr and hitPlr ~= LocalPlayer then
             local role = getMM2Role(hitPlr)
@@ -582,7 +547,6 @@ local function buildBeamPath(fromPos, toPos, targetChar)
                 break
             end
         end
-
         local hitPos = result.Position
         local normal = result.Normal
         local travel = hitPos - current
@@ -591,39 +555,30 @@ local function buildBeamPath(fromPos, toPos, targetChar)
             table.insert(waypoints, toPos)
             break
         end
-
         local perp = normal:Cross(Vector3.yAxis)
-        if perp.Magnitude < 0.01 then
-            perp = normal:Cross(Vector3.xAxis)
-        end
+        if perp.Magnitude < 0.01 then perp = normal:Cross(Vector3.xAxis) end
         perp = perp.Unit
-
         local offset = BeamSettings.WaypointOffset
         local sideA = hitPos + perp * offset
         local sideB = hitPos - perp * offset
         local distA = (sideA - toPos).Magnitude
         local distB = (sideB - toPos).Magnitude
-
         local chosen
         if distA < distB then
             chosen = sideA + travel.Unit * 0.5
         else
             chosen = sideB + travel.Unit * 0.5
         end
-
         local newPoint = chosen
         if (newPoint - current).Magnitude < 0.5 then
             newPoint = current + travel.Unit * 1
         end
-
         table.insert(waypoints, newPoint)
         current = newPoint
     end
-
     if (waypoints[#waypoints] - toPos).Magnitude > 1 then
         table.insert(waypoints, toPos)
     end
-
     return waypoints
 end
 
@@ -659,49 +614,96 @@ end
 
 local function fireGunAt(targetPart, targetPlr, useRedirect)
     if targetPlr and not isTargetSafe(targetPlr) then return false end
-
     local myHRP = getHRP()
     if not myHRP then return false end
-
     local targetChar = targetPlr and targetPlr.Character
-
     local hitType = classifyPathHit(myHRP.Position, targetPart.Position, targetChar)
     if hitType == "innocent" then return false end
-
     local gun = getEquippedGun()
     if not gun then return false end
     local shootRemote = gun:FindFirstChild("Shoot")
     if not shootRemote or not shootRemote:IsA("RemoteEvent") then return false end
-
     local origin = getGunRaycastCFrame()
     if not origin then return false end
     local targetCF = predictAim(targetPart)
     if not targetCF then return false end
-
-    pcall(function()
-        shootRemote:FireServer(origin, targetCF)
-    end)
-
+    pcall(function() shootRemote:FireServer(origin, targetCF) end)
     if useRedirect and targetChar and hitType == "wall" then
         tpRedirectAndShoot(shootRemote, myHRP, targetPart, targetChar)
     end
-
     return true
 end
 
-local function mobileSilentShot()
-    if not MiscSettings.SilentAim then return false end
+local function mobileForceShoot()
     local murderer = getMurdererCached()
-    if not isTargetSafe(murderer) then return false end
-    local targetPart = getMM2TargetPart(murderer.Character)
-    if not targetPart then return false end
-    local myHRP = getHRP()
-    if not myHRP then return false end
-    if not getEquippedGun() then return false end
-    if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then
+    if not isTargetSafe(murderer) then
+        notify("No murderer", 2)
         return false
     end
-    return fireGunAt(targetPart, murderer, false)
+
+    local char = LocalPlayer.Character
+    if not char then notify("No character", 2) return false end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then notify("No humanoid", 2) return false end
+
+    local gun = nil
+    for _, t in ipairs(char:GetChildren()) do
+        if t:IsA("Tool") and t.Name:lower():find("gun", 1, true) then
+            gun = t
+            break
+        end
+    end
+    if not gun then
+        local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if bp then
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") and t.Name:lower():find("gun", 1, true) then
+                    pcall(function() hum:EquipTool(t) end)
+                    task.wait(0.2)
+                    gun = t
+                    break
+                end
+            end
+        end
+    end
+    if not gun then notify("No gun in inventory", 2) return false end
+
+    if gun.Parent ~= char then
+        pcall(function() hum:EquipTool(gun) end)
+        task.wait(0.2)
+    end
+
+    local shootRemote = gun:FindFirstChild("Shoot")
+    if not shootRemote then
+        for _, r in ipairs(gun:GetChildren()) do
+            if r:IsA("RemoteEvent") then
+                shootRemote = r
+                break
+            end
+        end
+    end
+    if not shootRemote then notify("No Shoot remote", 2) return false end
+
+    local targetPart = getMM2TargetPart(murderer.Character)
+    if not targetPart then notify("No target part", 2) return false end
+
+    local myHRP = getHRP()
+    if not myHRP then notify("No HRP", 2) return false end
+
+    local origin = getGunRaycastCFrame() or myHRP.CFrame
+    local targetCF = predictAim(targetPart) or CFrame.new(targetPart.Position)
+
+    local ok, err = pcall(function()
+        shootRemote:FireServer(origin, targetCF)
+    end)
+    if ok then
+        notify("Shot " .. murderer.DisplayName, 1.5)
+        return true
+    else
+        notify("Fire error: " .. tostring(err), 3)
+        return false
+    end
 end
 
 local function clearBeamPool(pool)
@@ -750,13 +752,7 @@ local function createBeamSegment()
     beam.LightEmission = 1
     beam.Parent = startPart
 
-    return {
-        beam = beam,
-        att0 = att0,
-        att1 = att1,
-        startPart = startPart,
-        endPart = endPart,
-    }
+    return { beam = beam, att0 = att0, att1 = att1, startPart = startPart, endPart = endPart }
 end
 
 local function ensureSegments(pool, count)
@@ -883,12 +879,10 @@ local function playEmote(emoteName, emoteId)
     if not hum then return end
     local animator = hum:FindFirstChildOfClass("Animator")
     if not animator then return end
-
     if S.currentEmoteTrack then
         pcall(function() S.currentEmoteTrack:Stop(0.1) end)
         S.currentEmoteTrack = nil
     end
-
     local anim = Instance.new("Animation")
     anim.AnimationId = "rbxassetid://" .. emoteId
     local ok, track = pcall(function() return animator:LoadAnimation(anim) end)
@@ -1053,7 +1047,6 @@ local function teleportToPlayer(targetPlr)
     local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
     local myHRP = getHRP()
     if not myHRP or not theirHRP then return false end
-
     if fireTeleportToPart(myHRP, theirHRP) then
         task.wait(0.03)
         local h = getHRP()
@@ -1071,12 +1064,8 @@ local function bringGunToPlayer()
     if not gun then return false, "no gun" end
     local hrp = getHRP()
     if not hrp then return false, "no hrp" end
-
     local moved = false
-    if fireTeleportToPart(gun, hrp) then
-        moved = true
-    end
-
+    if fireTeleportToPart(gun, hrp) then moved = true end
     task.wait(0.03)
     if gun and gun.Parent then
         gun.CFrame = hrp.CFrame
@@ -1084,7 +1073,6 @@ local function bringGunToPlayer()
         gun.RotVelocity = Vector3.zero
         moved = true
     end
-
     return moved, moved and "remote" or "fallback"
 end
 
@@ -1140,7 +1128,6 @@ local function applyGunESP()
         clearGunESP()
         S.gunESP.trackedGun = gun
     end
-
     if not S.gunESP.highlights[gun] then
         local h = Instance.new("Highlight")
         h.Name = "HH_GunESP"
@@ -1151,7 +1138,6 @@ local function applyGunESP()
         h.Parent = gun
         S.gunESP.highlights[gun] = h
     end
-
     if not S.gunESP.billboards[gun] then
         local bb = Instance.new("BillboardGui")
         bb.Name = "HH_GunTag"
@@ -1351,7 +1337,6 @@ local function startHeroWatcher()
         while S.heroWatcher.active do
             task.wait(0.4)
             if not S.heroWatcher.active then break end
-
             local sheriffDead, sheriffName = isSheriffDead()
             if sheriffDead then
                 local holder = findGunHolder()
@@ -1397,9 +1382,7 @@ local function onRoundBegin()
     clearHeroFlags()
     stopHeroWatcher()
     task.delay(1.5, function()
-        if S.roundActive then
-            startHeroWatcher()
-        end
+        if S.roundActive then startHeroWatcher() end
     end)
 end
 
@@ -1427,9 +1410,7 @@ local function updateRoleCache(data)
             }
             if info.Role == "Sheriff" and info.Dead then
                 task.defer(function()
-                    if S.heroWatcher.active == false then
-                        startHeroWatcher()
-                    end
+                    if S.heroWatcher.active == false then startHeroWatcher() end
                 end)
             end
         end
@@ -1461,9 +1442,7 @@ hookFadeEvent()
 task.spawn(function()
     while true do
         task.wait(3)
-        if not S.fadeConn or not getFadeEvent() then
-            hookFadeEvent()
-        end
+        if not S.fadeConn or not getFadeEvent() then hookFadeEvent() end
     end
 end)
 
@@ -1490,11 +1469,9 @@ end)
 local function applyKorblox()
     local char = LocalPlayer.Character; if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
-
     local function buildKorblox(ru)
         local existing = char:FindFirstChild("HH_KorbloxMesh")
         if existing then existing:Destroy() end
-
         local newPart = Instance.new("Part")
         newPart.Name = "HH_KorbloxMesh"
         newPart.Size = Vector3.new(1, 2, 1)
@@ -1505,22 +1482,18 @@ local function applyKorblox()
         newPart.Color = Color3.new(1, 1, 1)
         newPart.CFrame = ru.CFrame
         newPart.Parent = char
-
         local mesh = Instance.new("SpecialMesh")
         mesh.MeshType = Enum.MeshType.FileMesh
         mesh.MeshId = "rbxassetid://902942096"
         mesh.TextureId = "rbxassetid://902843398"
         mesh.Scale = Vector3.new(1, 1, 1)
         mesh.Parent = newPart
-
         local weld = Instance.new("WeldConstraint")
         weld.Part0 = newPart
         weld.Part1 = ru
         weld.Parent = newPart
-
         S.korbloxPart = newPart
     end
-
     if hum.RigType == Enum.HumanoidRigType.R15 then
         local rf = char:FindFirstChild("RightFoot")
         local rl = char:FindFirstChild("RightLowerLeg")
@@ -1552,12 +1525,8 @@ end
 local function removeKorblox()
     local char = LocalPlayer.Character; if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
-
-    if S.korbloxPart and S.korbloxPart.Parent then
-        S.korbloxPart:Destroy()
-    end
+    if S.korbloxPart and S.korbloxPart.Parent then S.korbloxPart:Destroy() end
     S.korbloxPart = nil
-
     if hum.RigType == Enum.HumanoidRigType.R15 then
         local rf = char:FindFirstChild("RightFoot")
         local rl = char:FindFirstChild("RightLowerLeg")
@@ -1583,33 +1552,26 @@ local function applyAnimPack()
     local char = LocalPlayer.Character; if not char then return end
     local animate = char:FindFirstChild("Animate")
     if not animate then return end
-
     local function replaceFolder(folderName, newId)
         local folder = animate:FindFirstChild(folderName)
         if not folder then return end
         for _, child in ipairs(folder:GetChildren()) do
-            if child:IsA("Animation") then
-                child.AnimationId = newId
-            end
+            if child:IsA("Animation") then child.AnimationId = newId end
         end
     end
-
     replaceFolder("idle",  CUSTOM_ANIMS.idle.id)
     replaceFolder("walk",  CUSTOM_ANIMS.walk.id)
     replaceFolder("run",   CUSTOM_ANIMS.run.id)
     replaceFolder("fall",  CUSTOM_ANIMS.fall.id)
     replaceFolder("climb", CUSTOM_ANIMS.climb.id)
     replaceFolder("jump",  CUSTOM_ANIMS.jump.id)
-
     animate.Disabled = true
     task.wait(0.05)
     animate.Disabled = false
-
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     local animator = hum:FindFirstChildOfClass("Animator")
     if not animator then return end
-
     local function getPriorityForId(id)
         if not id then return nil end
         if id == CUSTOM_ANIMS.idle.id  then return CUSTOM_ANIMS.idle.priority end
@@ -1620,28 +1582,17 @@ local function applyAnimPack()
         if id == CUSTOM_ANIMS.jump.id  then return CUSTOM_ANIMS.jump.priority end
         return nil
     end
-
     task.wait(0.5)
-
     for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
         local id = track.Animation and track.Animation.AnimationId
         local prio = getPriorityForId(id)
-        if prio then
-            pcall(function() track.Priority = prio end)
-        end
+        if prio then pcall(function() track.Priority = prio end) end
     end
-
-    if S.animPriorityConn then
-        S.animPriorityConn:Disconnect()
-        S.animPriorityConn = nil
-    end
-
+    if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     S.animPriorityConn = animator.AnimationPlayed:Connect(function(track)
         local id = track.Animation and track.Animation.AnimationId
         local prio = getPriorityForId(id)
-        if prio then
-            pcall(function() track.Priority = prio end)
-        end
+        if prio then pcall(function() track.Priority = prio end) end
     end)
 end
 
@@ -1721,9 +1672,7 @@ local function stopCoinCollector()
     if S.coinGyro then S.coinGyro:Destroy(); S.coinGyro = nil end
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     local hum = getHumanoid()
-    if hum then
-        hum.PlatformStand = false
-    end
+    if hum then hum.PlatformStand = false end
     stopIdleAnimation()
     local char = LocalPlayer.Character
     if char then
@@ -1740,33 +1689,26 @@ local function startCoinCollector()
     if S.coinCollecting then return end
     S.coinCollecting = true
     if S.coinStatusSetter then S.coinStatusSetter("Collecting") end
-
     local hrp = getHRP()
     local hum = getHumanoid()
     if not hrp or not hum then S.coinCollecting = false; return end
-
     hum.PlatformStand = true
     playIdleAnimation(hum)
-
     S.coinVelocity = Instance.new("BodyVelocity")
     S.coinVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
     S.coinVelocity.P = 1250
     S.coinVelocity.Parent = hrp
-
     S.coinGyro = Instance.new("BodyGyro")
     S.coinGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
     S.coinGyro.P = 1e4
     S.coinGyro.D = 500
     S.coinGyro.CFrame = hrp.CFrame
     S.coinGyro.Parent = hrp
-
     S.coinConnection = RunService.Heartbeat:Connect(function()
         if not S.coinCollecting then return end
-
         local currentHRP = getHRP()
         local currentHum = getHumanoid()
         if not currentHRP or not currentHum then return end
-
         if not S.coinVelocity or not S.coinVelocity.Parent then
             S.coinVelocity = Instance.new("BodyVelocity")
             S.coinVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
@@ -1781,11 +1723,7 @@ local function startCoinCollector()
             S.coinGyro.CFrame = currentHRP.CFrame
             S.coinGyro.Parent = currentHRP
         end
-
-        if currentHum.PlatformStand == false then
-            currentHum.PlatformStand = true
-        end
-
+        if currentHum.PlatformStand == false then currentHum.PlatformStand = true end
         local murderer = getMurdererCached()
         local evadeDirection = nil
         if murderer and murderer.Character then
@@ -1798,34 +1736,28 @@ local function startCoinCollector()
                 end
             end
         end
-
         if evadeDirection then
             local targetVel = evadeDirection * math.min(FarmSettings.CoinSpeed * 1.5, 75)
             S.coinVelocity.Velocity = targetVel
             S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection)
             return
         end
-
         local target = getBestCoin()
         if not target then
             S.coinVelocity.Velocity = Vector3.zero
             if S.coinStatusSetter then S.coinStatusSetter("Waiting for coins") end
             return
         end
-
         local direction = (target.Position - currentHRP.Position).Unit
         local distance = (target.Position - currentHRP.Position).Magnitude
-
         local speed = FarmSettings.CoinSpeed
         if distance < 5 then
             speed = FarmSettings.CoinSpeed * 0.4
         elseif distance < 15 then
             speed = FarmSettings.CoinSpeed * 0.7
         end
-
         S.coinVelocity.Velocity = direction * speed
         S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, target.Position)
-
         if S.coinStatusSetter then S.coinStatusSetter("Collecting") end
     end)
 end
@@ -1892,9 +1824,7 @@ local function stopFlingTarget()
     if hrp then
         hrp.Velocity = Vector3.zero
         hrp.RotVelocity = Vector3.zero
-        if S.flingOriginalCFrame then
-            hrp.CFrame = S.flingOriginalCFrame
-        end
+        if S.flingOriginalCFrame then hrp.CFrame = S.flingOriginalCFrame end
     end
     S.flingOriginalCFrame = nil
     S.flingOriginalPosition = nil
@@ -1910,60 +1840,43 @@ local function startFlingTarget(targetPlr)
         notify("Cannot fling yourself")
         return
     end
-    if S.flingTargetRunning then
-        stopFlingTarget()
-    end
-
+    if S.flingTargetRunning then stopFlingTarget() end
     local myHRP = getHRP()
     if not myHRP then
         notify("No character")
         return
     end
-
     S.flingOriginalCFrame = myHRP.CFrame
     S.flingOriginalPosition = myHRP.Position
-
     autoEnableFling()
-
     S.flingTargetRunning = true
     notify("Flinging " .. targetPlr.DisplayName)
-
     S.flingTargetThread = task.spawn(function()
         local startTime = tick()
         local duration = MovementSettings.FlingDuration or 3
         local maxDist = MovementSettings.FlingDistance or 500
         local flinged = false
-
         while S.flingTargetRunning and tick() - startTime < duration do
             local currentHRP = getHRP()
             local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
-            if not currentHRP or not theirHRP then
-                break
-            end
-
+            if not currentHRP or not theirHRP then break end
             local dist = (currentHRP.Position - theirHRP.Position).Magnitude
             if dist >= maxDist then
                 flinged = true
                 notify(targetPlr.DisplayName .. " FLINGED!")
                 break
             end
-
             local elapsed = tick() - startTime
             local phase = elapsed * 12
             local theirPos = theirHRP.Position
-
             local baseCFrame = CFrame.new(theirPos) * CFrame.Angles(0, phase * 2, 0)
-
             if not fireTeleportToPart(currentHRP, theirHRP) then
                 currentHRP.CFrame = baseCFrame
             else
                 task.wait(0.02)
                 local h = getHRP()
-                if h then
-                    h.CFrame = baseCFrame
-                end
+                if h then h.CFrame = baseCFrame end
             end
-
             local velo = currentHRP.Velocity
             currentHRP.Velocity = velo * 5000 + Vector3.new(
                 math.sin(phase) * 8000,
@@ -1975,32 +1888,22 @@ local function startFlingTarget(targetPlr)
                 math.cos(phase * 1.2) * 300,
                 math.sin(phase * 0.9) * 300
             )
-
             RunService.RenderStepped:Wait()
             currentHRP.Velocity = velo
             currentHRP.RotVelocity = Vector3.zero
             RunService.Stepped:Wait()
         end
-
         S.flingTargetRunning = false
-
-        if not flinged then
-            notify(targetPlr.DisplayName .. " not flinged (no 500m in 3s)")
-        end
-
+        if not flinged then notify(targetPlr.DisplayName .. " not flinged (no 500m in 3s)") end
         local h = getHRP()
         if h then
             h.Velocity = Vector3.zero
             h.RotVelocity = Vector3.zero
-            if S.flingOriginalCFrame then
-                h.CFrame = S.flingOriginalCFrame
-            end
+            if S.flingOriginalCFrame then h.CFrame = S.flingOriginalCFrame end
         end
-
         S.flingOriginalCFrame = nil
         S.flingOriginalPosition = nil
         S.flingTargetThread = nil
-
         autoDisableFling()
     end)
 end
@@ -2008,9 +1911,7 @@ end
 local function getPlayerNames()
     local names = {}
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            table.insert(names, plr.Name)
-        end
+        if plr ~= LocalPlayer then table.insert(names, plr.Name) end
     end
     return names
 end
@@ -2046,9 +1947,7 @@ local function getFlyInput()
         local hum = getHumanoid()
         if hum then
             local md = hum.MoveDirection
-            if md.Magnitude > 0.1 then
-                mv = md * Vector3.new(1, 0, 1)
-            end
+            if md.Magnitude > 0.1 then mv = md * Vector3.new(1, 0, 1) end
         end
         if S.mobileFlyDragging and S.mobileFlyVec.Magnitude > 0.1 then
             mv = S.mobileFlyVec
@@ -2081,7 +1980,6 @@ local function startFly()
         if not h then return end
         if not S.flyBV or not S.flyBV.Parent then attachFlyBodyMovers() end
         if not S.flyBV or not S.flyBG then return end
-
         local mv = getFlyInput()
         S.flyBV.Velocity = mv.Magnitude > 0 and mv.Unit * MovementSettings.FlySpeed or Vector3.zero
         S.flyBG.CFrame = workspace.CurrentCamera.CFrame
@@ -2102,27 +2000,23 @@ local function startFOVCircle()
         S.fovGui.IgnoreGuiInset = true
         pcall(function() S.fovGui.Parent = game:GetService("CoreGui") end)
         if not S.fovGui.Parent then S.fovGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-
         S.fovFrame = Instance.new("Frame")
         S.fovFrame.Name = "FOVCircle"
         S.fovFrame.BackgroundTransparency = 1
         S.fovFrame.AnchorPoint = Vector2.new(0.5, 0.5)
         S.fovFrame.Size = UDim2.new(0, 200, 0, 200)
         S.fovFrame.Parent = S.fovGui
-
         local stroke = Instance.new("UIStroke")
         stroke.Name = "CircleStroke"
         stroke.Thickness = 2
         stroke.Color = Color3.fromRGB(255, 255, 255)
         stroke.Transparency = 0.3
         stroke.Parent = S.fovFrame
-
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(1, 0)
         corner.Parent = S.fovFrame
     end
     S.fovGui.Enabled = true
-
     S.fovConn = RunService.RenderStepped:Connect(function()
         if not AimbotSettings.FOVCircle then return end
         if not S.fovFrame then return end
@@ -2145,96 +2039,10 @@ local function stopFOVCircle()
     if S.fovGui then S.fovGui.Enabled = false end
 end
 
-local function buildMobileButtons()
-    if not isMobile then return end
-    if S.mobileButtonsGui then return end
-
-    S.mobileButtonsGui = Instance.new("ScreenGui")
-    S.mobileButtonsGui.Name = "HH_Mobile"
-    S.mobileButtonsGui.ResetOnSpawn = false
-    S.mobileButtonsGui.IgnoreGuiInset = true
-    pcall(function() S.mobileButtonsGui.Parent = game:GetService("CoreGui") end)
-    if not S.mobileButtonsGui.Parent then
-        S.mobileButtonsGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-    end
-
-    local function makeBtn(text, color, pos, onClick)
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0, 60, 0, 60)
-        btn.Position = pos
-        btn.BackgroundColor3 = color
-        btn.BackgroundTransparency = 0.2
-        btn.Text = text
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.TextSize = 12
-        btn.Font = Enum.Font.GothamBold
-        btn.AutoButtonColor = true
-        btn.Parent = S.mobileButtonsGui
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 12)
-        corner.Parent = btn
-        local stroke = Instance.new("UIStroke")
-        stroke.Color = Color3.fromRGB(255, 255, 255)
-        stroke.Transparency = 0.6
-        stroke.Thickness = 1
-        stroke.Parent = btn
-        btn.MouseButton1Click:Connect(function()
-            pcall(onClick)
-        end)
-        return btn
-    end
-
-    makeBtn("AIM", Color3.fromRGB(30, 90, 180), UDim2.new(0, 20, 0.35, 0), function()
-        AimbotSettings.MM2LockOn = not AimbotSettings.MM2LockOn
-        notify("Aimbot: " .. tostring(AimbotSettings.MM2LockOn))
-    end)
-    makeBtn("FIRE", Color3.fromRGB(180, 30, 30), UDim2.new(0, 20, 0.35, 70), function()
-        AimbotSettings.AutoFire = not AimbotSettings.AutoFire
-        notify("AutoFire: " .. tostring(AimbotSettings.AutoFire))
-    end)
-    S.mobileShootBtn = makeBtn("SHOOT", Color3.fromRGB(220, 40, 40), UDim2.new(0, 20, 0.35, 140), function()
-        task.spawn(function()
-            local murderer = getMurdererCached()
-            if not isTargetSafe(murderer) then notify("No murderer") return end
-            local targetPart = getMM2TargetPart(murderer.Character)
-            if not targetPart then notify("No target") return end
-            local myHRP = getHRP()
-            if not myHRP then notify("No character") return end
-            if not getEquippedGun() then notify("Equip gun") return end
-            if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then
-                notify("No line of sight")
-                return
-            end
-            if not fireGunAt(targetPart, murderer, false) then
-                notify("Fire failed")
-            end
-        end)
-    end)
-    makeBtn("SA", Color3.fromRGB(140, 40, 180), UDim2.new(0, 20, 0.35, 210), function()
-        MiscSettings.SilentAim = not MiscSettings.SilentAim
-        notify("SilentAim: " .. tostring(MiscSettings.SilentAim))
-    end)
-    makeBtn("ESP", Color3.fromRGB(30, 150, 90), UDim2.new(0, 20, 0.35, 280), function()
-        ESP.active.MM2 = not ESP.active.MM2
-        VisualSettings.MM2ESP = ESP.active.MM2
-        refreshAllESP()
-        notify("Roles ESP: " .. tostring(ESP.active.MM2))
-    end)
-    makeBtn("FLY", Color3.fromRGB(180, 120, 30), UDim2.new(0, 20, 0.35, 350), function()
-        MovementSettings.Fly = not MovementSettings.Fly
-        if MovementSettings.Fly then startFly() else stopFly() end
-        notify("Fly: " .. tostring(MovementSettings.Fly))
-    end)
-    makeBtn("UI", Color3.fromRGB(60, 60, 60), UDim2.new(0, 20, 0.35, 420), function()
-        if window and window.ToggleUI then window.ToggleUI() end
-    end)
-end
-
 local function startMobileFlyDrag()
     if not isMobile then return end
     local dragActive = false
     local dragStart = nil
-
     UserInputService.TouchStarted:Connect(function(input, gp)
         if gp then return end
         if not MovementSettings.Fly then return end
@@ -2242,7 +2050,6 @@ local function startMobileFlyDrag()
         dragStart = input.Position
         S.mobileFlyDragging = true
     end)
-
     UserInputService.TouchMoved:Connect(function(input, gp)
         if gp then return end
         if not dragActive then return end
@@ -2253,7 +2060,6 @@ local function startMobileFlyDrag()
         local right = cam.CFrame.RightVector * (delta.X * 0.05)
         S.mobileFlyVec = fwd + right
     end)
-
     UserInputService.TouchEnded:Connect(function()
         dragActive = false
         S.mobileFlyDragging = false
@@ -2282,7 +2088,7 @@ local farmTab      = window:CreateTab("Farm", ICONS.Farm)
 local miscTab      = window:CreateTab("Misc", ICONS.Misc)
 
 window:CreateLabel(homeTab, "Happy Hub")
-window:CreateParagraph(homeTab, "Best free hub · Since 2026 · v11 Update · MM2 Project")
+window:CreateParagraph(homeTab, "Best free hub · Since 2026 · v11.6 Update · MM2 Project")
 
 window:CreateLabel(homeTab, "Music")
 UI.musicToggleRef = window:CreateToggle(homeTab, "Companion", false, function(v)
@@ -2375,28 +2181,19 @@ end)
 
 window:CreateButton(playersTab, "Fling Target", function()
     local plr = getFlingTargetByName(_G.__HH_FlingTarget)
-    if not plr then
-        notify("Select a player")
-        return
-    end
+    if not plr then notify("Select a player") return end
     startFlingTarget(plr)
 end)
 
 window:CreateButton(playersTab, "Fling Murderer", function()
     local plr = getMurderer()
-    if not plr then
-        notify("No Murderer found")
-        return
-    end
+    if not plr then notify("No Murderer found") return end
     startFlingTarget(plr)
 end)
 
 window:CreateButton(playersTab, "Fling Sheriff", function()
     local plr = getSheriff()
-    if not plr then
-        notify("No Sheriff/Hero found")
-        return
-    end
+    if not plr then notify("No Sheriff/Hero found") return end
     startFlingTarget(plr)
 end)
 
@@ -2486,7 +2283,7 @@ UI.beamToggleRef = window:CreateToggle(espTab, "Beam to Murderer", false, functi
 end)
 registerControl(VisualSettings, "Beam", UI.beamToggleRef)
 
-window:CreateParagraph(espTab, "Beam colors: green = clear · orange = innocent blocking · red = wall. Innocents always block shots.")
+window:CreateParagraph(espTab, "Beam colors: green = clear · orange = innocent blocking · red = wall.")
 
 window:CreateLabel(movementTab, "Fly")
 UI.flyToggleRef = window:CreateToggle(movementTab, "Active Fly", false, function(v)
@@ -2557,11 +2354,7 @@ registerControl(MovementSettings, "God", UI.godRef)
 
 UI.antiVoidRef = window:CreateToggle(movementTab, "Anti-Void", false, function(v)
     MiscSettings.AntiVoid = v
-    if v then
-        startAntiVoid()
-    else
-        stopAntiVoid()
-    end
+    if v then startAntiVoid() else stopAntiVoid() end
 end)
 registerControl(MiscSettings, "AntiVoid", UI.antiVoidRef)
 
@@ -2685,24 +2478,17 @@ UI.mm2LockRef = window:CreateToggle(aimbotTab, "Default aimbot", false, function
             if not targetPart or not myHRP then return end
             local dist = (myHRP.Position - targetPart.Position).Magnitude
             if dist > AimbotSettings.MM2Range then return end
-
-            if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then
-                return
-            end
-
+            if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
             if AimbotSettings.FOVCircle then
                 local cam = workspace.CurrentCamera
                 if cam then
                     local sp, on = cam:WorldToViewportPoint(targetPart.Position)
                     if on then
                         local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
-                        if (Vector2.new(sp.X, sp.Y) - center).Magnitude > AimbotSettings.FOVRadius then
-                            return
-                        end
+                        if (Vector2.new(sp.X, sp.Y) - center).Magnitude > AimbotSettings.FOVRadius then return end
                     end
                 end
             end
-
             local camera = workspace.CurrentCamera
             local targetCF = CFrame.new(camera.CFrame.Position, targetPart.Position)
             local alpha = math.clamp(1 / AimbotSettings.MM2Smooth, 0.02, 1)
@@ -2823,7 +2609,7 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill Murderer", false, fun
 end)
 registerControl(AimbotSettings, "AutoKillMurderer", UI.autoKillRef)
 
-window:CreateParagraph(aimbotTab, "Auto Kill = only fires if you're Sheriff/Hero with gun equipped. Auto TP redirects through walls.")
+window:CreateParagraph(aimbotTab, "Auto Kill = only fires if you're Sheriff/Hero with gun equipped.")
 
 UI.wallCheckRef = window:CreateToggle(aimbotTab, "Wall Check", true, function(v)
     AimbotSettings.WallCheck = v
@@ -2834,39 +2620,30 @@ window:CreateParagraph(aimbotTab, "Wall Check: 0.2s grace period after leaving c
 
 window:CreateLabel(aimbotTab, "Murderer OP")
 window:CreateButton(aimbotTab, "Kill Everyone", function()
-    if not isLocalMurderer() then
-        notify("You are not the Murderer")
-        return
-    end
+    if not isLocalMurderer() then notify("You are not the Murderer") return end
     if S.killAllRunning then return end
     S.killAllRunning = true
     notify("Killing everyone")
-
     task.spawn(function()
         local startTime = tick()
         local duration = 3
         local spinAngle = 0
         local lastEquip = 0
-
         local myHRP = getHRP()
         local originalCFrame = myHRP and myHRP.CFrame or nil
-
         expandHitboxForAll()
-
         local spinConn = RunService.RenderStepped:Connect(function(dt)
             local hrp = getHRP()
             if not hrp then return end
             spinAngle = spinAngle + (dt * 25)
             hrp.CFrame = hrp.CFrame * CFrame.Angles(0, spinAngle, 0)
         end)
-
         while S.killAllRunning and tick() - startTime < duration do
             local now = tick()
             if now - lastEquip > 0.5 then
                 lastEquip = now
                 equipKnife()
             end
-
             for _, plr in ipairs(Players:GetPlayers()) do
                 if not S.killAllRunning then break end
                 if tick() - startTime >= duration then break end
@@ -2894,10 +2671,8 @@ window:CreateButton(aimbotTab, "Kill Everyone", function()
             end
             task.wait(0.1)
         end
-
         if spinConn then spinConn:Disconnect() end
         restoreHitboxes()
-
         local finalHRP = getHRP()
         if finalHRP and originalCFrame then
             finalHRP.Velocity = Vector3.zero
@@ -2907,7 +2682,6 @@ window:CreateButton(aimbotTab, "Kill Everyone", function()
             finalHRP.Velocity = Vector3.zero
             finalHRP.RotVelocity = Vector3.zero
         end
-
         S.killAllRunning = false
         notify("Done! Back to origin.")
     end)
@@ -2952,7 +2726,6 @@ LocalPlayer.CharacterAdded:Connect(function()
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then task.cancel(S.flingTargetThread); S.flingTargetThread = nil end
     clearBeamPool(S.beamData)
-
     task.wait(0.6)
     if MovementSettings.Fly then attachFlyBodyMovers() end
     if AvatarSettings.Korblox then pcall(applyKorblox) end
@@ -2968,21 +2741,15 @@ window:CreateParagraph(farmTab, "Farm engine powered by Hexagonal Client · Made
 
 UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
     FarmSettings.AutoFarm = v
-    if v then
-        startCoinCollector()
-    else
-        if not FarmSettings.ManualCollect then stopCoinCollector() end
-    end
+    if v then startCoinCollector()
+    else if not FarmSettings.ManualCollect then stopCoinCollector() end end
 end)
 registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
 
 UI.manualCollectRef = window:CreateToggle(farmTab, "Manual Collect", false, function(v)
     FarmSettings.ManualCollect = v
-    if v then
-        startCoinCollector()
-    else
-        if not FarmSettings.AutoFarm then stopCoinCollector() end
-    end
+    if v then startCoinCollector()
+    else if not FarmSettings.AutoFarm then stopCoinCollector() end end
 end)
 registerControl(FarmSettings, "ManualCollect", UI.manualCollectRef)
 
@@ -3046,9 +2813,7 @@ if roundStartEvent then
         if S.coinCountSetter then S.coinCountSetter(0) end
         task.wait(0.1)
         for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer and plr.Character then
-                applyESP(plr)
-            end
+            if plr ~= LocalPlayer and plr.Character then applyESP(plr) end
         end
         refreshBeam()
         onRoundBegin()
@@ -3062,9 +2827,7 @@ if roundEndFadeEvent then
         onRoundEnd()
         task.wait(0.05)
         for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer then
-                clearHighlights(plr)
-            end
+            if plr ~= LocalPlayer then clearHighlights(plr) end
         end
     end)
 end
@@ -3109,17 +2872,89 @@ UI.silentRef = window:CreateToggle(miscTab, "Silent Aim", false, function(v)
 end)
 registerControl(MiscSettings, "SilentAim", UI.silentRef)
 
+local function toggleESPAll()
+    local anyOn = VisualSettings.MM2ESP or VisualSettings.NameTags or VisualSettings.GunESP or VisualSettings.Beam
+    local newState = not anyOn
+
+    VisualSettings.MM2ESP  = newState
+    VisualSettings.OGESP   = false
+    VisualSettings.NameTags = newState
+    VisualSettings.GunESP  = newState
+    VisualSettings.Beam    = newState
+
+    ESP.active.MM2     = newState
+    ESP.active.OG      = false
+    ESP.active.NameTag = newState
+
+    refreshAllESP()
+    applyGunESP()
+
+    if newState then
+        if not S.nameTagUpdater then startNameTagUpdater() end
+        ensureBeamConn()
+    else
+        stopNameTagUpdater()
+        stopBeamIfIdle()
+        clearGunESP()
+        clearBeamPool(S.beamData)
+    end
+
+    if UI.mm2ESPToggleRef and UI.mm2ESPToggleRef.SetState then pcall(function() UI.mm2ESPToggleRef:SetState(newState) end) end
+    if UI.ogESPToggleRef and UI.ogESPToggleRef.SetState then pcall(function() UI.ogESPToggleRef:SetState(false) end) end
+    if UI.nameTagToggleRef and UI.nameTagToggleRef.SetState then pcall(function() UI.nameTagToggleRef:SetState(newState) end) end
+    if UI.gunESPToggleRef and UI.gunESPToggleRef.SetState then pcall(function() UI.gunESPToggleRef:SetState(newState) end) end
+    if UI.beamToggleRef and UI.beamToggleRef.SetState then pcall(function() UI.beamToggleRef:SetState(newState) end) end
+
+    notify("ESP " .. (newState and "ON" or "OFF"), 2)
+end
+
+local function setupMobileButtons()
+    if not isMobile then return end
+    if type(window.AddMobileButton) ~= "function" then
+        warn("[HappyHub] AddMobileButton not available in this API version")
+        return
+    end
+
+    local ok, err = pcall(function()
+        window:AddMobileButton({
+            OnClick = function()
+                task.spawn(mobileForceShoot)
+            end,
+            Icon = "rbxassetid://12804017021",
+            Tooltip = "Shoot Murderer"
+        })
+    end)
+    if not ok then warn("[HappyHub] AddMobileButton SHOOT failed: " .. tostring(err)) end
+
+    pcall(function()
+        window:AddMobileButton({
+            OnClick = function()
+                toggleESPAll()
+            end,
+            Icon = "rbxassetid://12804017021",
+            Tooltip = "Toggle ESP (all except Neutral)"
+        })
+    end)
+
+    pcall(function()
+        window:AddMobileButton({
+            Feature = "Default aimbot",
+            Tooltip = "Toggle Aimbot"
+        })
+    end)
+end
+
 if window._makeMobileBtn and isMobile then
     window._makeMobileBtn("AIM", function()
         if UI.mm2LockRef then UI.mm2LockRef.SetState(not UI.mm2LockRef.GetState()) end
     end)
     window._makeMobileBtn("ESP", function()
-        if UI.mm2ESPToggleRef then UI.mm2ESPToggleRef.SetState(not UI.mm2ESPToggleRef.GetState()) end
+        toggleESPAll()
     end)
     window._makeMobileBtn("UI", function() window.ToggleUI() end)
 end
 
-buildMobileButtons()
+setupMobileButtons()
 startMobileFlyDrag()
 
 UserInputService.InputBegan:Connect(function(input, gp)
@@ -3206,7 +3041,6 @@ end
 
 local function applyConfig(data)
     if not data then return end
-
     if data.Aimbot then
         for k, v in pairs(data.Aimbot) do AimbotSettings[k] = v end
     end
@@ -3231,15 +3065,9 @@ local function applyConfig(data)
     if data.AntiVoid then
         for k, v in pairs(data.AntiVoid) do AntiVoidSettings[k] = v end
     end
-
-    if data.Theme and data.Theme ~= getCurrentTheme() then
-        setTheme(data.Theme)
-    end
-
+    if data.Theme and data.Theme ~= getCurrentTheme() then setTheme(data.Theme) end
     if MovementSettings.Fly then startFly() else stopFly() end
-
     if MiscSettings.AntiVoid then startAntiVoid() else stopAntiVoid() end
-
     if MovementSettings.Noclip then
         if S.noclipConn then S.noclipConn:Disconnect() end
         S.noclipConn = RunService.Stepped:Connect(function()
@@ -3253,7 +3081,6 @@ local function applyConfig(data)
     elseif S.noclipConn then
         S.noclipConn:Disconnect(); S.noclipConn = nil
     end
-
     if MovementSettings.God then
         if S.godConn then S.godConn:Disconnect() end
         S.godConn = RunService.Heartbeat:Connect(function()
@@ -3263,38 +3090,27 @@ local function applyConfig(data)
     elseif S.godConn then
         S.godConn:Disconnect(); S.godConn = nil
     end
-
     local hum = getHumanoid()
     if hum then
         hum.WalkSpeed = MovementSettings.WalkSpeed
         hum.JumpPower = MovementSettings.JumpPower
         hum.UseJumpPower = true
     end
-
     ESP.active.MM2     = VisualSettings.MM2ESP
     ESP.active.OG      = VisualSettings.OGESP
     ESP.active.NameTag = VisualSettings.NameTags
     refreshAllESP()
     applyGunESP()
     if VisualSettings.NameTags then startNameTagUpdater() else stopNameTagUpdater() end
-
-    if BeamSettings.Enabled then
-        ensureBeamConn()
-    else
-        stopBeamIfIdle()
-    end
-
+    if BeamSettings.Enabled then ensureBeamConn() else stopBeamIfIdle() end
     if AimbotSettings.FOVCircle then startFOVCircle() else stopFOVCircle() end
-
     if AvatarSettings.Korblox then pcall(applyKorblox) else pcall(removeKorblox) end
     if AvatarSettings.AnimPack then pcall(applyAnimPack) end
-
     if FarmSettings.AutoFarm or FarmSettings.ManualCollect then
         if not S.coinCollecting then startCoinCollector() end
     else
         stopCoinCollector()
     end
-
     syncUIControls()
     if window.UpdateThemeButtons then window:UpdateThemeButtons() end
 end
@@ -3305,7 +3121,7 @@ window:BuildConfigPage()
 
 task.delay(2, function()
     if isMobile then
-        notify("Mobile method", 4)
+        notify("Mobile · 3 botones cargados", 4)
     else
         notify("PC method", 4)
     end
