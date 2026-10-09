@@ -1814,49 +1814,21 @@ local function autoDisableFling()
     S.flingWasFlingOn = false
 end
 
-local function restoreCharacterTo(originalCF, frames)
-    frames = frames or 6
-    for _ = 1, frames do
-        local h = getHRP()
-        if h then
-            h.Velocity = Vector3.zero
-            h.RotVelocity = Vector3.zero
-            h.CFrame = originalCF
-        end
-        RunService.RenderStepped:Wait()
-    end
-end
-
 local function stopFlingTarget()
-    local hadOriginal = S.flingOriginalCFrame
     S.flingTargetRunning = false
-    S.flingRunning = false
-    if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
-    if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
-
-    if hadOriginal then
-        task.spawn(function()
-            for _ = 1, 6 do
-                local h = getHRP()
-                if h then
-                    h.Velocity = Vector3.zero
-                    h.RotVelocity = Vector3.zero
-                    h.CFrame = hadOriginal
-                end
-                RunService.RenderStepped:Wait()
-            end
-        end)
-    else
-        local hrp = getHRP()
-        if hrp then
-            hrp.Velocity = Vector3.zero
-            hrp.RotVelocity = Vector3.zero
-        end
+    if S.flingTargetThread then
+        task.cancel(S.flingTargetThread)
+        S.flingTargetThread = nil
     end
-
+    local hrp = getHRP()
+    if hrp then
+        hrp.Velocity = Vector3.zero
+        hrp.RotVelocity = Vector3.zero
+        if S.flingOriginalCFrame then hrp.CFrame = S.flingOriginalCFrame end
+    end
     S.flingOriginalCFrame = nil
     S.flingOriginalPosition = nil
-    S.flingWasFlingOn = false
+    autoDisableFling()
 end
 
 local function startFlingTarget(targetPlr)
@@ -1868,112 +1840,71 @@ local function startFlingTarget(targetPlr)
         notify("Cannot fling yourself")
         return
     end
-    if S.flingTargetRunning then
-        stopFlingTarget()
-        task.wait(0.15)
-    end
-
+    if S.flingTargetRunning then stopFlingTarget() end
     local myHRP = getHRP()
     if not myHRP then
         notify("No character")
         return
     end
-
     S.flingOriginalCFrame = myHRP.CFrame
     S.flingOriginalPosition = myHRP.Position
-
     autoEnableFling()
-
     S.flingTargetRunning = true
     notify("Flinging " .. targetPlr.DisplayName)
-
     S.flingTargetThread = task.spawn(function()
         local startTime = tick()
         local duration = MovementSettings.FlingDuration or 3
         local maxDist = MovementSettings.FlingDistance or 500
         local flinged = false
-        local side = 1
-        local originalCF = S.flingOriginalCFrame
-
         while S.flingTargetRunning and tick() - startTime < duration do
             local currentHRP = getHRP()
             local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
-            if not currentHRP or not theirHRP then
-                break
-            end
-
+            if not currentHRP or not theirHRP then break end
             local dist = (currentHRP.Position - theirHRP.Position).Magnitude
             if dist >= maxDist then
                 flinged = true
                 notify(targetPlr.DisplayName .. " FLINGED!")
                 break
             end
-
+            local elapsed = tick() - startTime
+            local phase = elapsed * 12
             local theirPos = theirHRP.Position
-            local shakePos = Vector3.new(theirPos.X + (side * 2), theirPos.Y + 3, theirPos.Z)
-            local shakeCF = CFrame.new(shakePos, theirPos)
-
+            local baseCFrame = CFrame.new(theirPos) * CFrame.Angles(0, phase * 2, 0)
             if not fireTeleportToPart(currentHRP, theirHRP) then
-                currentHRP.CFrame = shakeCF
+                currentHRP.CFrame = baseCFrame
             else
-                task.wait(0.015)
+                task.wait(0.02)
                 local h = getHRP()
-                if h then
-                    h.CFrame = shakeCF
-                end
+                if h then h.CFrame = baseCFrame end
             end
-
             local velo = currentHRP.Velocity
-            currentHRP.Velocity = velo * 5000 + Vector3.new(side * 15000, 9000, 0)
-            currentHRP.RotVelocity = Vector3.new(
-                math.sin(tick() * 30) * 250,
-                math.cos(tick() * 25) * 250,
-                math.sin(tick() * 20) * 250
+            currentHRP.Velocity = velo * 5000 + Vector3.new(
+                math.sin(phase) * 8000,
+                math.cos(phase * 1.3) * 8000 + 5000,
+                math.cos(phase) * 8000
             )
-
+            currentHRP.RotVelocity = Vector3.new(
+                math.sin(phase * 1.5) * 300,
+                math.cos(phase * 1.2) * 300,
+                math.sin(phase * 0.9) * 300
+            )
             RunService.RenderStepped:Wait()
             currentHRP.Velocity = velo
             currentHRP.RotVelocity = Vector3.zero
             RunService.Stepped:Wait()
-
-            side = -side
         end
-
         S.flingTargetRunning = false
-        S.flingRunning = false
-
-        if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
-        S.flingWasFlingOn = false
-        MovementSettings.Fling = false
-        if UI.flingToggleRef and UI.flingToggleRef.SetState then
-            pcall(function() UI.flingToggleRef.SetState(false) end)
+        if not flinged then notify(targetPlr.DisplayName .. " not flinged (no 500m in 3s)") end
+        local h = getHRP()
+        if h then
+            h.Velocity = Vector3.zero
+            h.RotVelocity = Vector3.zero
+            if S.flingOriginalCFrame then h.CFrame = S.flingOriginalCFrame end
         end
-
-        if originalCF then
-            for _ = 1, 8 do
-                local h = getHRP()
-                if h then
-                    h.Velocity = Vector3.zero
-                    h.RotVelocity = Vector3.zero
-                    h.CFrame = originalCF
-                end
-                RunService.RenderStepped:Wait()
-            end
-            local finalH = getHRP()
-            if finalH then
-                finalH.Velocity = Vector3.zero
-                finalH.RotVelocity = Vector3.zero
-                finalH.CFrame = originalCF
-            end
-        end
-
-        if not flinged then
-            notify(targetPlr.DisplayName .. " not flinged (no 500m in 3s)")
-        end
-
         S.flingOriginalCFrame = nil
         S.flingOriginalPosition = nil
         S.flingTargetThread = nil
+        autoDisableFling()
     end)
 end
 
@@ -2187,7 +2118,7 @@ window:CreateLabel(homeTab, "Features")
 window:CreateParagraph(homeTab, "Players · ESP · Movement · Aimbot · Avatar · Farm · Misc · Configs")
 
 window:CreateLabel(playersTab, "Teleport")
-UI.tpAllToggleRef = window:CreateToggle(playersTab, "TP All", false, function(v)
+UI.tpAllToggleRef = window:CreateToggle(playersTab, "TP All (Loop)", false, function(v)
     MovementSettings.TPAll = v
     if v then
         S.tpAllRunning = true
@@ -2231,110 +2162,38 @@ end)
 
 window:CreateLabel(playersTab, "Fling")
 _G.__HH_FlingTarget = nil
-
-local function getFlingList()
-    local names = {}
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            table.insert(names, plr.Name)
-        end
-    end
-    table.sort(names)
-    return names
-end
-
-local flingDropdownRef = window:CreateDropdown(playersTab, "Player", getFlingList(), "", function(v)
+UI.flingDropdownRef = window:CreateDropdown(playersTab, "Player", getPlayerNames(), "", function(v)
     _G.__HH_FlingTarget = v
 end)
 
-local lastFlingSignature = table.concat(getFlingList(), "|")
-
-local function refreshFlingDropdown()
-    local names = getFlingList()
-    local signature = table.concat(names, "|")
-    if signature == lastFlingSignature then return end
-    lastFlingSignature = signature
-
-    if flingDropdownRef then
-        local refreshed = false
-        if type(flingDropdownRef.Refresh) == "function" then
-            refreshed = pcall(function() flingDropdownRef:Refresh(names) end)
-        end
-        if not refreshed and type(flingDropdownRef.SetOptions) == "function" then
-            refreshed = pcall(function() flingDropdownRef:SetOptions(names) end)
-        end
-        if not refreshed and type(flingDropdownRef.UpdateOptions) == "function" then
-            pcall(function() flingDropdownRef:UpdateOptions(names) end)
-        end
+Players.PlayerAdded:Connect(function()
+    task.wait(1)
+    if UI.flingDropdownRef and UI.flingDropdownRef.Refresh then
+        pcall(function() UI.flingDropdownRef:Refresh(getPlayerNames()) end)
     end
-
-    if _G.__HH_FlingTarget then
-        local stillHere = false
-        for _, n in ipairs(names) do
-            if n == _G.__HH_FlingTarget then
-                stillHere = true
-                break
-            end
-        end
-        if not stillHere then
-            _G.__HH_FlingTarget = nil
-        end
-    end
-end
-
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        refreshFlingDropdown()
-    end
-end)
-
-Players.PlayerAdded:Connect(function(plr)
-    task.wait(0.2)
-    refreshFlingDropdown()
-    plr.CharacterAdded:Connect(function()
-        task.wait(0.3)
-        refreshFlingDropdown()
-    end)
 end)
 Players.PlayerRemoving:Connect(function()
     task.wait(0.2)
-    refreshFlingDropdown()
-end)
-
-for _, plr in ipairs(Players:GetPlayers()) do
-    if plr ~= LocalPlayer then
-        plr.CharacterAdded:Connect(function()
-            task.wait(0.3)
-            refreshFlingDropdown()
-        end)
+    if UI.flingDropdownRef and UI.flingDropdownRef.Refresh then
+        pcall(function() UI.flingDropdownRef:Refresh(getPlayerNames()) end)
     end
-end
+end)
 
 window:CreateButton(playersTab, "Fling Target", function()
     local plr = getFlingTargetByName(_G.__HH_FlingTarget)
-    if not plr then
-        notify("Select a player")
-        return
-    end
+    if not plr then notify("Select a player") return end
     startFlingTarget(plr)
 end)
 
 window:CreateButton(playersTab, "Fling Murderer", function()
     local plr = getMurderer()
-    if not plr then
-        notify("No Murderer found")
-        return
-    end
+    if not plr then notify("No Murderer found") return end
     startFlingTarget(plr)
 end)
 
 window:CreateButton(playersTab, "Fling Sheriff", function()
     local plr = getSheriff()
-    if not plr then
-        notify("No Sheriff/Hero found")
-        return
-    end
+    if not plr then notify("No Sheriff/Hero found") return end
     startFlingTarget(plr)
 end)
 
@@ -2814,16 +2673,14 @@ window:CreateButton(aimbotTab, "Kill Everyone", function()
         end
         if spinConn then spinConn:Disconnect() end
         restoreHitboxes()
-        if originalCFrame then
-            for _ = 1, 6 do
-                local h = getHRP()
-                if h then
-                    h.Velocity = Vector3.zero
-                    h.RotVelocity = Vector3.zero
-                    h.CFrame = originalCFrame
-                end
-                RunService.RenderStepped:Wait()
-            end
+        local finalHRP = getHRP()
+        if finalHRP and originalCFrame then
+            finalHRP.Velocity = Vector3.zero
+            finalHRP.RotVelocity = Vector3.zero
+            finalHRP.CFrame = originalCFrame
+            task.wait(0.05)
+            finalHRP.Velocity = Vector3.zero
+            finalHRP.RotVelocity = Vector3.zero
         end
         S.killAllRunning = false
         notify("Done! Back to origin.")
@@ -2866,10 +2723,8 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.flingOriginalPosition = nil
     S.flingTargetRunning = false
     S.killAllRunning = false
-    S.flingRunning = false
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
-    if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
-    if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
+    if S.flingTargetThread then task.cancel(S.flingTargetThread); S.flingTargetThread = nil end
     clearBeamPool(S.beamData)
     task.wait(0.6)
     if MovementSettings.Fly then attachFlyBodyMovers() end
