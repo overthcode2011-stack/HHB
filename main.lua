@@ -175,10 +175,8 @@ local S = {
     gunESP = { active = false, highlights = {}, billboards = {}, trackedGun = nil },
     hitboxExpander = { active = false, savedSizes = {}, size = Vector3.new(40, 40, 40) },
     fadeConn = nil, tpEvent = nil,
-    silentAimHookInstalled = false,
+    silentAimHookInstalled = false, hookNamecall = nil, getNamecall = nil,
     lastMobileShot = 0,
-    spectating = false, spectateTarget = nil,
-    spectateDefaultSubject = nil,
 }
 
 local UI = {}
@@ -190,113 +188,6 @@ end
 local function getHumanoid()
     local c = LocalPlayer.Character
     return c and c:FindFirstChildOfClass("Humanoid")
-end
-
-local function spectatePlayer(plr)
-    if not plr or not plr.Character then return end
-    local theirHum = plr.Character:FindFirstChildOfClass("Humanoid")
-    if not theirHum then return end
-
-    if not S.spectating then
-        local cam = workspace.CurrentCamera
-        S.spectateDefaultSubject = cam and cam.CameraSubject or nil
-    end
-
-    local cam = workspace.CurrentCamera
-    if cam then
-        cam.CameraSubject = theirHum
-        cam.CameraType = Enum.CameraType.Custom
-    end
-
-    S.spectating = true
-    S.spectateTarget = plr
-end
-
-local function stopSpectating()
-    local cam = workspace.CurrentCamera
-    if cam then
-        local myHum = getHumanoid()
-        if myHum then
-            cam.CameraSubject = myHum
-        elseif S.spectateDefaultSubject then
-            cam.CameraSubject = S.spectateDefaultSubject
-        else
-            cam.CameraSubject = nil
-        end
-        cam.CameraType = Enum.CameraType.Custom
-    end
-    S.spectating = false
-    S.spectateTarget = nil
-    S.spectateDefaultSubject = nil
-end
-
-local GunShootBindable = nil
-local GunShootLastArgs = nil
-local GunShootHandlerHooked = false
-
-local function hookGunShootEvent(bindable)
-    if not bindable or not bindable:IsA("BindableEvent") then return end
-    if GunShootHandlerHooked and GunShootBindable == bindable then return end
-    if type(getconnections) ~= "function" or type(hookfunction) ~= "function" then return end
-
-    GunShootBindable = bindable
-    getgenv().HH_GunShootBindable = bindable
-    GunShootHandlerHooked = false
-
-    for _, conn in ipairs(getconnections(bindable.Event)) do
-        if conn.Function then
-            local old
-            old = hookfunction(conn.Function, function(...)
-                local args = table.pack(...)
-                GunShootLastArgs = args
-
-                if MiscSettings.SilentAim then
-                    local murderer = getMurdererCached()
-                    if isTargetSafe(murderer) then
-                        local targetPart = getMM2TargetPart(murderer.Character)
-                        if targetPart then
-                            local newTargetCF = predictAim(targetPart)
-                            if newTargetCF then
-                                for i = 2, math.min(5, args.n) do
-                                    if typeof(args[i]) == "CFrame" then
-                                        args[i] = newTargetCF
-                                        break
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-
-                return old(table.unpack(args, 1, args.n))
-            end)
-            GunShootHandlerHooked = true
-            break
-        end
-    end
-end
-
-local function scanForGunShoot()
-    local char = LocalPlayer.Character
-    if not char then return end
-    for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") and tool.Name:lower():find("gun", 1, true) then
-            local ev = tool:FindFirstChild("Shoot")
-            if ev and ev:IsA("BindableEvent") then
-                hookGunShootEvent(ev)
-                return
-            end
-        end
-    end
-end
-
-if isMobile then
-    task.spawn(function()
-        while true do
-            task.wait(0.4)
-            scanForGunShoot()
-        end
-    end)
 end
 
 local function findGunDrop()
@@ -490,16 +381,17 @@ local function getEquippedGun()
             return t
         end
     end
-    return nil
-end
-
-local function findShootInGun(gun)
-    if not gun then return nil end
-    local ev = gun:FindFirstChild("Shoot")
-    if ev and (ev:IsA("RemoteEvent") or ev:IsA("BindableEvent")) then return ev end
-    for _, d in ipairs(gun:GetDescendants()) do
-        if d.Name == "Shoot" and (d:IsA("RemoteEvent") or d:IsA("BindableEvent")) then
-            return d
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("gun", 1, true) then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    pcall(function() hum:EquipTool(t) end)
+                    task.wait(0.1)
+                end
+                return t
+            end
         end
     end
     return nil
@@ -514,14 +406,15 @@ local function predictAim(targetPart)
 end
 
 local function isGunShootRemote(remote)
-    if not remote then return false end
-    if not remote:IsA("RemoteEvent") then return false end
+    if not remote or not remote:IsA("RemoteEvent") then return false end
     if remote.Name ~= "Shoot" then return false end
     local parent = remote.Parent
-    if parent and parent:IsA("Tool") then
-        return parent.Name:lower():find("gun", 1, true) ~= nil
+    if not parent then return false end
+    local path = parent.Name:lower()
+    if parent:IsA("Tool") then
+        return path:find("gun", 1, true) ~= nil
     end
-    return false
+    return path:find("gun", 1, true) ~= nil
 end
 
 local function getCharacterFromPart(part)
@@ -689,61 +582,56 @@ local function buildBeamPath(fromPos, toPos, targetChar)
     return waypoints
 end
 
-local function fireShoot(shootEv, origin, targetCF)
-    if not shootEv then return false end
-    if shootEv:IsA("RemoteEvent") then
-        local ok = pcall(function() shootEv:FireServer(origin, targetCF) end)
-        return ok
-    elseif shootEv:IsA("BindableEvent") then
-        if type(firesignal) == "function" then
-            local ok = pcall(function() firesignal(shootEv.Event, origin, targetCF) end)
-            return ok
-        else
-            local ok = pcall(function() shootEv:Fire(origin, targetCF) end)
-            return ok
+local function tpRedirectAndShoot(shootRemote, myHRP, targetPart, targetChar)
+    local waypoints = buildBeamPath(myHRP.Position, targetPart.Position, targetChar)
+    local originalCFrame = myHRP.CFrame
+    local fired = false
+    for i = #waypoints - 1, 2, -1 do
+        local wp = waypoints[i]
+        if isVisible(wp + Vector3.new(0, 2, 0), targetPart.Position, targetChar) then
+            myHRP.CFrame = CFrame.new(wp + Vector3.new(0, 2.5, 0))
+            RunService.RenderStepped:Wait()
+            local ro = getGunRaycastCFrame()
+            if ro then
+                local rtc = predictAim(targetPart)
+                if rtc then
+                    pcall(function() shootRemote:FireServer(ro, rtc) end)
+                    fired = true
+                end
+            end
+            task.wait(0.03)
+            local h = getHRP()
+            if h then
+                h.CFrame = originalCFrame
+                h.Velocity = Vector3.zero
+                h.RotVelocity = Vector3.zero
+            end
+            break
         end
     end
-    return false
+    return fired
 end
 
 local function fireGunAt(targetPart, targetPlr, useRedirect)
     if targetPlr and not isTargetSafe(targetPlr) then return false end
-    local gun = getEquippedGun()
-    if not gun then return false end
-    local shootEv = findShootInGun(gun)
-    if not shootEv then return false end
     local myHRP = getHRP()
     if not myHRP then return false end
-    local origin = getGunRaycastCFrame() or myHRP.CFrame
-    local targetCF = predictAim(targetPart) or CFrame.new(targetPart.Position)
-
-    local fired = fireShoot(shootEv, origin, targetCF)
-
-    if useRedirect and targetPlr and targetPlr.Character then
-        local hitType = classifyPathHit(myHRP.Position, targetPart.Position, targetPlr.Character)
-        if hitType == "wall" then
-            local originalCF = myHRP.CFrame
-            local waypoints = buildBeamPath(myHRP.Position, targetPart.Position, targetPlr.Character)
-            for i = #waypoints - 1, 2, -1 do
-                local wp = waypoints[i]
-                if isVisible(wp + Vector3.new(0, 2, 0), targetPart.Position, targetPlr.Character) then
-                    myHRP.CFrame = CFrame.new(wp + Vector3.new(0, 2.5, 0))
-                    RunService.RenderStepped:Wait()
-                    fireShoot(shootEv, getGunRaycastCFrame() or myHRP.CFrame, predictAim(targetPart))
-                    task.wait(0.03)
-                    local h = getHRP()
-                    if h then
-                        h.CFrame = originalCF
-                        h.Velocity = Vector3.zero
-                        h.RotVelocity = Vector3.zero
-                    end
-                    fired = true
-                    break
-                end
-            end
-        end
+    local targetChar = targetPlr and targetPlr.Character
+    local hitType = classifyPathHit(myHRP.Position, targetPart.Position, targetChar)
+    if hitType == "innocent" then return false end
+    local gun = getEquippedGun()
+    if not gun then return false end
+    local shootRemote = gun:FindFirstChild("Shoot")
+    if not shootRemote or not shootRemote:IsA("RemoteEvent") then return false end
+    local origin = getGunRaycastCFrame()
+    if not origin then return false end
+    local targetCF = predictAim(targetPart)
+    if not targetCF then return false end
+    pcall(function() shootRemote:FireServer(origin, targetCF) end)
+    if useRedirect and targetChar and hitType == "wall" then
+        tpRedirectAndShoot(shootRemote, myHRP, targetPart, targetChar)
     end
-    return fired
+    return true
 end
 
 local function mobileForceShoot()
@@ -752,128 +640,70 @@ local function mobileForceShoot()
         notify("No murderer", 2)
         return false
     end
+
     local char = LocalPlayer.Character
     if not char then notify("No character", 2) return false end
-    local gun = getEquippedGun()
-    if not gun then notify("Equip the gun first", 2) return false end
-    local shootEv = findShootInGun(gun)
-    if not shootEv then notify("No Shoot in gun", 2) return false end
-    if shootEv:IsA("BindableEvent") then
-        if not GunShootHandlerHooked or GunShootBindable ~= shootEv then
-            hookGunShootEvent(shootEv)
-            task.wait(0.1)
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then notify("No humanoid", 2) return false end
+
+    local gun = nil
+    for _, t in ipairs(char:GetChildren()) do
+        if t:IsA("Tool") and t.Name:lower():find("gun", 1, true) then
+            gun = t
+            break
         end
     end
+    if not gun then
+        local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if bp then
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") and t.Name:lower():find("gun", 1, true) then
+                    pcall(function() hum:EquipTool(t) end)
+                    task.wait(0.2)
+                    gun = t
+                    break
+                end
+            end
+        end
+    end
+    if not gun then notify("No gun in inventory", 2) return false end
+
+    if gun.Parent ~= char then
+        pcall(function() hum:EquipTool(gun) end)
+        task.wait(0.2)
+    end
+
+    local shootRemote = gun:FindFirstChild("Shoot")
+    if not shootRemote then
+        for _, r in ipairs(gun:GetChildren()) do
+            if r:IsA("RemoteEvent") then
+                shootRemote = r
+                break
+            end
+        end
+    end
+    if not shootRemote then notify("No Shoot remote", 2) return false end
+
     local targetPart = getMM2TargetPart(murderer.Character)
     if not targetPart then notify("No target part", 2) return false end
+
     local myHRP = getHRP()
     if not myHRP then notify("No HRP", 2) return false end
+
     local origin = getGunRaycastCFrame() or myHRP.CFrame
     local targetCF = predictAim(targetPart) or CFrame.new(targetPart.Position)
 
-    local fired = false
-    if shootEv:IsA("RemoteEvent") then
-        fired = pcall(function() shootEv:FireServer(origin, targetCF) end)
-    elseif shootEv:IsA("BindableEvent") then
-        if type(firesignal) == "function" then
-            if GunShootLastArgs then
-                local args = table.pack(table.unpack(GunShootLastArgs, 1, GunShootLastArgs.n))
-                for i = 2, math.min(5, args.n) do
-                    if typeof(args[i]) == "CFrame" then
-                        args[i] = targetCF
-                        break
-                    end
-                end
-                fired = pcall(function()
-                    firesignal(shootEv.Event, table.unpack(args, 1, args.n))
-                end)
-            end
-            if not fired then
-                local fallbacks = {
-                    {origin, targetCF},
-                    {targetCF},
-                    {myHRP.Position, targetPart.Position},
-                    {targetPart.Position},
-                }
-                for _, a in ipairs(fallbacks) do
-                    fired = pcall(function()
-                        firesignal(shootEv.Event, table.unpack(a))
-                    end)
-                    if fired then
-                        GunShootLastArgs = table.pack(table.unpack(a))
-                        break
-                    end
-                end
-            end
-        else
-            fired = pcall(function() shootEv:Fire(origin, targetCF) end)
-        end
-    end
-
-    if fired then
+    local ok, err = pcall(function()
+        shootRemote:FireServer(origin, targetCF)
+    end)
+    if ok then
         notify("Shot " .. murderer.DisplayName, 1.5)
         return true
     else
-        notify("Fire failed", 3)
+        notify("Fire error: " .. tostring(err), 3)
         return false
     end
-end
-
-if not isMobile then
-    local hookNamecall = nil
-    local getNamecall = nil
-    pcall(function()
-        hookNamecall = hookmetamethod
-        getNamecall = getnamecallmethod
-    end)
-
-    if type(hookNamecall) == "function" and type(getNamecall) == "function" then
-        local ok = pcall(function()
-            local oldNamecall
-            oldNamecall = hookNamecall(game, "__namecall", function(self, ...)
-                if getNamecall() == "FireServer" and isGunShootRemote(self) then
-                    if MiscSettings.SilentAim then
-                        local murderer = getMurdererCached()
-                        if isTargetSafe(murderer) then
-                            local targetPart = getMM2TargetPart(murderer.Character)
-                            if targetPart then
-                                local cam = workspace.CurrentCamera
-                                local myHRP = getHRP()
-                                local origin = (myHRP and myHRP.Position) or cam.CFrame.Position
-                                if isVisibleForShot(origin, targetPart.Position, murderer.Character, murderer) then
-                                    local args = table.pack(...)
-                                    local newTarget = predictAim(targetPart)
-                                    if newTarget then
-                                        args[2] = newTarget
-                                        return oldNamecall(self, table.unpack(args, 1, args.n))
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-                return oldNamecall(self, ...)
-            end)
-        end)
-        S.silentAimHookInstalled = ok
-    end
-
-    UserInputService.InputBegan:Connect(function(input, gp)
-        if gp then return end
-        if not MiscSettings.SilentAim then return end
-        if S.silentAimHookInstalled then return end
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-        local murderer = getMurdererCached()
-        if not isTargetSafe(murderer) then return end
-        local targetPart = getMM2TargetPart(murderer.Character)
-        if not targetPart then return end
-        local myHRP = getHRP()
-        if not myHRP then return end
-        if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
-        task.spawn(function()
-            fireGunAt(targetPart, murderer, false)
-        end)
-    end)
 end
 
 local function clearBeamPool(pool)
@@ -1058,13 +888,68 @@ local function playEmote(emoteName, emoteId)
     local ok, track = pcall(function() return animator:LoadAnimation(anim) end)
     if ok and track then
         track.Priority = Enum.AnimationPriority.Action
-        track.Looped = true
+        track.Looped = false
         track:Play(0.1)
         S.currentEmoteTrack = track
-        notify("Emote: " .. emoteName .. " (looping)", 1.5)
+        notify("Emote: " .. emoteName, 1.5)
     else
         notify("Failed: " .. emoteName, 2)
     end
+end
+
+pcall(function()
+    S.hookNamecall = hookmetamethod
+    S.getNamecall  = getnamecallmethod
+end)
+
+if type(S.hookNamecall) == "function" and type(S.getNamecall) == "function" then
+    local ok = pcall(function()
+        local oldNamecall
+        oldNamecall = S.hookNamecall(game, "__namecall", function(self, ...)
+            if S.getNamecall() == "FireServer" and isGunShootRemote(self) then
+                if MiscSettings.SilentAim then
+                    local murderer = getMurdererCached()
+                    if isTargetSafe(murderer) then
+                        local targetPart = getMM2TargetPart(murderer.Character)
+                        if targetPart then
+                            local cam = workspace.CurrentCamera
+                            local myHRP = getHRP()
+                            local origin = (myHRP and myHRP.Position) or cam.CFrame.Position
+                            if isVisibleForShot(origin, targetPart.Position, murderer.Character, murderer) then
+                                local args = table.pack(...)
+                                local newTarget = predictAim(targetPart)
+                                if newTarget then
+                                    args[2] = newTarget
+                                    return oldNamecall(self, table.unpack(args, 1, args.n))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end)
+    S.silentAimHookInstalled = ok
+end
+
+if not isMobile then
+    UserInputService.InputBegan:Connect(function(input, gp)
+        if gp then return end
+        if not MiscSettings.SilentAim then return end
+        if S.silentAimHookInstalled then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        local murderer = getMurdererCached()
+        if not isTargetSafe(murderer) then return end
+        local targetPart = getMM2TargetPart(murderer.Character)
+        if not targetPart then return end
+        local myHRP = getHRP()
+        if not myHRP then return end
+        if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
+        task.spawn(function()
+            fireGunAt(targetPart, murderer, false)
+        end)
+    end)
 end
 
 local function equipKnife()
@@ -1074,6 +959,7 @@ local function equipKnife()
     if not hum then return false end
     for _, tool in ipairs(char:GetChildren()) do
         if tool:IsA("Tool") and tool.Name:lower():find("knife", 1, true) then
+            hum:EquipTool(tool)
             return true
         end
     end
@@ -1081,24 +967,12 @@ local function equipKnife()
     if bp then
         for _, tool in ipairs(bp:GetChildren()) do
             if tool:IsA("Tool") and tool.Name:lower():find("knife", 1, true) then
-                pcall(function() hum:EquipTool(tool) end)
-                task.wait(0.3)
+                hum:EquipTool(tool)
                 return true
             end
         end
     end
     return false
-end
-
-local function getLocalKnife()
-    local char = LocalPlayer.Character
-    if not char then return nil end
-    for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") and tool.Name:lower():find("knife", 1, true) then
-            return tool
-        end
-    end
-    return nil
 end
 
 local function expandHitbox(plr)
@@ -1941,140 +1815,120 @@ local function autoDisableFling()
 end
 
 local function stopFlingTarget()
-    local hadOriginal = S.flingOriginalCFrame
     S.flingTargetRunning = false
-    S.flingRunning = false
-    if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
-    if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
-
-    if hadOriginal then
-        task.spawn(function()
-            for _ = 1, 6 do
-                local h = getHRP()
-                if h then
-                    h.Velocity = Vector3.zero
-                    h.RotVelocity = Vector3.zero
-                    h.CFrame = hadOriginal
-                end
-                RunService.RenderStepped:Wait()
-            end
-        end)
-    else
-        local hrp = getHRP()
-        if hrp then
-            hrp.Velocity = Vector3.zero
-            hrp.RotVelocity = Vector3.zero
-        end
+    if S.flingTargetThread then
+        task.cancel(S.flingTargetThread)
+        S.flingTargetThread = nil
     end
-
+    local hrp = getHRP()
+    if hrp then
+        hrp.Velocity = Vector3.zero
+        hrp.RotVelocity = Vector3.zero
+        if S.flingOriginalCFrame then hrp.CFrame = S.flingOriginalCFrame end
+    end
     S.flingOriginalCFrame = nil
     S.flingOriginalPosition = nil
-    S.flingWasFlingOn = false
+    autoDisableFling()
 end
 
 local function startFlingTarget(targetPlr)
-    if not targetPlr then notify("No target selected") return end
-    if targetPlr == LocalPlayer then notify("Cannot fling yourself") return end
+    if not targetPlr then
+        notify("No target selected")
+        return
+    end
+    if targetPlr == LocalPlayer then
+        notify("Cannot fling yourself")
+        return
+    end
     if S.flingTargetRunning then
         stopFlingTarget()
-        task.wait(0.1)
     end
 
     local myHRP = getHRP()
-    if not myHRP then notify("No character") return end
+    if not myHRP then
+        notify("No character")
+        return
+    end
 
     S.flingOriginalCFrame = myHRP.CFrame
     S.flingOriginalPosition = myHRP.Position
 
     autoEnableFling()
+
     S.flingTargetRunning = true
     notify("Flinging " .. targetPlr.DisplayName)
-
-    spectatePlayer(targetPlr)
 
     S.flingTargetThread = task.spawn(function()
         local startTime = tick()
         local duration = MovementSettings.FlingDuration or 3
         local maxDist = MovementSettings.FlingDistance or 500
         local flinged = false
-        local originalCF = S.flingOriginalCFrame
-        local shakePos = 0
+        local side = 1
 
         while S.flingTargetRunning and tick() - startTime < duration do
             local currentHRP = getHRP()
             local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
-            if not currentHRP or not theirHRP then break end
-
-            if S.spectating and S.spectateTarget == targetPlr then
-                local theirHum = targetPlr.Character:FindFirstChildOfClass("Humanoid")
-                if theirHum then workspace.CurrentCamera.CameraSubject = theirHum end
+            if not currentHRP or not theirHRP then
+                break
             end
 
-            if (currentHRP.Position - theirHRP.Position).Magnitude >= maxDist then
+            local dist = (currentHRP.Position - theirHRP.Position).Magnitude
+            if dist >= maxDist then
                 flinged = true
                 notify(targetPlr.DisplayName .. " FLINGED!")
                 break
             end
 
-            shakePos = -shakePos
-            if shakePos == 0 then shakePos = 2 end
+            local theirPos = theirHRP.Position
+            local shakePos = Vector3.new(theirPos.X + (side * 2), theirPos.Y + 3, theirPos.Z)
+            local shakeCF = CFrame.new(shakePos, theirPos)
 
-            local V = currentHRP.Velocity
+            if not fireTeleportToPart(currentHRP, theirHRP) then
+                currentHRP.CFrame = shakeCF
+            else
+                task.wait(0.015)
+                local h = getHRP()
+                if h then
+                    h.CFrame = shakeCF
+                end
+            end
 
-            currentHRP.CFrame = theirHRP.CFrame * CFrame.new(shakePos, 0, 0)
+            local velo = currentHRP.Velocity
+            currentHRP.Velocity = velo * 5000 + Vector3.new(side * 15000, 9000, 0)
+            currentHRP.RotVelocity = Vector3.new(
+                math.sin(tick() * 30) * 250,
+                math.cos(tick() * 25) * 250,
+                math.sin(tick() * 20) * 250
+            )
+
             RunService.RenderStepped:Wait()
-
-            currentHRP.Velocity = V * 10000 + Vector3.new(0, 10000, 0)
+            currentHRP.Velocity = velo
+            currentHRP.RotVelocity = Vector3.zero
             RunService.Stepped:Wait()
 
-            currentHRP.Velocity = V
-            RunService.RenderStepped:Wait()
-
-            currentHRP.CFrame = theirHRP.CFrame * CFrame.new(-shakePos, 0, 0)
-            RunService.Stepped:Wait()
-
-            currentHRP.CFrame = theirHRP.CFrame * CFrame.new(shakePos, 0, 0)
-            RunService.RenderStepped:Wait()
-
-            currentHRP.Velocity = V * 10000 + Vector3.new(0, 10000, 0)
-            RunService.Stepped:Wait()
-
-            currentHRP.Velocity = V
-            currentHRP.CFrame = originalCF
-            RunService.RenderStepped:Wait()
+            side = -side
         end
 
         S.flingTargetRunning = false
-        S.flingRunning = false
-        if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
-        S.flingWasFlingOn = false
-        MovementSettings.Fling = false
-        if UI.flingToggleRef and UI.flingToggleRef.SetState then
-            pcall(function() UI.flingToggleRef.SetState(false) end)
-        end
-
-        if originalCF then
-            for _ = 1, 8 do
-                local h = getHRP()
-                if h then
-                    h.Velocity = Vector3.zero
-                    h.RotVelocity = Vector3.zero
-                    h.CFrame = originalCF
-                end
-                RunService.RenderStepped:Wait()
-            end
-        end
 
         if not flinged then
             notify(targetPlr.DisplayName .. " not flinged (no 500m in 3s)")
         end
 
-        task.wait(1.5)
-        stopSpectating()
+        local h = getHRP()
+        if h then
+            h.Velocity = Vector3.zero
+            h.RotVelocity = Vector3.zero
+            if S.flingOriginalCFrame then
+                h.CFrame = S.flingOriginalCFrame
+            end
+        end
 
         S.flingOriginalCFrame = nil
         S.flingOriginalPosition = nil
         S.flingTargetThread = nil
+
+        autoDisableFling()
     end)
 end
 
@@ -2350,72 +2204,41 @@ end)
 
 local lastFlingSignature = table.concat(getFlingList(), "|")
 
-local function refreshFlingDropdown(force)
-    local names = getFlingList()
-    local signature = table.concat(names, "|")
-
-    if not force and signature == lastFlingSignature then return end
-    lastFlingSignature = signature
-
-    if flingDropdownRef then
-        local refreshed = false
-        if type(flingDropdownRef.Refresh) == "function" then
-            refreshed = pcall(function() flingDropdownRef:Refresh(names) end)
-        end
-        if not refreshed and type(flingDropdownRef.SetOptions) == "function" then
-            refreshed = pcall(function() flingDropdownRef:SetOptions(names) end)
-        end
-        if not refreshed and type(flingDropdownRef.UpdateOptions) == "function" then
-            pcall(function() flingDropdownRef:UpdateOptions(names) end)
-        end
-    end
-
-    if _G.__HH_FlingTarget then
-        local stillHere = false
-        for _, n in ipairs(names) do
-            if n == _G.__HH_FlingTarget then
-                stillHere = true
-                break
-            end
-        end
-        if not stillHere then
-            _G.__HH_FlingTarget = nil
-        end
-    end
-end
-
 task.spawn(function()
     while true do
         task.wait(0.5)
-        refreshFlingDropdown(false)
+        local names = getFlingList()
+        local signature = table.concat(names, "|")
+        if signature ~= lastFlingSignature then
+            lastFlingSignature = signature
+
+            if flingDropdownRef then
+                local refreshed = false
+                if type(flingDropdownRef.Refresh) == "function" then
+                    refreshed = pcall(function() flingDropdownRef:Refresh(names) end)
+                end
+                if not refreshed and type(flingDropdownRef.SetOptions) == "function" then
+                    refreshed = pcall(function() flingDropdownRef:SetOptions(names) end)
+                end
+                if not refreshed and type(flingDropdownRef.UpdateOptions) == "function" then
+                    pcall(function() flingDropdownRef:UpdateOptions(names) end)
+                end
+            end
+
+            if _G.__HH_FlingTarget then
+                local stillHere = false
+                for _, n in ipairs(names) do
+                    if n == _G.__HH_FlingTarget then
+                        stillHere = true
+                        break
+                    end
+                end
+                if not stillHere then
+                    _G.__HH_FlingTarget = nil
+                end
+            end
+        end
     end
-end)
-
-Players.PlayerAdded:Connect(function(plr)
-    task.wait(0.3)
-    refreshFlingDropdown(true)
-    plr.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        refreshFlingDropdown(true)
-    end)
-end)
-Players.PlayerRemoving:Connect(function()
-    task.wait(0.3)
-    refreshFlingDropdown(true)
-end)
-
-for _, plr in ipairs(Players:GetPlayers()) do
-    if plr ~= LocalPlayer then
-        plr.CharacterAdded:Connect(function()
-            task.wait(0.5)
-            refreshFlingDropdown(true)
-        end)
-    end
-end
-
-window:CreateButton(playersTab, "Refresh Player List", function()
-    refreshFlingDropdown(true)
-    notify("Player list refreshed", 2)
 end)
 
 window:CreateButton(playersTab, "Fling Target", function()
@@ -2530,35 +2353,6 @@ UI.beamToggleRef = window:CreateToggle(espTab, "Beam to Murderer", false, functi
     stopBeamIfIdle()
 end)
 registerControl(VisualSettings, "Beam", UI.beamToggleRef)
-
-window:CreateLabel(espTab, "Spectate")
-window:CreateButton(espTab, "Spectate Murderer", function()
-    local m = getMurderer()
-    if not m then notify("No murderer") return end
-    spectatePlayer(m)
-    notify("Spectating " .. m.DisplayName)
-end)
-
-window:CreateButton(espTab, "Spectate Sheriff", function()
-    local s = getSheriff()
-    if not s then notify("No sheriff") return end
-    spectatePlayer(s)
-    notify("Spectating " .. s.DisplayName)
-end)
-
-window:CreateButton(espTab, "Spectate Hero", function()
-    local h = getHero()
-    if not h then notify("No hero") return end
-    spectatePlayer(h)
-    notify("Spectating " .. h.DisplayName)
-end)
-
-window:CreateButton(espTab, "Stop Spectating", function()
-    stopSpectating()
-    notify("Stopped spectating")
-end)
-
-window:CreateParagraph(espTab, "Spectate works anytime, no round needed. Fling auto-spectates the target.")
 
 window:CreateParagraph(espTab, "Beam colors: green = clear · orange = innocent blocking · red = wall.")
 
@@ -2698,20 +2492,12 @@ UI.antiFlingRef = window:CreateToggle(movementTab, "Anti-Fling", false, function
 end)
 registerControl(MovementSettings, "AntiFling", UI.antiFlingRef)
 
-window:CreateLabel(movementTab, "Emotes (loop)")
+window:CreateLabel(movementTab, "Emotes")
 for _, emote in ipairs(EMOTES) do
     window:CreateButton(movementTab, emote.name, function()
         playEmote(emote.name, emote.id)
     end)
 end
-
-window:CreateButton(movementTab, "Stop Emote", function()
-    if S.currentEmoteTrack then
-        pcall(function() S.currentEmoteTrack:Stop(0.1) end)
-        S.currentEmoteTrack = nil
-        notify("Emote stopped", 1.5)
-    end
-end)
 
 window:CreateLabel(movementTab, "Reset Character")
 window:CreateButton(movementTab, "Autokill", function()
@@ -2904,86 +2690,11 @@ registerControl(AimbotSettings, "WallCheck", UI.wallCheckRef)
 window:CreateParagraph(aimbotTab, "Wall Check: 0.2s grace period after leaving cover. Innocents always block shots.")
 
 window:CreateLabel(aimbotTab, "Murderer OP")
-window:CreateButton(aimbotTab, "Kill Everyone (No TP)", function()
+window:CreateButton(aimbotTab, "Kill Everyone", function()
     if not isLocalMurderer() then notify("You are not the Murderer") return end
     if S.killAllRunning then return end
     S.killAllRunning = true
-    notify("Kill aura ON (no TP)")
-
-    task.spawn(function()
-        local char = LocalPlayer.Character
-        if not char then S.killAllRunning = false; return end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum then S.killAllRunning = false; return end
-
-        equipKnife()
-        task.wait(0.3)
-        local knife = getLocalKnife()
-        if not knife then notify("No knife equipped") S.killAllRunning = false; return end
-
-        local events = knife:FindFirstChild("Events")
-        if not events then notify("No Events folder") S.killAllRunning = false; return end
-
-        local stabEv = events:FindFirstChild("KnifeStabbed")
-        local touchEv = events:FindFirstChild("HandleTouched")
-        if not stabEv or not touchEv then
-            notify("Missing knife remotes")
-            S.killAllRunning = false
-            return
-        end
-
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer and plr.Character then
-                local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-                if hrp and not S.hitboxExpander.savedSizes[plr] then
-                    S.hitboxExpander.savedSizes[plr] = {
-                        size = hrp.Size, transparency = hrp.Transparency,
-                        cancollide = hrp.CanCollide, massless = hrp.Massless,
-                        anchored = hrp.Anchored,
-                    }
-                    hrp.Size = Vector3.new(60, 60, 60)
-                    hrp.Transparency = 1
-                    hrp.CanCollide = false
-                end
-            end
-        end
-
-        local startTime = tick()
-        local duration = 5
-
-        while S.killAllRunning and tick() - startTime < duration do
-            pcall(function() stabEv:FireServer() end)
-
-            for _, plr in ipairs(Players:GetPlayers()) do
-                if plr ~= LocalPlayer and plr.Character then
-                    local theirHum = plr.Character:FindFirstChildOfClass("Humanoid")
-                    if theirHum and theirHum.Health > 0 then
-                        for _, part in ipairs(plr.Character:GetChildren()) do
-                            if part:IsA("BasePart") then
-                                pcall(function()
-                                    touchEv:FireServer(part)
-                                end)
-                            end
-                        end
-                    end
-                end
-            end
-
-            task.wait(0.03)
-        end
-
-        restoreHitboxes()
-        S.killAllRunning = false
-        notify("Kill aura OFF")
-    end)
-end)
-
-window:CreateButton(aimbotTab, "Kill Everyone (TP)", function()
-    if not isLocalMurderer() then notify("You are not the Murderer") return end
-    if S.killAllRunning then return end
-    S.killAllRunning = true
-    notify("Killing everyone (TP)")
-
+    notify("Killing everyone")
     task.spawn(function()
         local startTime = tick()
         local duration = 3
@@ -3033,16 +2744,14 @@ window:CreateButton(aimbotTab, "Kill Everyone (TP)", function()
         end
         if spinConn then spinConn:Disconnect() end
         restoreHitboxes()
-        if originalCFrame then
-            for _ = 1, 6 do
-                local h = getHRP()
-                if h then
-                    h.Velocity = Vector3.zero
-                    h.RotVelocity = Vector3.zero
-                    h.CFrame = originalCFrame
-                end
-                RunService.RenderStepped:Wait()
-            end
+        local finalHRP = getHRP()
+        if finalHRP and originalCFrame then
+            finalHRP.Velocity = Vector3.zero
+            finalHRP.RotVelocity = Vector3.zero
+            finalHRP.CFrame = originalCFrame
+            task.wait(0.05)
+            finalHRP.Velocity = Vector3.zero
+            finalHRP.RotVelocity = Vector3.zero
         end
         S.killAllRunning = false
         notify("Done! Back to origin.")
@@ -3085,19 +2794,10 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.flingOriginalPosition = nil
     S.flingTargetRunning = false
     S.killAllRunning = false
-    S.flingRunning = false
-    S.spectating = false
-    S.spectateTarget = nil
-    S.spectateDefaultSubject = nil
-    GunShootBindable = nil
-    GunShootHandlerHooked = false
-    GunShootLastArgs = nil
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
-    if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
-    if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
+    if S.flingTargetThread then task.cancel(S.flingTargetThread); S.flingTargetThread = nil end
     clearBeamPool(S.beamData)
     task.wait(0.6)
-    if isMobile then scanForGunShoot() end
     if MovementSettings.Fly then attachFlyBodyMovers() end
     if AvatarSettings.Korblox then pcall(applyKorblox) end
     if AvatarSettings.AnimPack then pcall(applyAnimPack) end
@@ -3492,9 +3192,9 @@ window:BuildConfigPage()
 
 task.delay(2, function()
     if isMobile then
-        notify("Mobile method · tap SHOOT", 4)
+        notify("Mobile · 3 botones cargados", 4)
     else
-        notify("PC method · silent aim active", 4)
+        notify("PC method", 4)
     end
 end)
 
