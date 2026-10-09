@@ -178,6 +178,7 @@ local S = {
     silentAimHookInstalled = false,
     lastMobileShot = 0,
     spectating = false, spectateTarget = nil,
+    spectateDefaultSubject = nil,
 }
 
 local UI = {}
@@ -191,39 +192,42 @@ local function getHumanoid()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
 
-local SpectateService = nil
-local spectateAvailable = false
-
-task.spawn(function()
-    local ok, mod = pcall(function()
-        return require(ReplicatedStorage:WaitForChild("Modules", 10):WaitForChild("SpectateService", 10))
-    end)
-    if ok and mod then
-        SpectateService = mod
-        spectateAvailable = true
-    end
-end)
-
 local function spectatePlayer(plr)
     if not plr or not plr.Character then return end
     local theirHum = plr.Character:FindFirstChildOfClass("Humanoid")
     if not theirHum then return end
-    if SpectateService and spectateAvailable then
-        pcall(function() SpectateService:SetSpectating(true, true) end)
+
+    if not S.spectating then
+        local cam = workspace.CurrentCamera
+        S.spectateDefaultSubject = cam and cam.CameraSubject or nil
     end
-    workspace.CurrentCamera.CameraSubject = theirHum
+
+    local cam = workspace.CurrentCamera
+    if cam then
+        cam.CameraSubject = theirHum
+        cam.CameraType = Enum.CameraType.Custom
+    end
+
     S.spectating = true
     S.spectateTarget = plr
 end
 
 local function stopSpectating()
-    if SpectateService and spectateAvailable then
-        pcall(function() SpectateService:CancelSpectate() end)
+    local cam = workspace.CurrentCamera
+    if cam then
+        local myHum = getHumanoid()
+        if myHum then
+            cam.CameraSubject = myHum
+        elseif S.spectateDefaultSubject then
+            cam.CameraSubject = S.spectateDefaultSubject
+        else
+            cam.CameraSubject = nil
+        end
+        cam.CameraType = Enum.CameraType.Custom
     end
-    local myHum = getHumanoid()
-    if myHum then workspace.CurrentCamera.CameraSubject = myHum end
     S.spectating = false
     S.spectateTarget = nil
+    S.spectateDefaultSubject = nil
 end
 
 local GunShootBindable = nil
@@ -3084,6 +3088,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.flingRunning = false
     S.spectating = false
     S.spectateTarget = nil
+    S.spectateDefaultSubject = nil
     GunShootBindable = nil
     GunShootHandlerHooked = false
     GunShootLastArgs = nil
