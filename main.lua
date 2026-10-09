@@ -3432,7 +3432,7 @@ window:BuildConfigPage()
 
 task.delay(2, function()
     if isMobile then
-        notify("Mobile · 3 botones cargados", 4)
+        notify("Mobile · 3 buttons loaded", 4)
     else
         notify("PC method", 4)
     end
