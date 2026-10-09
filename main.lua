@@ -115,7 +115,7 @@ local AimbotSettings = {
     TriggerBot = false, TriggerRange = 150, AutoFire = false, WallCheck = true,
     FOVCircle = false, FOVRadius = 120, AutoKillMurderer = false,
 }
-local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false, Beam = false, SpectateOnFling = false }
+local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false, Beam = false }
 local MiscSettings = {
     InfJump = false, AntiAFK = false, AutoTpGun = false,
     SilentAim = false, MusicCompanion = false, AntiVoid = false,
@@ -177,6 +177,7 @@ local S = {
     fadeConn = nil, tpEvent = nil,
     silentAimHookInstalled = false, hookNamecall = nil, getNamecall = nil,
     lastMobileShot = 0,
+    spectating = false, spectateTarget = nil,
 }
 
 local UI = {}
@@ -211,6 +212,8 @@ local function spectatePlayer(plr)
         pcall(function() SpectateService:SetSpectating(true, true) end)
     end
     workspace.CurrentCamera.CameraSubject = theirHum
+    S.spectating = true
+    S.spectateTarget = plr
 end
 
 local function stopSpectating()
@@ -219,6 +222,8 @@ local function stopSpectating()
     end
     local myHum = getHumanoid()
     if myHum then workspace.CurrentCamera.CameraSubject = myHum end
+    S.spectating = false
+    S.spectateTarget = nil
 end
 
 local GunShootBindable = nil
@@ -1009,19 +1014,21 @@ local function playEmote(emoteName, emoteId)
     if not hum then return end
     local animator = hum:FindFirstChildOfClass("Animator")
     if not animator then return end
+
     if S.currentEmoteTrack then
         pcall(function() S.currentEmoteTrack:Stop(0.1) end)
         S.currentEmoteTrack = nil
     end
+
     local anim = Instance.new("Animation")
     anim.AnimationId = "rbxassetid://" .. emoteId
     local ok, track = pcall(function() return animator:LoadAnimation(anim) end)
     if ok and track then
         track.Priority = Enum.AnimationPriority.Action
-        track.Looped = false
+        track.Looped = true
         track:Play(0.1)
         S.currentEmoteTrack = track
-        notify("Emote: " .. emoteName, 1.5)
+        notify("Emote: " .. emoteName .. " (looping)", 1.5)
     else
         notify("Failed: " .. emoteName, 2)
     end
@@ -1950,9 +1957,7 @@ local function startFlingTarget(targetPlr)
     S.flingTargetRunning = true
     notify("Flinging " .. targetPlr.DisplayName)
 
-    if UI.spectateOnFlingRef and UI.spectateOnFlingRef.GetState and UI.spectateOnFlingRef.GetState() then
-        spectatePlayer(targetPlr)
-    end
+    spectatePlayer(targetPlr)
 
     S.flingTargetThread = task.spawn(function()
         local startTime = tick()
@@ -1966,6 +1971,11 @@ local function startFlingTarget(targetPlr)
             local currentHRP = getHRP()
             local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
             if not currentHRP or not theirHRP then break end
+
+            if S.spectating and S.spectateTarget == targetPlr then
+                local theirHum = targetPlr.Character:FindFirstChildOfClass("Humanoid")
+                if theirHum then workspace.CurrentCamera.CameraSubject = theirHum end
+            end
 
             if (currentHRP.Position - theirHRP.Position).Magnitude >= maxDist then
                 flinged = true
@@ -2026,10 +2036,8 @@ local function startFlingTarget(targetPlr)
             notify(targetPlr.DisplayName .. " not flinged (no 500m in 3s)")
         end
 
-        if UI.spectateOnFlingRef and UI.spectateOnFlingRef.GetState and UI.spectateOnFlingRef.GetState() then
-            task.wait(1.5)
-            stopSpectating()
-        end
+        task.wait(1.5)
+        stopSpectating()
 
         S.flingOriginalCFrame = nil
         S.flingOriginalPosition = nil
@@ -2307,12 +2315,39 @@ local flingDropdownRef = window:CreateDropdown(playersTab, "Player", getFlingLis
     _G.__HH_FlingTarget = v
 end)
 
+local PlayerAddedEvent = ReplicatedStorage:FindFirstChild("PlayerAdded")
+if not PlayerAddedEvent then
+    task.spawn(function()
+        for _ = 1, 20 do
+            task.wait(0.5)
+            PlayerAddedEvent = ReplicatedStorage:FindFirstChild("PlayerAdded")
+            if PlayerAddedEvent then break end
+        end
+    end)
+end
+
 local lastFlingSignature = table.concat(getFlingList(), "|")
 
-local function refreshFlingDropdown()
+local function triggerGamePlayerAdded(plr)
+    if not PlayerAddedEvent or type(firesignal) ~= "function" then return end
+    if not PlayerAddedEvent:IsA("BindableEvent") and not PlayerAddedEvent:IsA("RemoteEvent") then
+        return
+    end
+    local ok = pcall(function()
+        if plr then
+            firesignal(PlayerAddedEvent.OnClientEvent, plr)
+        else
+            firesignal(PlayerAddedEvent.OnClientEvent)
+        end
+    end)
+    return ok
+end
+
+local function refreshFlingDropdown(force)
     local names = getFlingList()
     local signature = table.concat(names, "|")
-    if signature == lastFlingSignature then return end
+
+    if not force and signature == lastFlingSignature then return end
     lastFlingSignature = signature
 
     if flingDropdownRef then
@@ -2342,34 +2377,61 @@ local function refreshFlingDropdown()
     end
 end
 
+local function fullFlingRefresh()
+    task.spawn(function()
+        for _, plr in ipairs(Players:GetPlayers()) do
+            triggerGamePlayerAdded(plr)
+            task.wait(0.05)
+        end
+        triggerGamePlayerAdded(nil)
+        task.wait(0.1)
+        refreshFlingDropdown(true)
+    end)
+end
+
 task.spawn(function()
     while true do
         task.wait(0.5)
-        refreshFlingDropdown()
+        refreshFlingDropdown(false)
     end
 end)
 
 Players.PlayerAdded:Connect(function(plr)
-    task.wait(0.2)
-    refreshFlingDropdown()
+    task.wait(0.3)
+    triggerGamePlayerAdded(plr)
+    task.wait(0.1)
+    refreshFlingDropdown(true)
     plr.CharacterAdded:Connect(function()
-        task.wait(0.3)
-        refreshFlingDropdown()
+        task.wait(0.5)
+        triggerGamePlayerAdded(plr)
+        task.wait(0.1)
+        refreshFlingDropdown(true)
     end)
 end)
 Players.PlayerRemoving:Connect(function()
-    task.wait(0.2)
-    refreshFlingDropdown()
+    task.wait(0.3)
+    fullFlingRefresh()
 end)
 
 for _, plr in ipairs(Players:GetPlayers()) do
     if plr ~= LocalPlayer then
         plr.CharacterAdded:Connect(function()
-            task.wait(0.3)
-            refreshFlingDropdown()
+            task.wait(0.5)
+            triggerGamePlayerAdded(plr)
+            task.wait(0.1)
+            refreshFlingDropdown(true)
         end)
     end
 end
+
+task.delay(2, function()
+    fullFlingRefresh()
+end)
+
+window:CreateButton(playersTab, "Refresh Player List", function()
+    fullFlingRefresh()
+    notify("Player list refreshed", 2)
+end)
 
 window:CreateButton(playersTab, "Fling Target", function()
     local plr = getFlingTargetByName(_G.__HH_FlingTarget)
@@ -2485,12 +2547,6 @@ end)
 registerControl(VisualSettings, "Beam", UI.beamToggleRef)
 
 window:CreateLabel(espTab, "Spectate")
-UI.spectateOnFlingRef = window:CreateToggle(espTab, "Spectate on Fling", false, function(v)
-    VisualSettings.SpectateOnFling = v
-    if not v then stopSpectating() end
-end)
-registerControl(VisualSettings, "SpectateOnFling", UI.spectateOnFlingRef)
-
 window:CreateButton(espTab, "Spectate Murderer", function()
     local m = getMurderer()
     if not m then notify("No murderer") return end
@@ -2505,10 +2561,19 @@ window:CreateButton(espTab, "Spectate Sheriff", function()
     notify("Spectating " .. s.DisplayName)
 end)
 
+window:CreateButton(espTab, "Spectate Hero", function()
+    local h = getHero()
+    if not h then notify("No hero") return end
+    spectatePlayer(h)
+    notify("Spectating " .. h.DisplayName)
+end)
+
 window:CreateButton(espTab, "Stop Spectating", function()
     stopSpectating()
     notify("Stopped spectating")
 end)
+
+window:CreateParagraph(espTab, "Spectate works anytime, no round needed. Fling auto-spectates the target.")
 
 window:CreateParagraph(espTab, "Beam colors: green = clear · orange = innocent blocking · red = wall.")
 
@@ -2648,12 +2713,20 @@ UI.antiFlingRef = window:CreateToggle(movementTab, "Anti-Fling", false, function
 end)
 registerControl(MovementSettings, "AntiFling", UI.antiFlingRef)
 
-window:CreateLabel(movementTab, "Emotes")
+window:CreateLabel(movementTab, "Emotes (loop)")
 for _, emote in ipairs(EMOTES) do
     window:CreateButton(movementTab, emote.name, function()
         playEmote(emote.name, emote.id)
     end)
 end
+
+window:CreateButton(movementTab, "Stop Emote", function()
+    if S.currentEmoteTrack then
+        pcall(function() S.currentEmoteTrack:Stop(0.1) end)
+        S.currentEmoteTrack = nil
+        notify("Emote stopped", 1.5)
+    end
+end)
 
 window:CreateLabel(movementTab, "Reset Character")
 window:CreateButton(movementTab, "Autokill", function()
@@ -3028,6 +3101,8 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.flingTargetRunning = false
     S.killAllRunning = false
     S.flingRunning = false
+    S.spectating = false
+    S.spectateTarget = nil
     GunShootBindable = nil
     GunShootHandlerHooked = false
     GunShootLastArgs = nil
@@ -3301,7 +3376,6 @@ local function snapshotSettings()
             NameTags = VisualSettings.NameTags,
             GunESP   = VisualSettings.GunESP,
             Beam     = VisualSettings.Beam,
-            SpectateOnFling = VisualSettings.SpectateOnFling,
         },
         Misc = {
             InfJump        = MiscSettings.InfJump,
