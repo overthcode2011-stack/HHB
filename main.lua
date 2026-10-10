@@ -126,7 +126,7 @@ local MovementSettings = {
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
-local FarmSettings = { AutoFarm = false, ManualCollect = false, CoinSpeed = 20, PickupRadius = 3 }
+local FarmSettings = { AutoFarm = false, ManualCollect = false, CoinSpeed = 20, PickupRadius = 3, AutoRotate = true }
 local BeamSettings = {
     Enabled = false,
     ClearColor = Color3.fromRGB(0, 255, 100),
@@ -178,6 +178,8 @@ local S = {
     silentAimHookInstalled = false, hookNamecall = nil, getNamecall = nil,
     lastMobileShot = 0,
     spectating = false, spectateTarget = nil, spectateDefaultSubject = nil,
+    lastTargetedCoin = nil, lastCollectTime = 0,
+    autoKillAll = false, killAllTask = nil,
 }
 
 local UI = {}
@@ -224,6 +226,75 @@ local function stopSpectating()
     S.spectating = false
     S.spectateTarget = nil
     S.spectateDefaultSubject = nil
+end
+
+local GunShootBindable = nil
+local GunShootLastArgs = nil
+local GunShootHandlerHooked = false
+
+local function hookGunShootEvent(bindable)
+    if not bindable or not bindable:IsA("BindableEvent") then return end
+    if GunShootHandlerHooked and GunShootBindable == bindable then return end
+    if type(getconnections) ~= "function" or type(hookfunction) ~= "function" then return end
+
+    GunShootBindable = bindable
+    getgenv().HH_GunShootBindable = bindable
+    GunShootHandlerHooked = false
+
+    for _, conn in ipairs(getconnections(bindable.Event)) do
+        if conn.Function then
+            local old
+            old = hookfunction(conn.Function, function(...)
+                local args = table.pack(...)
+                GunShootLastArgs = args
+
+                if MiscSettings.SilentAim then
+                    local murderer = getMurdererCached()
+                    if isTargetSafe(murderer) then
+                        local targetPart = getMM2TargetPart(murderer.Character)
+                        if targetPart then
+                            local newTargetCF = predictAim(targetPart)
+                            if newTargetCF then
+                                for i = 2, math.min(5, args.n) do
+                                    if typeof(args[i]) == "CFrame" then
+                                        args[i] = newTargetCF
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+
+                return old(table.unpack(args, 1, args.n))
+            end)
+            GunShootHandlerHooked = true
+            break
+        end
+    end
+end
+
+local function scanForGunShoot()
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") and tool.Name:lower():find("gun", 1, true) then
+            local ev = tool:FindFirstChild("Shoot")
+            if ev and ev:IsA("BindableEvent") then
+                hookGunShootEvent(ev)
+                return
+            end
+        end
+    end
+end
+
+if isMobile then
+    task.spawn(function()
+        while true do
+            task.wait(0.4)
+            scanForGunShoot()
+        end
+    end)
 end
 
 local function findGunDrop()
@@ -1614,18 +1685,55 @@ local function getBestCoin()
     if not coinContainer then return nil end
     local myHRP = getHRP()
     if not myHRP then return nil end
+
     local myPos = myHRP.Position
-    local bestPart, bestDist = nil, math.huge
+    local cam = workspace.CurrentCamera
+    local camDir = cam and cam.CFrame.LookVector or Vector3.new(0, 0, -1)
+    local skipRecent = (tick() - S.lastCollectTime) < 0.5
+
+    local bestPart = nil
+    local bestScore = -math.huge
+
     for _, child in ipairs(coinContainer:GetChildren()) do
         local part = child:IsA("BasePart") and child or (child:IsA("Model") and child.PrimaryPart)
         if part and part:IsA("BasePart") then
-            local d = (part.Position - myPos).Magnitude
-            if d < bestDist then
-                bestDist = d
-                bestPart = part
+            if not (skipRecent and part == S.lastTargetedCoin) then
+                local delta = part.Position - myPos
+                local dist = delta.Magnitude
+                if dist > 0.1 then
+                    local dot = delta.Unit:Dot(camDir)
+                    if dot > -0.2 then
+                        local score = (dot * 100) - (dist * 0.5)
+                        if dot > 0.8 and dist < 15 then score = score + 200 end
+                        if score > bestScore then
+                            bestScore = score
+                            bestPart = part
+                        end
+                    end
+                end
             end
         end
     end
+
+    if not bestPart then
+        local closest = nil
+        local minDist = math.huge
+        for _, child in ipairs(coinContainer:GetChildren()) do
+            local part = child:IsA("BasePart") and child or (child:IsA("Model") and child.PrimaryPart)
+            if part and part:IsA("BasePart") then
+                if not (skipRecent and part == S.lastTargetedCoin) then
+                    local d = (part.Position - myPos).Magnitude
+                    if d < minDist then
+                        minDist = d
+                        closest = part
+                    end
+                end
+            end
+        end
+        bestPart = closest
+    end
+
+    S.lastTargetedCoin = bestPart
     return bestPart
 end
 
@@ -1713,6 +1821,7 @@ local function startCoinCollector()
             S.coinGyro.Parent = currentHRP
         end
         if currentHum.PlatformStand == false then currentHum.PlatformStand = true end
+
         local murderer = getMurdererCached()
         local evadeDirection = nil
         if murderer and murderer.Character then
@@ -1725,18 +1834,28 @@ local function startCoinCollector()
                 end
             end
         end
+
         if evadeDirection then
             local targetVel = evadeDirection * math.min(FarmSettings.CoinSpeed * 1.5, 75)
             S.coinVelocity.Velocity = targetVel
             S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection)
+            if FarmSettings.AutoRotate then
+                local cam = workspace.CurrentCamera
+                if cam and cam.CameraType ~= Enum.CameraType.Scriptable then
+                    local lookAt = CFrame.lookAt(cam.CFrame.Position, currentHRP.Position + evadeDirection * 10)
+                    cam.CFrame = cam.CFrame:Lerp(lookAt, 0.2)
+                end
+            end
             return
         end
+
         local target = getBestCoin()
         if not target then
             S.coinVelocity.Velocity = Vector3.zero
             if S.coinStatusSetter then S.coinStatusSetter("Waiting for coins") end
             return
         end
+
         local direction = (target.Position - currentHRP.Position).Unit
         local distance = (target.Position - currentHRP.Position).Magnitude
         local speed = FarmSettings.CoinSpeed
@@ -1745,8 +1864,18 @@ local function startCoinCollector()
         elseif distance < 15 then
             speed = FarmSettings.CoinSpeed * 0.7
         end
+
         S.coinVelocity.Velocity = direction * speed
         S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, target.Position)
+
+        if FarmSettings.AutoRotate then
+            local cam = workspace.CurrentCamera
+            if cam and cam.CameraType ~= Enum.CameraType.Scriptable then
+                local lookAt = CFrame.lookAt(cam.CFrame.Position, target.Position)
+                cam.CFrame = cam.CFrame:Lerp(lookAt, 0.2)
+            end
+        end
+
         if S.coinStatusSetter then S.coinStatusSetter("Collecting") end
     end)
 end
@@ -2726,79 +2855,77 @@ end)
 registerControl(AimbotSettings, "WallCheck", UI.wallCheckRef)
 
 window:CreateLabel(aimbotTab, "Murderer OP")
-window:CreateButton(aimbotTab, "Kill Everyone", function()
+
+local function findKnifeRemotes()
+    local knife = getLocalKnife()
+    if not knife then
+        equipKnife()
+        task.wait(0.15)
+        knife = getLocalKnife()
+    end
+    if not knife then return nil, nil, nil end
+    local events = knife:FindFirstChild("Events")
+    if not events then return knife, nil, nil end
+    return knife, events:FindFirstChild("KnifeStabbed"), events:FindFirstChild("HandleTouched")
+end
+
+local function serverKillAllTick()
+    local knife, stabEv, touchEv = findKnifeRemotes()
+    if not knife or not stabEv or not touchEv then return false end
+
+    pcall(function() stabEv:FireServer() end)
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                local head = plr.Character:FindFirstChild("Head")
+                if hrp then pcall(function() touchEv:FireServer(hrp) end) end
+                if head then pcall(function() touchEv:FireServer(head) end) end
+            end
+        end
+    end
+    return true
+end
+
+window:CreateButton(aimbotTab, "Kill Everyone (Server)", function()
     if not isLocalMurderer() then notify("You are not the Murderer") return end
-    if S.killAllRunning then return end
+    if S.killAllRunning then notify("Already running") return end
     S.killAllRunning = true
-    notify("Kill aura ON")
+    notify("Killing everyone (server)")
 
     task.spawn(function()
-        local char = LocalPlayer.Character
-        if not char then S.killAllRunning = false; return end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum then S.killAllRunning = false; return end
-
-        equipKnife()
-        task.wait(0.3)
-        local knife = getLocalKnife()
-        if not knife then notify("No knife equipped") S.killAllRunning = false; return end
-
-        local events = knife:FindFirstChild("Events")
-        if not events then notify("No Events folder") S.killAllRunning = false; return end
-
-        local stabEv = events:FindFirstChild("KnifeStabbed")
-        local touchEv = events:FindFirstChild("HandleTouched")
-        if not stabEv or not touchEv then
-            notify("Missing knife remotes")
-            S.killAllRunning = false
-            return
-        end
-
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer and plr.Character then
-                local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-                if hrp and not S.hitboxExpander.savedSizes[plr] then
-                    S.hitboxExpander.savedSizes[plr] = {
-                        size = hrp.Size, transparency = hrp.Transparency,
-                        cancollide = hrp.CanCollide, massless = hrp.Massless,
-                        anchored = hrp.Anchored,
-                    }
-                    hrp.Size = Vector3.new(60, 60, 60)
-                    hrp.Transparency = 1
-                    hrp.CanCollide = false
-                end
-            end
-        end
-
         local startTime = tick()
-        local duration = 5
-
-        while S.killAllRunning and tick() - startTime < duration do
-            pcall(function() stabEv:FireServer() end)
-
-            for _, plr in ipairs(Players:GetPlayers()) do
-                if plr ~= LocalPlayer and plr.Character then
-                    local theirHum = plr.Character:FindFirstChildOfClass("Humanoid")
-                    if theirHum and theirHum.Health > 0 then
-                        for _, part in ipairs(plr.Character:GetChildren()) do
-                            if part:IsA("BasePart") then
-                                pcall(function()
-                                    touchEv:FireServer(part)
-                                end)
-                            end
-                        end
-                    end
-                end
-            end
-
+        while S.killAllRunning and tick() - startTime < 5 do
+            serverKillAllTick()
             task.wait(0.03)
         end
-
-        restoreHitboxes()
         S.killAllRunning = false
-        notify("Kill aura OFF")
+        notify("Done")
     end)
 end)
+
+UI.autoKillAllRef = window:CreateToggle(aimbotTab, "Auto Kill Everyone", false, function(v)
+    S.autoKillAll = v
+    if v then
+        if S.killAllTask then return end
+        S.killAllTask = task.spawn(function()
+            while S.autoKillAll do
+                if isLocalMurderer() then
+                    serverKillAllTick()
+                end
+                task.wait(0.05)
+            end
+            S.killAllTask = nil
+        end)
+        notify("Auto Kill Everyone ON")
+    else
+        if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
+        notify("Auto Kill Everyone OFF")
+    end
+end)
+registerControl(AimbotSettings, "AutoKillAll", UI.autoKillAllRef)
 
 window:CreateLabel(avatarTab, "Avatar")
 
@@ -2837,10 +2964,16 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.spectating = false
     S.spectateTarget = nil
     S.spectateDefaultSubject = nil
+    S.lastTargetedCoin = nil
+    S.lastCollectTime = 0
+    S.autoKillAll = false
+    if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
+    if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
     clearBeamPool(S.beamData)
     task.wait(0.6)
+    if isMobile then scanForGunShoot() end
     if MovementSettings.Fly then attachFlyBodyMovers() end
     if AvatarSettings.Korblox then pcall(applyKorblox) end
     if AvatarSettings.AnimPack then pcall(applyAnimPack) end
@@ -2877,6 +3010,11 @@ UI.pickupRadiusRef = window:CreateSlider(farmTab, "Pickup Radius", 1, 10, 3, fun
 end)
 registerControl(FarmSettings, "PickupRadius", UI.pickupRadiusRef)
 
+UI.autoRotateRef = window:CreateToggle(farmTab, "Auto Rotate Camera", true, function(v)
+    FarmSettings.AutoRotate = v
+end)
+registerControl(FarmSettings, "AutoRotate", UI.autoRotateRef)
+
 window:CreateLabel(farmTab, "Live Stats")
 local coinCountFrame = window:CreateParagraph(farmTab, "0")
 local coinCountLabel = coinCountFrame:FindFirstChildOfClass("TextLabel")
@@ -2909,6 +3047,7 @@ end
 
 if coinCollectedEvent then
     coinCollectedEvent.OnClientEvent:Connect(function(bagName, currentCoins)
+        S.lastCollectTime = tick()
         if S.bagProgress[bagName] ~= nil then
             S.bagProgress[bagName] = currentCoins
             S.totalCoins = 0
@@ -3127,6 +3266,7 @@ local function snapshotSettings()
             ManualCollect = FarmSettings.ManualCollect,
             CoinSpeed     = FarmSettings.CoinSpeed,
             PickupRadius  = FarmSettings.PickupRadius,
+            AutoRotate    = FarmSettings.AutoRotate,
         },
         Beam = {
             Enabled = BeamSettings.Enabled,
@@ -3225,9 +3365,9 @@ window:BuildConfigPage()
 
 task.delay(2, function()
     if isMobile then
-        notify("Mobile · 3 buttons loaded", 4)
+        notify("Mobile method · tap SHOOT", 4)
     else
-        notify("PC method", 4)
+        notify("PC method · silent aim active", 4)
     end
 end)
 
