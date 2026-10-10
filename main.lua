@@ -2889,11 +2889,11 @@ local function serverKillAllTick()
     return true
 end
 
-window:CreateButton(aimbotTab, "Kill Everyone (Server)", function()
+window:CreateButton(aimbotTab, "Kill Everyone", function()
     if not isLocalMurderer() then notify("You are not the Murderer") return end
     if S.killAllRunning then notify("Already running") return end
     S.killAllRunning = true
-    notify("Killing everyone (server)")
+    notify("Killing everyone")
 
     task.spawn(function()
         local startTime = tick()
@@ -2919,17 +2919,17 @@ UI.autoKillAllRef = window:CreateToggle(aimbotTab, "Auto Kill Everyone", false, 
             end
             S.killAllTask = nil
         end)
-        notify("Auto Kill Everyone ON")
+        notify("Enabled")
     else
         if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
-        notify("Auto Kill Everyone OFF")
+        notify("Disabled")
     end
 end)
 registerControl(AimbotSettings, "AutoKillAll", UI.autoKillAllRef)
 
 window:CreateLabel(avatarTab, "Avatar")
 
-UI.korbloxRef = window:CreateToggle(avatarTab, "Korblox Deathspeaker", false, function(v)
+UI.korbloxRef = window:CreateToggle(avatarTab, "Korblox", false, function(v)
     AvatarSettings.Korblox = v
     if v then applyKorblox() else removeKorblox() end
 end)
