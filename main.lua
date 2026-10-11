@@ -126,18 +126,12 @@ local MovementSettings = {
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
-local FarmSettings = { AutoFarm = false, ManualCollect = false, CoinSpeed = 20, PickupRadius = 3, AutoRotate = true }
-local BeamSettings = {
-    Enabled = false,
-    ClearColor = Color3.fromRGB(0, 255, 100),
-    WallColor = Color3.fromRGB(255, 50, 50),
-    PlayerColor = Color3.fromRGB(255, 130, 0),
-    Thickness = 0.15,
-    Transparency = 0.2,
-    MaxIterations = 14,
-    WaypointOffset = 3,
-    RefreshRate = 0.033,
-}
+local FarmSettings = { AutoFarm = false }
+
+local BEAM_CLEAR = Color3.fromRGB(0, 255, 100)
+local BEAM_WALL  = Color3.fromRGB(255, 50, 50)
+local BEAM_INNO  = Color3.fromRGB(255, 130, 0)
+
 local AntiVoidSettings = { Threshold = -30, SafeY = 10 }
 
 local WALL_GRACE_TIME = 0.2
@@ -146,6 +140,9 @@ local MurdererCache = { plr = nil, time = 0 }
 local VisCache = {}
 local VIS_TTL = 0.05
 local MURDERER_TTL = 0.1
+
+local FARM_SPEED = 30
+local FARM_GOAL = 40
 
 local S = {
     noclipConn = nil, godConn = nil, antiAFKConn = nil,
@@ -169,7 +166,7 @@ local S = {
     coinCollecting = false, coinConnection = nil, coinVelocity = nil,
     coinGyro = nil,
     roundActive = false, bagProgress = {}, totalCoins = 0,
-    coinStatusSetter = nil, coinCountSetter = nil, currentIdleTrack = nil,
+    coinStatusSetter = nil, coinCountSetter = nil,
     roleCache = {},
     heroWatcher = { active = false, thread = nil, originalSheriffName = nil },
     gunESP = { active = false, highlights = {}, billboards = {}, trackedGun = nil },
@@ -646,7 +643,7 @@ local function buildBeamPath(fromPos, toPos, targetChar)
     local waypoints = { fromPos }
     local current = fromPos
     local iterations = 0
-    while iterations < BeamSettings.MaxIterations do
+    while iterations < 14 do
         iterations = iterations + 1
         local diff = toPos - current
         local dist = diff.Magnitude
@@ -685,7 +682,7 @@ local function buildBeamPath(fromPos, toPos, targetChar)
         local perp = normal:Cross(Vector3.yAxis)
         if perp.Magnitude < 0.01 then perp = normal:Cross(Vector3.xAxis) end
         perp = perp.Unit
-        local offset = BeamSettings.WaypointOffset
+        local offset = 3
         local sideA = hitPos + perp * offset
         local sideB = hitPos - perp * offset
         local distA = (sideA - toPos).Magnitude
@@ -794,10 +791,10 @@ local function createBeamSegment()
     beam.Attachment0 = att0
     beam.Attachment1 = att1
     beam.FaceCamera = true
-    beam.Width0 = BeamSettings.Thickness
-    beam.Width1 = BeamSettings.Thickness
-    beam.Color = ColorSequence.new(BeamSettings.ClearColor)
-    beam.Transparency = NumberSequence.new(BeamSettings.Transparency)
+    beam.Width0 = 0.15
+    beam.Width1 = 0.15
+    beam.Color = ColorSequence.new(BEAM_CLEAR)
+    beam.Transparency = NumberSequence.new(0.2)
     beam.LightEmission = 1
     beam.Parent = startPart
 
@@ -831,15 +828,15 @@ local function renderBeamPath(pool, waypoints, color)
         local b = waypoints[i + 1]
         seg.startPart.CFrame = CFrame.new(a)
         seg.endPart.CFrame = CFrame.new(b)
-        seg.beam.Width0 = BeamSettings.Thickness
-        seg.beam.Width1 = BeamSettings.Thickness
+        seg.beam.Width0 = 0.15
+        seg.beam.Width1 = 0.15
         seg.beam.Color = ColorSequence.new(color)
-        seg.beam.Transparency = NumberSequence.new(BeamSettings.Transparency)
+        seg.beam.Transparency = NumberSequence.new(0.2)
     end
 end
 
 local function updateBeam()
-    if BeamSettings.Enabled then
+    if VisualSettings.Beam then
         local myHRP = getHRP()
         local murderer = getMurdererCached()
         if myHRP and isTargetSafe(murderer) then
@@ -849,11 +846,11 @@ local function updateBeam()
                 local hitType = classifyPathHit(myHRP.Position, targetPart.Position, murderer.Character)
                 local color
                 if hitType == "clear" or hitType == "target" then
-                    color = BeamSettings.ClearColor
+                    color = BEAM_CLEAR
                 elseif hitType == "innocent" then
-                    color = BeamSettings.PlayerColor
+                    color = BEAM_INNO
                 else
-                    color = BeamSettings.WallColor
+                    color = BEAM_WALL
                 end
                 renderBeamPath(S.beamData, waypoints, color)
             else
@@ -871,14 +868,14 @@ local function ensureBeamConn()
     if S.beamData.updateConn then return end
     S.beamData.updateConn = RunService.Heartbeat:Connect(function()
         local now = tick()
-        if now - S.beamData.lastTick < BeamSettings.RefreshRate then return end
+        if now - S.beamData.lastTick < 0.033 then return end
         S.beamData.lastTick = now
         updateBeam()
     end)
 end
 
 local function stopBeamIfIdle()
-    if BeamSettings.Enabled then return end
+    if VisualSettings.Beam then return end
     if S.beamData.updateConn then
         S.beamData.updateConn:Disconnect()
         S.beamData.updateConn = nil
@@ -940,7 +937,7 @@ local function playEmote(emoteName, emoteId)
         track.Looped = true
         track:Play(0.1)
         S.currentEmoteTrack = track
-        notify("Emote: " .. emoteName .. " (looping)", 1.5)
+        notify("Emote: " .. emoteName, 1.5)
     else
         notify("Failed: " .. emoteName, 2)
     end
@@ -1033,53 +1030,6 @@ local function getLocalKnife()
         end
     end
     return nil
-end
-
-local function expandHitbox(plr)
-    if not plr or plr == LocalPlayer then return end
-    if not plr.Character then return end
-    local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    if S.hitboxExpander.savedSizes[plr] then return end
-    S.hitboxExpander.savedSizes[plr] = {
-        size = hrp.Size,
-        transparency = hrp.Transparency,
-        cancollide = hrp.CanCollide,
-        massless = hrp.Massless,
-        anchored = hrp.Anchored,
-    }
-    hrp.Size = S.hitboxExpander.size
-    hrp.Transparency = 1
-    hrp.CanCollide = false
-    hrp.Massless = false
-    hrp.Anchored = false
-end
-
-local function expandHitboxForAll()
-    for _, plr in ipairs(Players:GetPlayers()) do expandHitbox(plr) end
-    S.hitboxExpander.active = true
-end
-
-local function restoreHitbox(plr)
-    local data = S.hitboxExpander.savedSizes[plr]
-    if not data then return end
-    if plr and plr.Parent and plr.Character then
-        local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.Size = data.size
-            hrp.Transparency = data.transparency
-            hrp.CanCollide = data.cancollide
-            hrp.Massless = data.massless
-            hrp.Anchored = data.anchored
-        end
-    end
-    S.hitboxExpander.savedSizes[plr] = nil
-end
-
-local function restoreHitboxes()
-    for plr, _ in pairs(S.hitboxExpander.savedSizes) do restoreHitbox(plr) end
-    S.hitboxExpander.savedSizes = {}
-    S.hitboxExpander.active = false
 end
 
 local function getTpEvent()
@@ -1693,6 +1643,8 @@ local function getBestCoin()
 
     local bestPart = nil
     local bestScore = -math.huge
+    local fallbackPart = nil
+    local fallbackDist = math.huge
 
     for _, child in ipairs(coinContainer:GetChildren()) do
         local part = child:IsA("BasePart") and child or (child:IsA("Model") and child.PrimaryPart)
@@ -1710,55 +1662,18 @@ local function getBestCoin()
                             bestPart = part
                         end
                     end
-                end
-            end
-        end
-    end
-
-    if not bestPart then
-        local closest = nil
-        local minDist = math.huge
-        for _, child in ipairs(coinContainer:GetChildren()) do
-            local part = child:IsA("BasePart") and child or (child:IsA("Model") and child.PrimaryPart)
-            if part and part:IsA("BasePart") then
-                if not (skipRecent and part == S.lastTargetedCoin) then
-                    local d = (part.Position - myPos).Magnitude
-                    if d < minDist then
-                        minDist = d
-                        closest = part
+                    if dist < fallbackDist then
+                        fallbackDist = dist
+                        fallbackPart = part
                     end
                 end
             end
         end
-        bestPart = closest
     end
 
-    S.lastTargetedCoin = bestPart
-    return bestPart
-end
-
-local function playIdleAnimation(hum)
-    local animator = hum:FindFirstChildOfClass("Animator")
-    if not animator then return end
-    if S.currentIdleTrack then
-        pcall(function() S.currentIdleTrack:Stop() end)
-        S.currentIdleTrack = nil
-    end
-    local idleAnim = Instance.new("Animation")
-    idleAnim.AnimationId = "rbxassetid://507766666"
-    local track = animator:LoadAnimation(idleAnim)
-    track.Priority = Enum.AnimationPriority.Idle
-    track.Looped = true
-    track:Play()
-    S.currentIdleTrack = track
-    return track
-end
-
-local function stopIdleAnimation()
-    if S.currentIdleTrack then
-        pcall(function() S.currentIdleTrack:Stop() end)
-        S.currentIdleTrack = nil
-    end
+    local target = bestPart or fallbackPart
+    S.lastTargetedCoin = target
+    return target
 end
 
 local function stopCoinCollector()
@@ -1768,44 +1683,44 @@ local function stopCoinCollector()
     if S.coinVelocity then S.coinVelocity:Destroy(); S.coinVelocity = nil end
     if S.coinGyro then S.coinGyro:Destroy(); S.coinGyro = nil end
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
-    local hum = getHumanoid()
-    if hum then hum.PlatformStand = false end
-    stopIdleAnimation()
-    local char = LocalPlayer.Character
-    if char then
-        local animateScript = char:FindFirstChild("Animate")
-        if animateScript then
-            pcall(function() animateScript.Disabled = true end)
-            task.wait()
-            pcall(function() animateScript.Disabled = false end)
-        end
-    end
 end
 
 local function startCoinCollector()
     if S.coinCollecting then return end
-    S.coinCollecting = true
-    if S.coinStatusSetter then S.coinStatusSetter("Collecting") end
+    if not getCoinContainer() then return end
     local hrp = getHRP()
-    local hum = getHumanoid()
-    if not hrp or not hum then S.coinCollecting = false; return end
-    hum.PlatformStand = true
-    playIdleAnimation(hum)
+    if not hrp then return end
+
+    S.coinCollecting = true
+    if S.coinStatusSetter then S.coinStatusSetter("Farming") end
+
     S.coinVelocity = Instance.new("BodyVelocity")
     S.coinVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    S.coinVelocity.P = 1250
+    S.coinVelocity.P = 1000
     S.coinVelocity.Parent = hrp
+
     S.coinGyro = Instance.new("BodyGyro")
     S.coinGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
     S.coinGyro.P = 1e4
     S.coinGyro.D = 500
     S.coinGyro.CFrame = hrp.CFrame
     S.coinGyro.Parent = hrp
+
     S.coinConnection = RunService.Heartbeat:Connect(function()
         if not S.coinCollecting then return end
+
+        if S.totalCoins >= FARM_GOAL then
+            if S.coinStatusSetter then S.coinStatusSetter("Goal reached") end
+            stopCoinCollector()
+            return
+        end
+
         local currentHRP = getHRP()
-        local currentHum = getHumanoid()
-        if not currentHRP or not currentHum then return end
+        if not currentHRP then
+            stopCoinCollector()
+            return
+        end
+
         if not S.coinVelocity or not S.coinVelocity.Parent then
             S.coinVelocity = Instance.new("BodyVelocity")
             S.coinVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
@@ -1820,7 +1735,6 @@ local function startCoinCollector()
             S.coinGyro.CFrame = currentHRP.CFrame
             S.coinGyro.Parent = currentHRP
         end
-        if currentHum.PlatformStand == false then currentHum.PlatformStand = true end
 
         local murderer = getMurdererCached()
         local evadeDirection = nil
@@ -1828,7 +1742,7 @@ local function startCoinCollector()
             local murderHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
             if murderHRP then
                 local distToMurderer = (currentHRP.Position - murderHRP.Position).Magnitude
-                if distToMurderer < 25 then
+                if distToMurderer < 30 then
                     evadeDirection = (currentHRP.Position - murderHRP.Position).Unit
                     if S.coinStatusSetter then S.coinStatusSetter("Evading") end
                 end
@@ -1836,15 +1750,12 @@ local function startCoinCollector()
         end
 
         if evadeDirection then
-            local targetVel = evadeDirection * math.min(FarmSettings.CoinSpeed * 1.5, 75)
+            local targetVel = evadeDirection * math.min(FARM_SPEED * 1.5, 75)
             S.coinVelocity.Velocity = targetVel
             S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection)
-            if FarmSettings.AutoRotate then
-                local cam = workspace.CurrentCamera
-                if cam and cam.CameraType ~= Enum.CameraType.Scriptable then
-                    local lookAt = CFrame.lookAt(cam.CFrame.Position, currentHRP.Position + evadeDirection * 10)
-                    cam.CFrame = cam.CFrame:Lerp(lookAt, 0.2)
-                end
+            local cam = workspace.CurrentCamera
+            if cam then
+                cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection), 0.2)
             end
             return
         end
@@ -1852,32 +1763,26 @@ local function startCoinCollector()
         local target = getBestCoin()
         if not target then
             S.coinVelocity.Velocity = Vector3.zero
-            if S.coinStatusSetter then S.coinStatusSetter("Waiting for coins") end
+            if S.coinStatusSetter then S.coinStatusSetter("No coins") end
             return
         end
 
         local direction = (target.Position - currentHRP.Position).Unit
-        local distance = (target.Position - currentHRP.Position).Magnitude
-        local speed = FarmSettings.CoinSpeed
-        if distance < 5 then
-            speed = FarmSettings.CoinSpeed * 0.4
-        elseif distance < 15 then
-            speed = FarmSettings.CoinSpeed * 0.7
-        end
-
-        S.coinVelocity.Velocity = direction * speed
+        S.coinVelocity.Velocity = direction * FARM_SPEED
         S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, target.Position)
-
-        if FarmSettings.AutoRotate then
-            local cam = workspace.CurrentCamera
-            if cam and cam.CameraType ~= Enum.CameraType.Scriptable then
-                local lookAt = CFrame.lookAt(cam.CFrame.Position, target.Position)
-                cam.CFrame = cam.CFrame:Lerp(lookAt, 0.2)
-            end
+        local cam = workspace.CurrentCamera
+        if cam then
+            cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(currentHRP.Position, target.Position), 0.2)
         end
-
-        if S.coinStatusSetter then S.coinStatusSetter("Collecting") end
+        if S.coinStatusSetter then S.coinStatusSetter("Farming") end
     end)
+end
+
+local function shouldWaitForCoins()
+    if not S.coinCollecting then return false end
+    if not S.roundActive then return false end
+    if S.totalCoins >= FARM_GOAL then return false end
+    return true
 end
 
 local function getFlingTargetByName(name)
@@ -2045,7 +1950,7 @@ local function startFlingTarget(targetPlr)
             end
         end
         if not flinged then
-            notify(targetPlr.DisplayName .. " not flinged (no 500m in 3s)")
+            notify(targetPlr.DisplayName .. " not flinged")
         end
         task.wait(1.5)
         stopSpectating()
@@ -2053,14 +1958,6 @@ local function startFlingTarget(targetPlr)
         S.flingOriginalPosition = nil
         S.flingTargetThread = nil
     end)
-end
-
-local function getPlayerNames()
-    local names = {}
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then table.insert(names, plr.Name) end
-    end
-    return names
 end
 
 local function attachFlyBodyMovers()
@@ -2265,7 +2162,7 @@ window:CreateLabel(homeTab, "Features")
 window:CreateParagraph(homeTab, "Players · ESP · Movement · Aimbot · Avatar · Farm · Misc · Configs")
 
 window:CreateLabel(playersTab, "Teleport")
-UI.tpAllToggleRef = window:CreateToggle(playersTab, "TP All (Loop)", false, function(v)
+UI.tpAllToggleRef = window:CreateToggle(playersTab, "TP All", false, function(v)
     MovementSettings.TPAll = v
     if v then
         S.tpAllRunning = true
@@ -2294,7 +2191,7 @@ window:CreateDropdown(playersTab, "Target", { "Murder", "Sheriff", "Hero" }, "Mu
     _G.__HH_TpTarget = v
 end)
 
-window:CreateButton(playersTab, "Teleport to Target", function()
+window:CreateButton(playersTab, "Teleport", function()
     local target = _G.__HH_TpTarget
     local plr
     if target == "Sheriff" then plr = getSheriff()
@@ -2382,7 +2279,7 @@ for _, plr in ipairs(Players:GetPlayers()) do
     end
 end
 
-window:CreateButton(playersTab, "Refresh Player List", function()
+window:CreateButton(playersTab, "Refresh List", function()
     refreshFlingDropdown(true)
     notify("Player list refreshed", 2)
 end)
@@ -2483,8 +2380,7 @@ end)
 registerControl(VisualSettings, "GunESP", UI.gunESPToggleRef)
 
 window:CreateLabel(espTab, "Beam")
-UI.beamToggleRef = window:CreateToggle(espTab, "Beam to Murderer", false, function(v)
-    BeamSettings.Enabled = v
+UI.beamToggleRef = window:CreateToggle(espTab, "Beam", false, function(v)
     VisualSettings.Beam = v
     if v then ensureBeamConn() end
     stopBeamIfIdle()
@@ -2519,7 +2415,7 @@ window:CreateButton(espTab, "Stop Spectating", function()
 end)
 
 window:CreateLabel(movementTab, "Fly")
-UI.flyToggleRef = window:CreateToggle(movementTab, "Active Fly", false, function(v)
+UI.flyToggleRef = window:CreateToggle(movementTab, "Fly", false, function(v)
     MovementSettings.Fly = v
     if v then startFly() else stopFly() end
 end)
@@ -2663,14 +2559,14 @@ window:CreateButton(movementTab, "Stop Emote", function()
     end
 end)
 
-window:CreateLabel(movementTab, "Reset Character")
+window:CreateLabel(movementTab, "Reset")
 window:CreateButton(movementTab, "Autokill", function()
     local hum = getHumanoid()
     if hum then hum.Health = 0 end
 end)
 
 window:CreateLabel(movementTab, "Fling")
-UI.flingToggleRef = window:CreateToggle(movementTab, "Touch fling", false, function(v)
+UI.flingToggleRef = window:CreateToggle(movementTab, "Fling", false, function(v)
     MovementSettings.Fling = v
     if v then
         if S.flingRunning then return end
@@ -2700,7 +2596,7 @@ end)
 registerControl(MovementSettings, "Fling", UI.flingToggleRef)
 
 window:CreateLabel(aimbotTab, "Aimbot")
-UI.mm2LockRef = window:CreateToggle(aimbotTab, "Default aimbot", false, function(v)
+UI.mm2LockRef = window:CreateToggle(aimbotTab, "Aimbot", false, function(v)
     AimbotSettings.MM2LockOn = v
     if S.mm2Conn then S.mm2Conn:Disconnect(); S.mm2Conn = nil end
     if v then
@@ -2791,13 +2687,14 @@ UI.triggerRangeRef = window:CreateSlider(aimbotTab, "Trigger Range", 20, 400, 15
 registerControl(AimbotSettings, "TriggerRange", UI.triggerRangeRef)
 
 window:CreateLabel(aimbotTab, "AutoShoot")
-UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire  [B]", false, function(v)
+UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
     AimbotSettings.AutoFire = v
     if S.autoFireConn then S.autoFireConn:Disconnect(); S.autoFireConn = nil end
     if v then
         local lastShot = 0
         S.autoFireConn = RunService.RenderStepped:Connect(function()
             if not AimbotSettings.AutoFire then return end
+            if shouldWaitForCoins() then return end
             local murderer = getMurdererCached()
             if not isTargetSafe(murderer) then return end
             local targetPart = getMM2TargetPart(murderer.Character)
@@ -2816,7 +2713,7 @@ end)
 registerControl(AimbotSettings, "AutoFire", UI.autoFireRef)
 
 window:CreateLabel(aimbotTab, "Sheriff / Hero")
-UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill Murderer", false, function(v)
+UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill", false, function(v)
     AimbotSettings.AutoKillMurderer = v
     if S.autoKillConn then S.autoKillConn:Disconnect(); S.autoKillConn = nil end
     if v then
@@ -2824,6 +2721,7 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill Murderer", false, fun
         S.autoKillConn = RunService.RenderStepped:Connect(function()
             if not AimbotSettings.AutoKillMurderer then return end
             if not isLocalSheriffOrHero() then return end
+            if shouldWaitForCoins() then return end
             local murderer = getMurdererCached()
             if not isTargetSafe(murderer) then return end
             local targetPart = getMM2TargetPart(murderer.Character)
@@ -2906,14 +2804,16 @@ window:CreateButton(aimbotTab, "Kill Everyone", function()
     end)
 end)
 
-UI.autoKillAllRef = window:CreateToggle(aimbotTab, "Auto Kill Everyone", false, function(v)
+UI.autoKillAllRef = window:CreateToggle(aimbotTab, "Auto Kill All", false, function(v)
     S.autoKillAll = v
     if v then
         if S.killAllTask then return end
         S.killAllTask = task.spawn(function()
             while S.autoKillAll do
                 if isLocalMurderer() then
-                    serverKillAllTick()
+                    if not shouldWaitForCoins() then
+                        serverKillAllTick()
+                    end
                 end
                 task.wait(0.05)
             end
@@ -2935,14 +2835,14 @@ UI.korbloxRef = window:CreateToggle(avatarTab, "Korblox", false, function(v)
 end)
 registerControl(AvatarSettings, "Korblox", UI.korbloxRef)
 
-window:CreateLabel(avatarTab, "Animation Pack")
+window:CreateLabel(avatarTab, "Anims")
 UI.animPackRef = window:CreateToggle(avatarTab, "Custom Anims", false, function(v)
     AvatarSettings.AnimPack = v
     if v then
         applyAnimPack()
         notify("Anim pack applied")
     else
-        notify("Rejoin to restore default anims", 3)
+        notify("Rejoin to restore anims", 3)
     end
 end)
 registerControl(AvatarSettings, "AnimPack", UI.animPackRef)
@@ -2954,7 +2854,6 @@ LocalPlayer.CharacterAdded:Connect(function()
     for k in pairs(VisCache) do VisCache[k] = nil end
     S.korbloxPart = nil
     S.lastSafeCFrame = nil
-    S.currentIdleTrack = nil
     S.currentEmoteTrack = nil
     S.flingOriginalCFrame = nil
     S.flingOriginalPosition = nil
@@ -2977,7 +2876,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     if MovementSettings.Fly then attachFlyBodyMovers() end
     if AvatarSettings.Korblox then pcall(applyKorblox) end
     if AvatarSettings.AnimPack then pcall(applyAnimPack) end
-    if FarmSettings.AutoFarm or FarmSettings.ManualCollect then
+    if FarmSettings.AutoFarm and S.roundActive then
         task.wait(0.5)
         if not S.coinCollecting then startCoinCollector() end
     end
@@ -2987,35 +2886,17 @@ window:CreateLabel(farmTab, "Coin Farm")
 
 UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
     FarmSettings.AutoFarm = v
-    if v then startCoinCollector()
-    else if not FarmSettings.ManualCollect then stopCoinCollector() end end
+    if v then
+        if S.roundActive and not S.coinCollecting then startCoinCollector() end
+    else
+        stopCoinCollector()
+    end
 end)
 registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
 
-UI.manualCollectRef = window:CreateToggle(farmTab, "Manual Collect", false, function(v)
-    FarmSettings.ManualCollect = v
-    if v then startCoinCollector()
-    else if not FarmSettings.AutoFarm then stopCoinCollector() end end
-end)
-registerControl(FarmSettings, "ManualCollect", UI.manualCollectRef)
+window:CreateParagraph(farmTab, "Farms up to 40 coins per round · Auto-stops on round end")
 
-window:CreateLabel(farmTab, "Tuning")
-UI.coinSpeedRef = window:CreateSlider(farmTab, "Move Speed", 10, 60, 20, function(v)
-    FarmSettings.CoinSpeed = v
-end)
-registerControl(FarmSettings, "CoinSpeed", UI.coinSpeedRef)
-
-UI.pickupRadiusRef = window:CreateSlider(farmTab, "Pickup Radius", 1, 10, 3, function(v)
-    FarmSettings.PickupRadius = v
-end)
-registerControl(FarmSettings, "PickupRadius", UI.pickupRadiusRef)
-
-UI.autoRotateRef = window:CreateToggle(farmTab, "Auto Rotate Camera", true, function(v)
-    FarmSettings.AutoRotate = v
-end)
-registerControl(FarmSettings, "AutoRotate", UI.autoRotateRef)
-
-window:CreateLabel(farmTab, "Live Stats")
+window:CreateLabel(farmTab, "Stats")
 local coinCountFrame = window:CreateParagraph(farmTab, "0")
 local coinCountLabel = coinCountFrame:FindFirstChildOfClass("TextLabel")
 local statusFrame = window:CreateParagraph(farmTab, "Idle")
@@ -3038,10 +2919,17 @@ local roundStartEvent = gameplay and gameplay:FindFirstChild("RoundStart")
 if coinsStartedEvent then
     coinsStartedEvent.OnClientEvent:Connect(function(data)
         S.bagProgress = {}
-        for bagName, _ in pairs(data) do S.bagProgress[bagName] = 0 end
+        if type(data) == "table" and data.Coin then
+            if data.Coin.CollectionLimit then
+                FARM_GOAL = data.Coin.CollectionLimit
+            end
+        end
         S.totalCoins = 0
         if S.coinCountSetter then S.coinCountSetter(0) end
         S.roundActive = true
+        if FarmSettings.AutoFarm and not S.coinCollecting then
+            startCoinCollector()
+        end
     end)
 end
 
@@ -3069,6 +2957,10 @@ if roundStartEvent then
         end
         refreshBeam()
         onRoundBegin()
+        if FarmSettings.AutoFarm then
+            task.wait(0.5)
+            if not S.coinCollecting then startCoinCollector() end
+        end
     end)
 end
 
@@ -3076,6 +2968,7 @@ if roundEndFadeEvent then
     roundEndFadeEvent.OnClientEvent:Connect(function()
         S.roundActive = false
         S.roleCache = {}
+        stopCoinCollector()
         onRoundEnd()
         task.wait(0.05)
         for _, plr in ipairs(Players:GetPlayers()) do
@@ -3087,7 +2980,7 @@ end
 task.spawn(function()
     while true do
         task.wait(0.5)
-        if (FarmSettings.AutoFarm or FarmSettings.ManualCollect) and not S.coinCollecting then
+        if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting then
             startCoinCollector()
         end
     end
@@ -3096,11 +2989,11 @@ end)
 window:CreateLabel(miscTab, "Gun")
 window:CreateButton(miscTab, "Pick up Gun", function()
     local ok, reason = bringGunToPlayer()
-    if ok then notify("Gun incoming (" .. tostring(reason) .. ")")
+    if ok then notify("Gun incoming")
     else notify("Failed: " .. tostring(reason)) end
 end)
 
-UI.autoTpGunRef = window:CreateToggle(miscTab, "Auto pick up Gun", false, function(v)
+UI.autoTpGunRef = window:CreateToggle(miscTab, "Auto Gun", false, function(v)
     MiscSettings.AutoTpGun = v
     if v then
         if S.autoTpGunThread then return end
@@ -3156,32 +3049,24 @@ end
 
 local function setupMobileButtons()
     if not isMobile then return end
-    if type(window.AddMobileButton) ~= "function" then
-        warn("[HappyHub] AddMobileButton not available in this API version")
-        return
-    end
-    local ok, err = pcall(function()
+    if type(window.AddMobileButton) ~= "function" then return end
+    pcall(function()
         window:AddMobileButton({
-            OnClick = function()
-                task.spawn(mobileForceShoot)
-            end,
+            OnClick = function() task.spawn(mobileForceShoot) end,
             Icon = "rbxassetid://12804017021",
             Tooltip = "Shoot Murderer"
         })
     end)
-    if not ok then warn("[HappyHub] AddMobileButton SHOOT failed: " .. tostring(err)) end
     pcall(function()
         window:AddMobileButton({
-            OnClick = function()
-                toggleESPAll()
-            end,
+            OnClick = function() toggleESPAll() end,
             Icon = "rbxassetid://12804017021",
-            Tooltip = "Toggle ESP (all except Neutral)"
+            Tooltip = "Toggle ESP"
         })
     end)
     pcall(function()
         window:AddMobileButton({
-            Feature = "Default aimbot",
+            Feature = "Aimbot",
             Tooltip = "Toggle Aimbot"
         })
     end)
@@ -3262,18 +3147,7 @@ local function snapshotSettings()
             AnimPack  = AvatarSettings.AnimPack,
         },
         Farm = {
-            AutoFarm      = FarmSettings.AutoFarm,
-            ManualCollect = FarmSettings.ManualCollect,
-            CoinSpeed     = FarmSettings.CoinSpeed,
-            PickupRadius  = FarmSettings.PickupRadius,
-            AutoRotate    = FarmSettings.AutoRotate,
-        },
-        Beam = {
-            Enabled = BeamSettings.Enabled,
-            Thickness = BeamSettings.Thickness,
-            Transparency = BeamSettings.Transparency,
-            MaxIterations = BeamSettings.MaxIterations,
-            WaypointOffset = BeamSettings.WaypointOffset,
+            AutoFarm = FarmSettings.AutoFarm,
         },
         AntiVoid = {
             Threshold = AntiVoidSettings.Threshold,
@@ -3302,9 +3176,6 @@ local function applyConfig(data)
     end
     if data.Farm then
         for k, v in pairs(data.Farm) do FarmSettings[k] = v end
-    end
-    if data.Beam then
-        for k, v in pairs(data.Beam) do BeamSettings[k] = v end
     end
     if data.AntiVoid then
         for k, v in pairs(data.AntiVoid) do AntiVoidSettings[k] = v end
@@ -3346,11 +3217,11 @@ local function applyConfig(data)
     refreshAllESP()
     applyGunESP()
     if VisualSettings.NameTags then startNameTagUpdater() else stopNameTagUpdater() end
-    if BeamSettings.Enabled then ensureBeamConn() else stopBeamIfIdle() end
+    if VisualSettings.Beam then ensureBeamConn() else stopBeamIfIdle() end
     if AimbotSettings.FOVCircle then startFOVCircle() else stopFOVCircle() end
     if AvatarSettings.Korblox then pcall(applyKorblox) else pcall(removeKorblox) end
     if AvatarSettings.AnimPack then pcall(applyAnimPack) end
-    if FarmSettings.AutoFarm or FarmSettings.ManualCollect then
+    if FarmSettings.AutoFarm and S.roundActive then
         if not S.coinCollecting then startCoinCollector() end
     else
         stopCoinCollector()
@@ -3365,9 +3236,9 @@ window:BuildConfigPage()
 
 task.delay(2, function()
     if isMobile then
-        notify("Mobile method · tap SHOOT", 4)
+        notify("Mobile loaded", 4)
     else
-        notify("PC method · silent aim active", 4)
+        notify("PC loaded", 4)
     end
 end)
 
