@@ -141,7 +141,7 @@ local VisCache = {}
 local VIS_TTL = 0.05
 local MURDERER_TTL = 0.1
 
-local FARM_SPEED = 30
+local FARM_SPEED = 20
 local FARM_GOAL = 40
 
 local S = {
@@ -1696,7 +1696,7 @@ local function startCoinCollector()
 
     S.coinVelocity = Instance.new("BodyVelocity")
     S.coinVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    S.coinVelocity.P = 1000
+    S.coinVelocity.P = 1250
     S.coinVelocity.Parent = hrp
 
     S.coinGyro = Instance.new("BodyGyro")
@@ -1742,7 +1742,7 @@ local function startCoinCollector()
             local murderHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
             if murderHRP then
                 local distToMurderer = (currentHRP.Position - murderHRP.Position).Magnitude
-                if distToMurderer < 30 then
+                if distToMurderer < 25 then
                     evadeDirection = (currentHRP.Position - murderHRP.Position).Unit
                     if S.coinStatusSetter then S.coinStatusSetter("Evading") end
                 end
@@ -1750,7 +1750,7 @@ local function startCoinCollector()
         end
 
         if evadeDirection then
-            local targetVel = evadeDirection * math.min(FARM_SPEED * 1.5, 75)
+            local targetVel = evadeDirection * math.min(FARM_SPEED * 1.5, 60)
             S.coinVelocity.Velocity = targetVel
             S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection)
             local cam = workspace.CurrentCamera
