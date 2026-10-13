@@ -27,6 +27,7 @@ local HAS = {
     Notify            = type(API.Notify) == "function",
     SetTheme          = type(API.SetTheme) == "function",
     GetTheme          = type(API.GetTheme) == "function",
+    CreateImageCard   = type(API.CreateImageCard) == "function",
 }
 
 local LocalControlRegistry = {}
@@ -110,6 +111,8 @@ local CUSTOM_ANIMS = {
     jump  = { id = "rbxassetid://10921160088",     priority = Enum.AnimationPriority.Action4 },
 }
 
+local MINI_BOX_ANIM_ID = "rbxassetid://113994067684875"
+
 local AimbotSettings = {
     MM2LockOn = false, MM2Smooth = 8, MM2Range = 500, MM2Target = "Head",
     TriggerBot = false, TriggerRange = 150, AutoFire = false, WallCheck = true,
@@ -141,7 +144,7 @@ local VisCache = {}
 local VIS_TTL = 0.05
 local MURDERER_TTL = 0.1
 
-local FARM_SPEED = 20
+local FARM_SPEED = 30
 local FARM_GOAL = 40
 
 local S = {
@@ -159,6 +162,7 @@ local S = {
     flingRunning = false, tpAllRunning = false, killAllRunning = false,
     musicSound = nil,
     currentEmoteTrack = nil,
+    miniBoxTrack = nil,
     animPriorityConn = nil,
     korbloxPart = nil,
     mobileFlyVec = Vector3.zero, mobileFlyDragging = false,
@@ -177,6 +181,7 @@ local S = {
     spectating = false, spectateTarget = nil, spectateDefaultSubject = nil,
     lastTargetedCoin = nil, lastCollectTime = 0,
     autoKillAll = false, killAllTask = nil,
+    evasionThread = nil,
 }
 
 local UI = {}
@@ -943,6 +948,37 @@ local function playEmote(emoteName, emoteId)
     end
 end
 
+local function playMiniBoxAnimation()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    local animator = hum:FindFirstChildOfClass("Animator")
+    if not animator then return end
+
+    if S.miniBoxTrack then
+        pcall(function() S.miniBoxTrack:Stop(0.1) end)
+        S.miniBoxTrack = nil
+    end
+
+    local anim = Instance.new("Animation")
+    anim.AnimationId = MINI_BOX_ANIM_ID
+    local ok, track = pcall(function() return animator:LoadAnimation(anim) end)
+    if ok and track then
+        track.Priority = Enum.AnimationPriority.Action4
+        track.Looped = true
+        track:Play(0.1)
+        S.miniBoxTrack = track
+    end
+end
+
+local function stopMiniBoxAnimation()
+    if S.miniBoxTrack then
+        pcall(function() S.miniBoxTrack:Stop(0.1) end)
+        S.miniBoxTrack = nil
+    end
+end
+
 pcall(function()
     S.hookNamecall = hookmetamethod
     S.getNamecall  = getnamecallmethod
@@ -1683,6 +1719,7 @@ local function stopCoinCollector()
     if S.coinVelocity then S.coinVelocity:Destroy(); S.coinVelocity = nil end
     if S.coinGyro then S.coinGyro:Destroy(); S.coinGyro = nil end
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
+    stopMiniBoxAnimation()
 end
 
 local function startCoinCollector()
@@ -1693,6 +1730,7 @@ local function startCoinCollector()
 
     S.coinCollecting = true
     if S.coinStatusSetter then S.coinStatusSetter("Farming") end
+    playMiniBoxAnimation()
 
     S.coinVelocity = Instance.new("BodyVelocity")
     S.coinVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
@@ -1750,7 +1788,7 @@ local function startCoinCollector()
         end
 
         if evadeDirection then
-            local targetVel = evadeDirection * math.min(FARM_SPEED * 1.5, 60)
+            local targetVel = evadeDirection * math.min(FARM_SPEED * 1.5, 75)
             S.coinVelocity.Velocity = targetVel
             S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection)
             local cam = workspace.CurrentCamera
@@ -1775,6 +1813,40 @@ local function startCoinCollector()
             cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(currentHRP.Position, target.Position), 0.2)
         end
         if S.coinStatusSetter then S.coinStatusSetter("Farming") end
+    end)
+end
+
+local function stopEvasion()
+    if S.evasionThread then
+        pcall(task.cancel, S.evasionThread)
+        S.evasionThread = nil
+    end
+end
+
+local function startEvasion()
+    if S.evasionThread then return end
+    S.evasionThread = task.spawn(function()
+        while S.roundActive do
+            task.wait(0.1)
+            if not FarmSettings.AutoFarm then continue end
+            if S.coinCollecting then continue end
+            local myHRP = getHRP()
+            if not myHRP then continue end
+            local murderer = getMurdererCached()
+            if not murderer or not murderer.Character then continue end
+            local murderHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
+            if not murderHRP then continue end
+            local dist = (myHRP.Position - murderHRP.Position).Magnitude
+            if dist < 25 then
+                local evadeDir = (myHRP.Position - murderHRP.Position).Unit
+                local evadePos = myHRP.Position + evadeDir * 40
+                local hum = getHumanoid()
+                if hum then
+                    pcall(function() hum:MoveTo(evadePos) end)
+                end
+            end
+        end
+        S.evasionThread = nil
     end)
 end
 
@@ -2131,8 +2203,21 @@ local avatarTab    = window:CreateTab("Avatar", ICONS.Avt)
 local farmTab      = window:CreateTab("Farm", ICONS.Farm)
 local miscTab      = window:CreateTab("Misc", ICONS.Misc)
 
-window:CreateLabel(homeTab, "Happy Hub")
-window:CreateParagraph(homeTab, "Best free hub · Since 2026 · v11.6 Update · MM2 Project")
+if HAS.CreateImageCard then
+    pcall(function()
+        window:CreateImageCard(homeTab, {
+            Image = "rbxthumb://type=Asset&id=73224038558737&w=420&h=420",
+            Title = "Happy Hub",
+            Subtitle = "MM2 · Keyless · by replicatedman",
+            Description = "Best free hub · Since 2026 · v11.6 Update · MM2 Project",
+            Height = 150,
+            ImageWidth = 130,
+        })
+    end)
+else
+    window:CreateLabel(homeTab, "Happy Hub")
+    window:CreateParagraph(homeTab, "Best free hub · Since 2026 · v11.6 Update · MM2 Project")
+end
 
 window:CreateLabel(homeTab, "Music")
 UI.musicToggleRef = window:CreateToggle(homeTab, "Companion", false, function(v)
@@ -2855,6 +2940,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.korbloxPart = nil
     S.lastSafeCFrame = nil
     S.currentEmoteTrack = nil
+    S.miniBoxTrack = nil
     S.flingOriginalCFrame = nil
     S.flingOriginalPosition = nil
     S.flingTargetRunning = false
@@ -2870,6 +2956,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
     if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
+    stopEvasion()
     clearBeamPool(S.beamData)
     task.wait(0.6)
     if isMobile then scanForGunShoot() end
@@ -2887,14 +2974,18 @@ window:CreateLabel(farmTab, "Coin Farm")
 UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
     FarmSettings.AutoFarm = v
     if v then
-        if S.roundActive and not S.coinCollecting then startCoinCollector() end
+        if S.roundActive then
+            if not S.coinCollecting then startCoinCollector() end
+            startEvasion()
+        end
     else
         stopCoinCollector()
+        stopEvasion()
     end
 end)
 registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
 
-window:CreateParagraph(farmTab, "Farms up to 40 coins per round · Auto-stops on round end")
+window:CreateParagraph(farmTab, "Farms up to 40 coins per round · Mini Box animation · Auto-stops on round end")
 
 window:CreateLabel(farmTab, "Stats")
 local coinCountFrame = window:CreateParagraph(farmTab, "0")
@@ -2936,12 +3027,16 @@ end
 if coinCollectedEvent then
     coinCollectedEvent.OnClientEvent:Connect(function(bagName, currentCoins)
         S.lastCollectTime = tick()
-        if S.bagProgress[bagName] ~= nil then
+        if type(bagName) == "string" and type(currentCoins) == "number" then
             S.bagProgress[bagName] = currentCoins
-            S.totalCoins = 0
-            for _, v in pairs(S.bagProgress) do S.totalCoins = S.totalCoins + v end
-            if S.coinCountSetter then S.coinCountSetter(S.totalCoins) end
         end
+        S.totalCoins = 0
+        for _, v in pairs(S.bagProgress) do
+            if type(v) == "number" then
+                S.totalCoins = S.totalCoins + v
+            end
+        end
+        if S.coinCountSetter then S.coinCountSetter(S.totalCoins) end
     end)
 end
 
@@ -2960,6 +3055,7 @@ if roundStartEvent then
         if FarmSettings.AutoFarm then
             task.wait(0.5)
             if not S.coinCollecting then startCoinCollector() end
+            startEvasion()
         end
     end)
 end
@@ -2969,6 +3065,7 @@ if roundEndFadeEvent then
         S.roundActive = false
         S.roleCache = {}
         stopCoinCollector()
+        stopEvasion()
         onRoundEnd()
         task.wait(0.05)
         for _, plr in ipairs(Players:GetPlayers()) do
@@ -3223,8 +3320,10 @@ local function applyConfig(data)
     if AvatarSettings.AnimPack then pcall(applyAnimPack) end
     if FarmSettings.AutoFarm and S.roundActive then
         if not S.coinCollecting then startCoinCollector() end
+        startEvasion()
     else
         stopCoinCollector()
+        stopEvasion()
     end
     syncUIControls()
     if window.UpdateThemeButtons then window:UpdateThemeButtons() end
