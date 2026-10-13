@@ -144,7 +144,7 @@ local VisCache = {}
 local VIS_TTL = 0.05
 local MURDERER_TTL = 0.1
 
-local FARM_SPEED = 30
+local FARM_SPEED = 20
 local FARM_GOAL = 40
 
 local S = {
