@@ -142,10 +142,14 @@ local TargetVisibility = {}
 local MurdererCache = { plr = nil, time = 0 }
 local VisCache = {}
 local VIS_TTL = 0.05
-local MURDERER_TTL = 0.1
+local MURDERER_TTL = 0.4
 
 local FARM_SPEED = 20
 local FARM_GOAL = 40
+
+local CachedCoinTarget = nil
+local CachedCoinTargetTime = 0
+local COIN_TARGET_TTL = 0.12
 
 local S = {
     noclipConn = nil, godConn = nil, antiAFKConn = nil,
@@ -180,6 +184,7 @@ local S = {
     lastMobileShot = 0,
     spectating = false, spectateTarget = nil, spectateDefaultSubject = nil,
     lastTargetedCoin = nil, lastCollectTime = 0,
+    lastCamUpdate = 0,
     autoKillAll = false, killAllTask = nil,
     evasionThread = nil,
 }
@@ -873,7 +878,7 @@ local function ensureBeamConn()
     if S.beamData.updateConn then return end
     S.beamData.updateConn = RunService.Heartbeat:Connect(function()
         local now = tick()
-        if now - S.beamData.lastTick < 0.033 then return end
+        if now - S.beamData.lastTick < 0.08 then return end
         S.beamData.lastTick = now
         updateBeam()
     end)
@@ -1788,17 +1793,29 @@ local function startCoinCollector()
         end
 
         if evadeDirection then
-            local targetVel = evadeDirection * math.min(FARM_SPEED * 1.5, 75)
+            local targetVel = evadeDirection * math.min(FARM_SPEED * 1.5, 60)
             S.coinVelocity.Velocity = targetVel
             S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection)
-            local cam = workspace.CurrentCamera
-            if cam then
-                cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection), 0.2)
+            if tick() - S.lastCamUpdate > 0.05 then
+                S.lastCamUpdate = tick()
+                local cam = workspace.CurrentCamera
+                if cam then
+                    cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection), 0.25)
+                end
             end
             return
         end
 
-        local target = getBestCoin()
+        local nowTick = tick()
+        local target
+        if CachedCoinTarget and CachedCoinTarget.Parent and (nowTick - CachedCoinTargetTime) < COIN_TARGET_TTL then
+            target = CachedCoinTarget
+        else
+            target = getBestCoin()
+            CachedCoinTarget = target
+            CachedCoinTargetTime = nowTick
+        end
+
         if not target then
             S.coinVelocity.Velocity = Vector3.zero
             if S.coinStatusSetter then S.coinStatusSetter("No coins") end
@@ -1808,9 +1825,12 @@ local function startCoinCollector()
         local direction = (target.Position - currentHRP.Position).Unit
         S.coinVelocity.Velocity = direction * FARM_SPEED
         S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, target.Position)
-        local cam = workspace.CurrentCamera
-        if cam then
-            cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(currentHRP.Position, target.Position), 0.2)
+        if tick() - S.lastCamUpdate > 0.05 then
+            S.lastCamUpdate = tick()
+            local cam = workspace.CurrentCamera
+            if cam then
+                cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(currentHRP.Position, target.Position), 0.25)
+            end
         end
         if S.coinStatusSetter then S.coinStatusSetter("Farming") end
     end)
@@ -1827,7 +1847,7 @@ local function startEvasion()
     if S.evasionThread then return end
     S.evasionThread = task.spawn(function()
         while S.roundActive do
-            task.wait(0.1)
+            task.wait(0.15)
             if not FarmSettings.AutoFarm then continue end
             if S.coinCollecting then continue end
             local myHRP = getHRP()
@@ -2951,7 +2971,10 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.spectateDefaultSubject = nil
     S.lastTargetedCoin = nil
     S.lastCollectTime = 0
+    S.lastCamUpdate = 0
     S.autoKillAll = false
+    CachedCoinTarget = nil
+    CachedCoinTargetTime = 0
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
