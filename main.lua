@@ -148,6 +148,8 @@ local function cleanupRound()
     end)
 end
 
+local PlayerConns = setmetatable({}, { __mode = "k" })
+
 local HAS = {
     RegisterControl   = type(API.RegisterControl) == "function",
     SyncUIControls    = type(API.SyncUIControls) == "function",
@@ -316,6 +318,7 @@ local S = {
     evasionThread = nil,
     dropdownThread = nil,
     farmBackupThread = nil,
+    watchdogThread = nil,
 }
 
 local UI = {}
@@ -327,6 +330,31 @@ end
 local function getHumanoid()
     local c = LocalPlayer.Character
     return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+local function attachPlayerConns(plr)
+    if plr == LocalPlayer then return end
+    PlayerConns[plr] = PlayerConns[plr] or {}
+
+    table.insert(PlayerConns[plr], plr.CharacterAdded:Connect(function()
+        task.wait(0.3)
+        clearHighlights(plr)
+        applyESP(plr)
+        refreshFlingDropdown(true)
+    end))
+
+    table.insert(PlayerConns[plr], plr.CharacterRemoving:Connect(function()
+        clearHighlights(plr)
+    end))
+end
+
+local function detachPlayerConns(plr)
+    local conns = PlayerConns[plr]
+    if not conns then return end
+    for _, c in ipairs(conns) do
+        pcall(function() c:Disconnect() end)
+    end
+    PlayerConns[plr] = nil
 end
 
 local function spectatePlayer(plr)
@@ -427,7 +455,7 @@ end
 if isMobile then
     trackThread(task.spawn(function()
         while true do
-            task.wait(0.5)
+            task.wait(0.6)
             scanForGunShoot()
         end
     end))
@@ -1515,7 +1543,7 @@ local function startHeroWatcher()
     S.heroWatcher.active = true
     S.heroWatcher.thread = task.spawn(function()
         while S.heroWatcher.active do
-            task.wait(0.4)
+            task.wait(0.5)
             if not S.heroWatcher.active then break end
             local sheriffDead, sheriffName = isSheriffDead()
             if sheriffDead then
@@ -1605,25 +1633,17 @@ hookFadeEvent()
 
 trackThread(task.spawn(function()
     while true do
-        task.wait(3)
+        task.wait(4)
         if not S.fadeConn or not getFadeEvent() then hookFadeEvent() end
     end
 end))
 
 for _, plr in ipairs(Players:GetPlayers()) do
-    if plr ~= LocalPlayer then
-        trackConnection(plr.CharacterAdded:Connect(function()
-            task.wait(0.3); clearHighlights(plr); applyESP(plr)
-        end))
-        trackConnection(plr.CharacterRemoving:Connect(function() clearHighlights(plr) end))
-    end
+    attachPlayerConns(plr)
 end
-trackConnection(Players.PlayerAdded:Connect(function(plr)
-    trackConnection(plr.CharacterAdded:Connect(function()
-        task.wait(0.3); clearHighlights(plr); applyESP(plr)
-    end))
-end))
+trackConnection(Players.PlayerAdded:Connect(attachPlayerConns))
 trackConnection(Players.PlayerRemoving:Connect(function(plr)
+    detachPlayerConns(plr)
     clearHighlights(plr)
     S.roleCache[plr.Name] = nil
     TargetVisibility[plr] = nil
@@ -2470,32 +2490,19 @@ end
 
 S.dropdownThread = trackThread(task.spawn(function()
     while true do
-        task.wait(0.5)
+        task.wait(1)
         refreshFlingDropdown(false)
     end
 end))
 
-trackConnection(Players.PlayerAdded:Connect(function(plr)
+trackConnection(Players.PlayerAdded:Connect(function()
     task.wait(0.3)
     refreshFlingDropdown(true)
-    trackConnection(plr.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        refreshFlingDropdown(true)
-    end))
 end))
 trackConnection(Players.PlayerRemoving:Connect(function()
     task.wait(0.3)
     refreshFlingDropdown(true)
 end))
-
-for _, plr in ipairs(Players:GetPlayers()) do
-    if plr ~= LocalPlayer then
-        trackConnection(plr.CharacterAdded:Connect(function()
-            task.wait(0.5)
-            refreshFlingDropdown(true)
-        end))
-    end
-end
 
 window:CreateButton(playersTab, "Refresh List", function()
     refreshFlingDropdown(true)
@@ -3185,18 +3192,21 @@ if roundStartEvent then
         S.roundActive = true
         if S.coinCountSetter then S.coinCountSetter(0) end
 
-        if ESP.active.MM2 then
-            refreshAllESP()
-            if not S.mm2PeriodicThread then
-                S.mm2PeriodicThread = trackRoundThread(task.spawn(function()
-                    while ESP.active.MM2 or VisualSettings.GunESP do
-                        task.wait(1)
-                        if ESP.active.MM2 then refreshAllESP() end
-                        if VisualSettings.GunESP then applyGunESP() end
-                    end
-                    S.mm2PeriodicThread = nil
-                end))
-            end
+        task.wait(0.1)
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then applyESP(plr) end
+        end
+        refreshBeam()
+
+        if ESP.active.MM2 and not S.mm2PeriodicThread then
+            S.mm2PeriodicThread = trackRoundThread(task.spawn(function()
+                while ESP.active.MM2 or VisualSettings.GunESP do
+                    task.wait(1)
+                    if ESP.active.MM2 then refreshAllESP() end
+                    if VisualSettings.GunESP then applyGunESP() end
+                end
+                S.mm2PeriodicThread = nil
+            end))
         end
 
         if VisualSettings.NameTags and not S.nameTagUpdater then
@@ -3206,41 +3216,6 @@ if roundStartEvent then
         if VisualSettings.Beam and not S.beamData.updateConn then
             ensureBeamConn()
         end
-
-        if AimbotSettings.MM2LockOn and not S.mm2Conn then
-            S.mm2Conn = trackRoundConnection(RunService.RenderStepped:Connect(function()
-                if not AimbotSettings.MM2LockOn then return end
-                local murderer = getMurdererCached()
-                if not isTargetSafe(murderer) then return end
-                local targetPart = getMM2TargetPart(murderer.Character)
-                local myHRP = getHRP()
-                if not targetPart or not myHRP then return end
-                local dist = (myHRP.Position - targetPart.Position).Magnitude
-                if dist > AimbotSettings.MM2Range then return end
-                if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
-                if AimbotSettings.FOVCircle then
-                    local cam = workspace.CurrentCamera
-                    if cam then
-                        local sp, on = cam:WorldToViewportPoint(targetPart.Position)
-                        if on then
-                            local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
-                            if (Vector2.new(sp.X, sp.Y) - center).Magnitude > AimbotSettings.FOVRadius then return end
-                        end
-                    end
-                end
-                local camera = workspace.CurrentCamera
-                local targetCF = CFrame.new(camera.CFrame.Position, targetPart.Position)
-                local alpha = math.clamp(1 / AimbotSettings.MM2Smooth, 0.02, 1)
-                camera.CFrame = camera.CFrame:Lerp(targetCF, alpha)
-            end))
-        end
-
-        task.wait(0.1)
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer and plr.Character then applyESP(plr) end
-        end
-        refreshBeam()
-        onRoundBegin()
 
         if FarmSettings.AutoFarm then
             task.wait(0.5)
@@ -3256,7 +3231,6 @@ if roundEndFadeEvent then
         S.roleCache = {}
         stopCoinCollector()
         stopEvasion()
-        onRoundEnd()
         cleanupRound()
         task.wait(0.05)
         for _, plr in ipairs(Players:GetPlayers()) do
@@ -3267,9 +3241,24 @@ end
 
 S.farmBackupThread = trackThread(task.spawn(function()
     while true do
-        task.wait(0.5)
+        task.wait(1.5)
         if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting then
             startCoinCollector()
+        end
+    end
+end))
+
+S.watchdogThread = trackThread(task.spawn(function()
+    while true do
+        task.wait(1800)
+        if type(getconnections) == "function" then
+            local ok, list = pcall(getconnections, RunService.Heartbeat)
+            if ok and list then
+                local total = #list
+                if total > 50 then
+                    warn(string.format("[HH] Watchdog: %d Heartbeat connections active", total))
+                end
+            end
         end
     end
 end))
