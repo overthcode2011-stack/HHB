@@ -81,7 +81,7 @@ local SoundService = game:GetService("SoundService")
 local GuiService = game:GetService("GuiService")
 local LocalPlayer = Players.LocalPlayer
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-
+API.Config.SupportedGames = { 142823291 }
 local HAS = {
     RegisterControl   = type(API.RegisterControl) == "function",
     SyncUIControls    = type(API.SyncUIControls) == "function",
@@ -2319,31 +2319,17 @@ local avatarTab    = window:CreateTab("Avatar", ICONS.Avt)
 local farmTab      = window:CreateTab("Farm", ICONS.Farm)
 local miscTab      = window:CreateTab("Misc", ICONS.Misc)
 
-if HAS.CreateImageCard then
-    pcall(function()
-        window:CreateImageCard(homeTab, {
-            Image = "rbxthumb://type=Asset&id=73224038558737&w=420&h=420",
-            Title = "Happy Hub",
-            Subtitle = "MM2 · Keyless · by replicatedman",
-            Description = "Best free hub · Since 2026 · v11.6 Update · MM2 Project\n\nSupported games: Murder Mystery 2 · Arsenal · Blade Ball",
-            Height = 170,
-            ImageWidth = 140,
-        })
-    end)
-    pcall(function()
-        window:CreateImageCard(homeTab, {
-            Image = "rbxthumb://type=Game&id=142823291&w=420&h=420",
-            Title = "Murder Mystery 2",
-            Subtitle = "by Nikilis",
-            Description = "Social deduction game · 12 players · 1 murderer · 1 sheriff",
-            Height = 120,
-            ImageWidth = 100,
-        })
-    end)
-else
-    window:CreateLabel(homeTab, "Happy Hub")
-    window:CreateParagraph(homeTab, "Best free hub · Since 2026 · v11.6 Update · MM2 Project")
-end
+window:CreateImageCard(homeTab, {
+    Image = "rbxthumb://type=Asset&id=" .. game.PlaceId .. "&w=420&h=420",
+    Title = "Murder mistery 2",
+    Subtitle = "by Nikilis",
+    Description = "Murder Mistery · replicatedman · v11.7 API · Open Source proyect",
+    Height = 150,
+    ImageWidth = 130,
+    OnClick = function()
+        API:Notify("Actual game", 2)
+    end,
+})
 
 window:CreateLabel(homeTab, "Music")
 UI.musicTrackDropdown = window:CreateDropdown(homeTab, "Track", {
