@@ -163,6 +163,14 @@ local EMOTES = {
     { name = "Gamgam Style",     id = "129764254213842" },
 }
 
+local MUSIC_TRACKS = {
+    { name = "Companion",         id = "98012717802240" },
+    { name = "Her Boyfriend",     id = "105828916140935" },
+    { name = "I Stalk Ur Socials", id = "96622114113241" },
+    { name = "EYUHH!",            id = "16190782181" },
+    { name = "Low Cortisol",      id = "110919391228823" },
+}
+
 local CUSTOM_ANIMS = {
     idle  = { id = "rbxassetid://130192584268621", priority = Enum.AnimationPriority.Action  },
     walk  = { id = "rbxassetid://81802706102899",  priority = Enum.AnimationPriority.Action2 },
@@ -183,6 +191,7 @@ local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP
 local MiscSettings = {
     InfJump = false, AntiAFK = false, AutoTpGun = false,
     SilentAim = false, MusicCompanion = false, AntiVoid = false,
+    SelectedMusic = "Companion",
 }
 local MovementSettings = {
     Noclip = false, God = false, Fly = false, WalkSpeed = 16, JumpPower = 50,
@@ -1036,6 +1045,37 @@ local function stopMiniBoxAnimation()
     if S.miniBoxTrack then
         pcall(function() S.miniBoxTrack:Stop(0.1) end)
         S.miniBoxTrack = nil
+    end
+end
+
+local function playMusic()
+    if not MiscSettings.MusicCompanion then return end
+    if S.musicSound then
+        S.musicSound:Stop()
+        S.musicSound:Destroy()
+        S.musicSound = nil
+    end
+    local selected = MUSIC_TRACKS[1]
+    for _, track in ipairs(MUSIC_TRACKS) do
+        if track.name == MiscSettings.SelectedMusic then
+            selected = track
+            break
+        end
+    end
+    S.musicSound = Instance.new("Sound")
+    S.musicSound.SoundId = "rbxassetid://" .. selected.id
+    S.musicSound.Volume = 10
+    S.musicSound.Looped = true
+    S.musicSound.Parent = SoundService
+    S.musicSound:Play()
+    notify("Playing: " .. selected.name)
+end
+
+local function stopMusic()
+    if S.musicSound then
+        S.musicSound:Stop()
+        S.musicSound:Destroy()
+        S.musicSound = nil
     end
 end
 
@@ -2285,9 +2325,19 @@ if HAS.CreateImageCard then
             Image = "rbxthumb://type=Asset&id=73224038558737&w=420&h=420",
             Title = "Happy Hub",
             Subtitle = "MM2 · Keyless · by replicatedman",
-            Description = "Best free hub · Since 2026 · v11.6 Update · MM2 Project",
-            Height = 150,
-            ImageWidth = 130,
+            Description = "Best free hub · Since 2026 · v11.6 Update · MM2 Project\n\nSupported games: Murder Mystery 2 · Arsenal · Blade Ball",
+            Height = 170,
+            ImageWidth = 140,
+        })
+    end)
+    pcall(function()
+        window:CreateImageCard(homeTab, {
+            Image = "rbxthumb://type=Game&id=142823291&w=420&h=420",
+            Title = "Murder Mystery 2",
+            Subtitle = "by Nikilis",
+            Description = "Social deduction game · 12 players · 1 murderer · 1 sheriff",
+            Height = 120,
+            ImageWidth = 100,
         })
     end)
 else
@@ -2296,19 +2346,25 @@ else
 end
 
 window:CreateLabel(homeTab, "Music")
-UI.musicToggleRef = window:CreateToggle(homeTab, "Companion", false, function(v)
+UI.musicTrackDropdown = window:CreateDropdown(homeTab, "Track", {
+    "Companion",
+    "Her Boyfriend",
+    "I Stalk Ur Socials",
+    "EYUHH!",
+    "Low Cortisol",
+}, "Companion", function(v)
+    MiscSettings.SelectedMusic = v
+    if MiscSettings.MusicCompanion then
+        playMusic()
+    end
+end)
+
+UI.musicToggleRef = window:CreateToggle(homeTab, "Play Music", false, function(v)
     MiscSettings.MusicCompanion = v
     if v then
-        if S.musicSound then S.musicSound:Destroy(); S.musicSound = nil end
-        S.musicSound = Instance.new("Sound")
-        S.musicSound.SoundId = "rbxassetid://98012717802240"
-        S.musicSound.Volume = 10
-        S.musicSound.Looped = true
-        S.musicSound.Parent = SoundService
-        S.musicSound:Play()
-        notify("Playing: Companion")
+        playMusic()
     else
-        if S.musicSound then S.musicSound:Stop(); S.musicSound:Destroy(); S.musicSound = nil end
+        stopMusic()
         notify("Music stopped")
     end
 end)
@@ -3415,6 +3471,7 @@ local function snapshotSettings()
             AutoTpGun      = MiscSettings.AutoTpGun,
             SilentAim      = MiscSettings.SilentAim,
             MusicCompanion = MiscSettings.MusicCompanion,
+            SelectedMusic  = MiscSettings.SelectedMusic,
         },
         Movement = {
             Noclip       = MovementSettings.Noclip,
@@ -3485,6 +3542,7 @@ local function applyConfig(data)
         stopCoinCollector()
         stopEvasion()
     end
+    if MiscSettings.MusicCompanion then playMusic() else stopMusic() end
     syncUIControls()
     if window.UpdateThemeButtons then window:UpdateThemeButtons() end
 end
