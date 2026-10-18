@@ -221,6 +221,8 @@ local CachedCoinTarget = nil
 local CachedCoinTargetTime = 0
 local COIN_TARGET_TTL = 0.12
 
+local YARHM_SHOOT_OFFSET = 2.8
+
 local S = {
     noclipConn = nil, godConn = nil, antiAFKConn = nil,
     flyConn = nil, flyBV = nil, flyBG = nil,
@@ -606,6 +608,19 @@ local function predictAim(targetPart)
     return CFrame.new(targetPart.Position + vel * (ping * 1.15))
 end
 
+local function getYarhmPredictedPos(plr, shootOffset)
+    if not plr or not plr.Character then return nil end
+    local hrp = plr.Character:FindFirstChild("UpperTorso") or plr.Character:FindFirstChild("HumanoidRootPart")
+    local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return nil end
+    local offset = shootOffset or YARHM_SHOOT_OFFSET
+    local vel = hrp.AssemblyLinearVelocity
+    local moveDir = hum.MoveDirection
+    return hrp.Position
+        + (vel * Vector3.new(0.75, 0.5, 0.75)) * (offset / 15)
+        + moveDir * offset
+end
+
 local function isGunShootRemote(remote)
     if not remote or not remote:IsA("RemoteEvent") then return false end
     if remote.Name ~= "Shoot" then return false end
@@ -788,8 +803,80 @@ local function buildBeamPath(fromPos, toPos, targetChar)
     return waypoints
 end
 
+local function getEquippedGunTool()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    return char:FindFirstChild("Gun") or getEquippedGun()
+end
+
+local function yarhmFireAt(targetPlr, targetPart)
+    if not targetPlr then return false, "no target" end
+    local char = LocalPlayer.Character
+    if not char then return false, "no character" end
+    local gun = char:FindFirstChild("Gun")
+    if not gun then
+        gun = getEquippedGunTool()
+        if not gun then return false, "no gun" end
+        task.wait(0.05)
+        gun = char:FindFirstChild("Gun")
+        if not gun then return false, "gun not equipped" end
+    end
+    local shootEvent = gun:FindFirstChild("Shoot")
+    if not shootEvent then return false, "no Shoot event" end
+
+    local hand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
+    local originCF = hand and CFrame.new(hand.Position) or getGunRaycastCFrame()
+    if not originCF then return false, "no origin" end
+
+    local targetPos = getYarhmPredictedPos(targetPlr, YARHM_SHOOT_OFFSET)
+    if not targetPos then return false, "no prediction" end
+    local targetCF = CFrame.new(targetPos)
+
+    if targetPart then
+        local predCF = predictAim(targetPart)
+        if predCF then targetCF = predCF end
+    end
+
+    local ok, err = pcall(function()
+        shootEvent:FireServer(originCF, targetCF)
+    end)
+    if not ok then return false, tostring(err) end
+    return true
+end
+
+local function yarhmInstakill(targetPlr)
+    if not targetPlr or not targetPlr.Character then return false, "no target" end
+    local char = LocalPlayer.Character
+    if not char then return false, "no character" end
+    local gun = char:FindFirstChild("Gun")
+    if not gun then
+        gun = getEquippedGunTool()
+        if not gun then return false, "no gun" end
+        task.wait(0.05)
+        gun = char:FindFirstChild("Gun")
+        if not gun then return false, "gun not equipped" end
+    end
+    local shootEvent = gun:FindFirstChild("Shoot")
+    if not shootEvent then return false, "no Shoot event" end
+
+    local theirHRP = targetPlr.Character:FindFirstChild("HumanoidRootPart")
+    if not theirHRP then return false, "no HRP" end
+
+    local originCF = CFrame.new(theirHRP.Position + Vector3.new(0, 1, 0))
+    local targetCF = CFrame.new(theirHRP.Position)
+
+    local ok, err = pcall(function()
+        shootEvent:FireServer(originCF, targetCF)
+    end)
+    if not ok then return false, tostring(err) end
+    return true
+end
+
 local function fireGunAt(targetPart, targetPlr, useRedirect)
     if targetPlr and not isTargetSafe(targetPlr) then return false end
+    if targetPlr then
+        return (yarhmFireAt(targetPlr, targetPart))
+    end
     local gun = getEquippedGun()
     if not gun then return false end
     local shootRemote = findShootRemote(gun)
@@ -810,26 +897,13 @@ local function mobileForceShoot()
         notify("No murderer", 2)
         return false
     end
-    local char = LocalPlayer.Character
-    if not char then notify("No character", 2) return false end
-    local gun = getEquippedGun()
-    if not gun then notify("Equip the gun first", 2) return false end
-    local shootRemote = findShootRemote(gun)
-    if not shootRemote then notify("No Shoot remote", 2) return false end
     local targetPart = getMM2TargetPart(murderer.Character)
-    if not targetPart then notify("No target part", 2) return false end
-    local myHRP = getHRP()
-    if not myHRP then notify("No HRP", 2) return false end
-    local origin = getGunRaycastCFrame() or myHRP.CFrame
-    local targetCF = predictAim(targetPart) or CFrame.new(targetPart.Position)
-    local fired = pcall(function()
-        shootRemote:FireServer(origin, targetCF)
-    end)
-    if fired then
+    local ok, err = yarhmFireAt(murderer, targetPart)
+    if ok then
         notify("Shot " .. murderer.DisplayName, 1.5)
         return true
     else
-        notify("Fire failed", 3)
+        notify("Fire failed: " .. tostring(err), 3)
         return false
     end
 end
@@ -1131,7 +1205,7 @@ if not isMobile then
         if not myHRP then return end
         if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
         trackThread(task.spawn(function()
-            fireGunAt(targetPart, murderer, false)
+            yarhmFireAt(murderer, targetPart)
         end))
     end))
 end
@@ -2881,7 +2955,7 @@ UI.triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function(v)
             local now = tick()
             if now - lastShot < 0.08 then return end
             lastShot = now
-            fireGunAt(targetPart, murderer, false)
+            yarhmFireAt(murderer, targetPart)
         end))
     else
         dropConn("triggerbot")
@@ -2911,7 +2985,7 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
             local now = tick()
             if now - lastShot < 0.15 then return end
             lastShot = now
-            fireGunAt(targetPart, murderer, false)
+            yarhmFireAt(murderer, targetPart)
         end))
     else
         dropConn("autofire")
@@ -2930,24 +3004,10 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill", false, function(v)
             if shouldWaitForCoins() then return end
             local murderer = getMurdererCached()
             if not isTargetSafe(murderer) then return end
-            local targetPart = getMM2TargetPart(murderer.Character)
-            if not targetPart then return end
-            local theirHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
-            if not theirHRP then return end
-            local gun = getEquippedGun()
-            if not gun then return end
-            local shootRemote = findShootRemote(gun)
-            if not shootRemote then return end
             local now = tick()
             if now - lastShot < 0.15 then return end
             lastShot = now
-            local front = theirHRP.CFrame.LookVector
-            local spawnPos = theirHRP.Position + front * 3 + Vector3.new(0, 2.5, 0)
-            local fakeOrigin = CFrame.new(spawnPos, theirHRP.Position)
-            local targetCF = predictAim(targetPart) or CFrame.new(targetPart.Position)
-            pcall(function()
-                shootRemote:FireServer(fakeOrigin, targetCF)
-            end)
+            yarhmInstakill(murderer)
         end))
     else
         dropConn("autokill")
@@ -3352,16 +3412,20 @@ registerControl(MiscSettings, "SilentAim", UI.silentRef)
 local function toggleESPAll()
     local anyOn = VisualSettings.MM2ESP or VisualSettings.NameTags or VisualSettings.GunESP or VisualSettings.Beam
     local newState = not anyOn
+
     VisualSettings.MM2ESP  = newState
-    VisualSettings.OGESP   = false
     VisualSettings.NameTags = newState
     VisualSettings.GunESP  = newState
     VisualSettings.Beam    = newState
+    VisualSettings.OGESP   = false
+
     ESP.active.MM2     = newState
-    ESP.active.OG      = false
     ESP.active.NameTag = newState
+    ESP.active.OG      = false
+
     refreshAllESP()
     applyGunESP()
+
     if newState then
         if not ConnectionRegistry["nametag"] then startNameTagUpdater() end
         ensureBeamConn()
@@ -3371,17 +3435,33 @@ local function toggleESPAll()
         clearGunESP()
         clearBeamPool(S.beamData)
     end
+
     if UI.mm2ESPToggleRef and UI.mm2ESPToggleRef.SetState then pcall(function() UI.mm2ESPToggleRef:SetState(newState) end) end
-    if UI.ogESPToggleRef and UI.ogESPToggleRef.SetState then pcall(function() UI.ogESPToggleRef:SetState(false) end) end
     if UI.nameTagToggleRef and UI.nameTagToggleRef.SetState then pcall(function() UI.nameTagToggleRef:SetState(newState) end) end
     if UI.gunESPToggleRef and UI.gunESPToggleRef.SetState then pcall(function() UI.gunESPToggleRef:SetState(newState) end) end
     if UI.beamToggleRef and UI.beamToggleRef.SetState then pcall(function() UI.beamToggleRef:SetState(newState) end) end
+
+    if UI.ogESPToggleRef and UI.ogESPToggleRef.SetState then
+        pcall(function() UI.ogESPToggleRef:SetState(false) end)
+    end
+    ESP.active.OG = false
+    VisualSettings.OGESP = false
+    for plr, h in pairs(ESP.highlights.OG) do
+        if h and h.Parent then h:Destroy() end
+        ESP.highlights.OG[plr] = nil
+    end
+
     notify("ESP " .. (newState and "ON" or "OFF"), 2)
 end
 
 local function setupMobileButtons()
     if not isMobile then return end
     if type(window.AddMobileButton) ~= "function" then return end
+
+    pcall(function()
+        window:ClearMobileButtons()
+    end)
+
     pcall(function()
         window:AddMobileButton({
             OnClick = function() task.spawn(mobileForceShoot) end,
@@ -3389,6 +3469,7 @@ local function setupMobileButtons()
             Tooltip = "Shoot Murderer"
         })
     end)
+
     pcall(function()
         window:AddMobileButton({
             OnClick = function() toggleESPAll() end,
@@ -3396,22 +3477,20 @@ local function setupMobileButtons()
             Tooltip = "Toggle ESP"
         })
     end)
+
     pcall(function()
         window:AddMobileButton({
-            Feature = "Aimbot",
+            OnClick = function()
+                if UI.mm2LockRef and UI.mm2LockRef.SetState and UI.mm2LockRef.GetState then
+                    local current = false
+                    pcall(function() current = UI.mm2LockRef:GetState() end)
+                    pcall(function() UI.mm2LockRef:SetState(not current) end)
+                end
+            end,
+            Icon = "rbxassetid://12804017021",
             Tooltip = "Toggle Aimbot"
         })
     end)
-end
-
-if window._makeMobileBtn and isMobile then
-    window._makeMobileBtn("AIM", function()
-        if UI.mm2LockRef then UI.mm2LockRef.SetState(not UI.mm2LockRef.GetState()) end
-    end)
-    window._makeMobileBtn("ESP", function()
-        toggleESPAll()
-    end)
-    window._makeMobileBtn("UI", function() window.ToggleUI() end)
 end
 
 setupMobileButtons()
@@ -3548,3 +3627,5 @@ task.delay(2, function()
 end)
 
 notify("Hello again "..LocalPlayer.DisplayName, 3)
+--if you publish my script using other repository you can have problems with me. You can copy all functions except all of my hub.
+--script by replicated man & odecode! Open source but protected.
