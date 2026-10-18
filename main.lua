@@ -554,6 +554,8 @@ local function getGunRaycastCFrame()
     if not hrp then return nil end
     local att = hrp:FindFirstChild("GunRaycastAttachment")
     if att then return att.WorldCFrame end
+    local hand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
+    if hand then return CFrame.new(hand.Position) end
     return hrp.CFrame
 end
 
@@ -599,7 +601,7 @@ end
 local function predictAim(targetPart)
     if not targetPart then return nil end
     local ok, ping = pcall(function() return LocalPlayer:GetNetworkPing() end)
-    if not ok or not ping then ping = 0.05 end
+    if not ok or not ping or ping <= 0 then ping = 0.05 end
     local vel = targetPart.AssemblyLinearVelocity
     return CFrame.new(targetPart.Position + vel * (ping * 1.15))
 end
@@ -2322,7 +2324,7 @@ local miscTab      = window:CreateTab("Misc", ICONS.Misc)
 window:CreateImageCard(homeTab, {
     Image = "rbxthumb://type=Asset&id=" .. game.PlaceId .. "&w=420&h=420",
     Title = "Murder mistery 2",
-    Subtitle = "by Nikilis",
+    Subtitle = "by Nikilis",
     Description = "Murder Mistery · replicatedman · v11.7 API · Open Source proyect",
     Height = 150,
     ImageWidth = 130,
