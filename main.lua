@@ -214,8 +214,8 @@ local VisCache = {}
 local VIS_TTL = 0.05
 local MURDERER_TTL = 0.4
 
-local FARM_SPEED = 20
-local FARM_GOAL = 40
+local FARM_SPEED = 21
+local FARM_GOAL = 50
 
 local CachedCoinTarget = nil
 local CachedCoinTargetTime = 0
