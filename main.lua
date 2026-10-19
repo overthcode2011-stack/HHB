@@ -223,6 +223,9 @@ local COIN_TARGET_TTL = 0.12
 
 local YARHM_SHOOT_OFFSET = 2.8
 
+local CachedShootInstance = nil
+local CachedShootMethod = nil
+
 local S = {
     noclipConn = nil, godConn = nil, antiAFKConn = nil,
     flyConn = nil, flyBV = nil, flyBG = nil,
@@ -270,6 +273,27 @@ end
 local function getHumanoid()
     local c = LocalPlayer.Character
     return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+local function isGunTool(t)
+    if not t or not t:IsA("Tool") then return false end
+    local name = t.Name:lower()
+    return name:find("gun", 1, true) or name:find("pistol", 1, true) or name:find("revolver", 1, true) or name:find("sheriff", 1, true)
+end
+
+local function isGunRelatedRemote(remote)
+    if not remote or not remote:IsA("RemoteEvent") then return false end
+    local parent = remote.Parent
+    if not parent then return false end
+    if parent:IsA("Tool") and isGunTool(parent) then return true end
+    if parent.Parent and parent.Parent:IsA("Tool") and isGunTool(parent.Parent) then return true end
+    return false
+end
+
+local function isGunShootRemote(remote)
+    if not remote or not remote:IsA("RemoteEvent") then return false end
+    if remote.Name:lower():find("shoot", 1, true) then return true end
+    return isGunRelatedRemote(remote)
 end
 
 local function spectatePlayer(plr)
@@ -357,7 +381,7 @@ local function scanForGunShoot()
     local char = LocalPlayer.Character
     if not char then return end
     for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") and tool.Name:lower():find("gun", 1, true) then
+        if tool:IsA("Tool") and isGunTool(tool) then
             local ev = tool:FindFirstChild("Shoot")
             if ev and ev:IsA("BindableEvent") then
                 hookGunShootEvent(ev)
@@ -565,14 +589,14 @@ local function getEquippedGun()
     local char = LocalPlayer.Character
     if not char then return nil end
     for _, t in ipairs(char:GetChildren()) do
-        if t:IsA("Tool") and t.Name:lower():find("gun", 1, true) then
+        if t:IsA("Tool") and isGunTool(t) then
             return t
         end
     end
     local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
     if bp then
         for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") and t.Name:lower():find("gun", 1, true) then
+            if t:IsA("Tool") and isGunTool(t) then
                 local hum = char:FindFirstChildOfClass("Humanoid")
                 if hum then
                     pcall(function() hum:EquipTool(t) end)
@@ -580,6 +604,18 @@ local function getEquippedGun()
                 end
                 return t
             end
+        end
+    end
+    return nil
+end
+
+local function findShootChild(gun)
+    if not gun then return nil end
+    local direct = gun:FindFirstChild("Shoot")
+    if direct and (direct:IsA("RemoteEvent") or direct:IsA("BindableEvent")) then return direct end
+    for _, d in ipairs(gun:GetDescendants()) do
+        if d.Name == "Shoot" and (d:IsA("RemoteEvent") or d:IsA("BindableEvent")) then
+            return d
         end
     end
     return nil
@@ -619,23 +655,6 @@ local function getYarhmPredictedPos(plr, shootOffset)
     return hrp.Position
         + (vel * Vector3.new(0.75, 0.5, 0.75)) * (offset / 15)
         + moveDir * offset
-end
-
-local function isGunShootRemote(remote)
-    if not remote or not remote:IsA("RemoteEvent") then return false end
-    if remote.Name ~= "Shoot" then return false end
-    local parent = remote.Parent
-    if not parent then return false end
-    if parent:IsA("Tool") then
-        return parent.Name:lower():find("gun", 1, true) ~= nil
-    end
-    if parent.Name == "Events" then
-        local grand = parent.Parent
-        if grand and grand:IsA("Tool") then
-            return grand.Name:lower():find("gun", 1, true) ~= nil
-        end
-    end
-    return false
 end
 
 local function getCharacterFromPart(part)
@@ -803,33 +822,39 @@ local function buildBeamPath(fromPos, toPos, targetChar)
     return waypoints
 end
 
-local function getEquippedGunTool()
-    local char = LocalPlayer.Character
-    if not char then return nil end
-    return char:FindFirstChild("Gun") or getEquippedGun()
+local function tryFireInstance(inst, method, originCF, targetCF)
+    if not inst or not inst.Parent then return false end
+    if method == "FireServer" then
+        local ok = pcall(function() inst:FireServer(originCF, targetCF) end)
+        return ok
+    elseif method == "Fire" then
+        local ok = pcall(function() inst:Fire(originCF, targetCF) end)
+        return ok
+    end
+    return false
 end
 
 local function yarhmFireAt(targetPlr, targetPart)
     if not targetPlr then return false, "no target" end
     local char = LocalPlayer.Character
     if not char then return false, "no character" end
-    local gun = char:FindFirstChild("Gun")
-    if not gun then
-        gun = getEquippedGunTool()
-        if not gun then return false, "no gun" end
-        task.wait(0.05)
-        gun = char:FindFirstChild("Gun")
-        if not gun then return false, "gun not equipped" end
-    end
-    local shootEvent = gun:FindFirstChild("Shoot")
-    if not shootEvent then return false, "no Shoot event" end
+    local gun = char:FindFirstChild("Gun") or getEquippedGun()
+    if not gun then return false, "no gun" end
 
     local hand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
-    local originCF = hand and CFrame.new(hand.Position) or getGunRaycastCFrame()
+    local hrp = getHRP()
+    local originCF = (hand and CFrame.new(hand.Position)) or getGunRaycastCFrame() or (hrp and hrp.CFrame)
     if not originCF then return false, "no origin" end
 
     local targetPos = getYarhmPredictedPos(targetPlr, YARHM_SHOOT_OFFSET)
-    if not targetPos then return false, "no prediction" end
+    if not targetPos then
+        local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
+        if theirHRP then
+            targetPos = theirHRP.Position
+        else
+            return false, "no target pos"
+        end
+    end
     local targetCF = CFrame.new(targetPos)
 
     if targetPart then
@@ -837,27 +862,62 @@ local function yarhmFireAt(targetPlr, targetPart)
         if predCF then targetCF = predCF end
     end
 
-    local ok, err = pcall(function()
-        shootEvent:FireServer(originCF, targetCF)
-    end)
-    if not ok then return false, tostring(err) end
-    return true
+    if CachedShootInstance and CachedShootInstance.Parent then
+        if tryFireInstance(CachedShootInstance, CachedShootMethod, originCF, targetCF) then
+            return true
+        end
+        CachedShootInstance = nil
+        CachedShootMethod = nil
+    end
+
+    local shoot = findShootChild(gun)
+    if shoot then
+        if shoot:IsA("RemoteEvent") then
+            if tryFireInstance(shoot, "FireServer", originCF, targetCF) then
+                CachedShootInstance = shoot
+                CachedShootMethod = "FireServer"
+                return true
+            end
+        elseif shoot:IsA("BindableEvent") then
+            if tryFireInstance(shoot, "Fire", originCF, targetCF) then
+                CachedShootInstance = shoot
+                CachedShootMethod = "Fire"
+                return true
+            end
+        end
+    end
+
+    local events = gun:FindFirstChild("Events")
+    if events then
+        local shootEv = events:FindFirstChild("Shoot")
+        if shootEv and shootEv:IsA("RemoteEvent") then
+            if tryFireInstance(shootEv, "FireServer", originCF, targetCF) then
+                CachedShootInstance = shootEv
+                CachedShootMethod = "FireServer"
+                return true
+            end
+        end
+    end
+
+    for _, d in ipairs(gun:GetDescendants()) do
+        if d:IsA("RemoteEvent") and d.Name:lower():find("shoot", 1, true) then
+            if tryFireInstance(d, "FireServer", originCF, targetCF) then
+                CachedShootInstance = d
+                CachedShootMethod = "FireServer"
+                return true
+            end
+        end
+    end
+
+    return false, "no working shoot method"
 end
 
 local function yarhmInstakill(targetPlr)
     if not targetPlr or not targetPlr.Character then return false, "no target" end
     local char = LocalPlayer.Character
     if not char then return false, "no character" end
-    local gun = char:FindFirstChild("Gun")
-    if not gun then
-        gun = getEquippedGunTool()
-        if not gun then return false, "no gun" end
-        task.wait(0.05)
-        gun = char:FindFirstChild("Gun")
-        if not gun then return false, "gun not equipped" end
-    end
-    local shootEvent = gun:FindFirstChild("Shoot")
-    if not shootEvent then return false, "no Shoot event" end
+    local gun = char:FindFirstChild("Gun") or getEquippedGun()
+    if not gun then return false, "no gun" end
 
     local theirHRP = targetPlr.Character:FindFirstChild("HumanoidRootPart")
     if not theirHRP then return false, "no HRP" end
@@ -865,11 +925,54 @@ local function yarhmInstakill(targetPlr)
     local originCF = CFrame.new(theirHRP.Position + Vector3.new(0, 1, 0))
     local targetCF = CFrame.new(theirHRP.Position)
 
-    local ok, err = pcall(function()
-        shootEvent:FireServer(originCF, targetCF)
-    end)
-    if not ok then return false, tostring(err) end
-    return true
+    if CachedShootInstance and CachedShootInstance.Parent then
+        if tryFireInstance(CachedShootInstance, CachedShootMethod, originCF, targetCF) then
+            return true
+        end
+        CachedShootInstance = nil
+        CachedShootMethod = nil
+    end
+
+    local shoot = findShootChild(gun)
+    if shoot then
+        if shoot:IsA("RemoteEvent") then
+            if tryFireInstance(shoot, "FireServer", originCF, targetCF) then
+                CachedShootInstance = shoot
+                CachedShootMethod = "FireServer"
+                return true
+            end
+        elseif shoot:IsA("BindableEvent") then
+            if tryFireInstance(shoot, "Fire", originCF, targetCF) then
+                CachedShootInstance = shoot
+                CachedShootMethod = "Fire"
+                return true
+            end
+        end
+    end
+
+    local events = gun:FindFirstChild("Events")
+    if events then
+        local shootEv = events:FindFirstChild("Shoot")
+        if shootEv and shootEv:IsA("RemoteEvent") then
+            if tryFireInstance(shootEv, "FireServer", originCF, targetCF) then
+                CachedShootInstance = shootEv
+                CachedShootMethod = "FireServer"
+                return true
+            end
+        end
+    end
+
+    for _, d in ipairs(gun:GetDescendants()) do
+        if d:IsA("RemoteEvent") and d.Name:lower():find("shoot", 1, true) then
+            if tryFireInstance(d, "FireServer", originCF, targetCF) then
+                CachedShootInstance = d
+                CachedShootMethod = "FireServer"
+                return true
+            end
+        end
+    end
+
+    return false, "no working shoot method"
 end
 
 local function fireGunAt(targetPart, targetPlr, useRedirect)
@@ -877,18 +980,7 @@ local function fireGunAt(targetPart, targetPlr, useRedirect)
     if targetPlr then
         return (yarhmFireAt(targetPlr, targetPart))
     end
-    local gun = getEquippedGun()
-    if not gun then return false end
-    local shootRemote = findShootRemote(gun)
-    if not shootRemote then return false end
-    local myHRP = getHRP()
-    if not myHRP then return false end
-    local origin = getGunRaycastCFrame() or myHRP.CFrame
-    local targetCF = predictAim(targetPart) or CFrame.new(targetPart.Position)
-    local ok = pcall(function()
-        shootRemote:FireServer(origin, targetCF)
-    end)
-    return ok
+    return false, "no target"
 end
 
 local function mobileForceShoot()
@@ -1164,8 +1256,24 @@ if type(S.hookNamecall) == "function" and type(S.getNamecall) == "function" then
     local ok = pcall(function()
         local oldNamecall
         oldNamecall = S.hookNamecall(game, "__namecall", function(self, ...)
-            if S.getNamecall() == "FireServer" and isGunShootRemote(self) then
-                if MiscSettings.SilentAim then
+            if S.getNamecall() == "FireServer" and self:IsA("RemoteEvent") then
+                local args = table.pack(...)
+
+                if isGunRelatedRemote(self) then
+                    local hasCFrame = false
+                    for i = 1, args.n do
+                        if typeof(args[i]) == "CFrame" then
+                            hasCFrame = true
+                            break
+                        end
+                    end
+                    if hasCFrame then
+                        CachedShootInstance = self
+                        CachedShootMethod = "FireServer"
+                    end
+                end
+
+                if MiscSettings.SilentAim and isGunShootRemote(self) then
                     local murderer = getMurdererCached()
                     if isTargetSafe(murderer) then
                         local targetPart = getMM2TargetPart(murderer.Character)
@@ -1174,10 +1282,14 @@ if type(S.hookNamecall) == "function" and type(S.getNamecall) == "function" then
                             local myHRP = getHRP()
                             local origin = (myHRP and myHRP.Position) or cam.CFrame.Position
                             if isVisibleForShot(origin, targetPart.Position, murderer.Character, murderer) then
-                                local args = table.pack(...)
                                 local newTarget = predictAim(targetPart)
                                 if newTarget then
-                                    args[2] = newTarget
+                                    for i = 2, math.min(5, args.n) do
+                                        if typeof(args[i]) == "CFrame" then
+                                            args[i] = newTarget
+                                            break
+                                        end
+                                    end
                                     return oldNamecall(self, table.unpack(args, 1, args.n))
                                 end
                             end
@@ -3223,6 +3335,8 @@ end
 LocalPlayer.CharacterAdded:Connect(function()
     MurdererCache.plr = nil
     MurdererCache.time = 0
+    CachedShootInstance = nil
+    CachedShootMethod = nil
     for k in pairs(TargetVisibility) do TargetVisibility[k] = nil end
     for k in pairs(VisCache) do VisCache[k] = nil end
     S.korbloxPart = nil
@@ -3413,11 +3527,11 @@ local function toggleESPAll()
     local anyOn = VisualSettings.MM2ESP or VisualSettings.NameTags or VisualSettings.GunESP or VisualSettings.Beam
     local newState = not anyOn
 
-    VisualSettings.MM2ESP  = newState
+    VisualSettings.MM2ESP   = newState
     VisualSettings.NameTags = newState
-    VisualSettings.GunESP  = newState
-    VisualSettings.Beam    = newState
-    VisualSettings.OGESP   = false
+    VisualSettings.GunESP   = newState
+    VisualSettings.Beam     = newState
+    VisualSettings.OGESP    = false
 
     ESP.active.MM2     = newState
     ESP.active.NameTag = newState
@@ -3436,16 +3550,12 @@ local function toggleESPAll()
         clearBeamPool(S.beamData)
     end
 
-    if UI.mm2ESPToggleRef and UI.mm2ESPToggleRef.SetState then pcall(function() UI.mm2ESPToggleRef:SetState(newState) end) end
-    if UI.nameTagToggleRef and UI.nameTagToggleRef.SetState then pcall(function() UI.nameTagToggleRef:SetState(newState) end) end
-    if UI.gunESPToggleRef and UI.gunESPToggleRef.SetState then pcall(function() UI.gunESPToggleRef:SetState(newState) end) end
-    if UI.beamToggleRef and UI.beamToggleRef.SetState then pcall(function() UI.beamToggleRef:SetState(newState) end) end
+    if UI.mm2ESPToggleRef and UI.mm2ESPToggleRef.SetState then pcall(function() UI.mm2ESPToggleRef:SetState(newState, true) end) end
+    if UI.nameTagToggleRef and UI.nameTagToggleRef.SetState then pcall(function() UI.nameTagToggleRef:SetState(newState, true) end) end
+    if UI.gunESPToggleRef and UI.gunESPToggleRef.SetState then pcall(function() UI.gunESPToggleRef:SetState(newState, true) end) end
+    if UI.beamToggleRef and UI.beamToggleRef.SetState then pcall(function() UI.beamToggleRef:SetState(newState, true) end) end
+    if UI.ogESPToggleRef and UI.ogESPToggleRef.SetState then pcall(function() UI.ogESPToggleRef:SetState(false, true) end) end
 
-    if UI.ogESPToggleRef and UI.ogESPToggleRef.SetState then
-        pcall(function() UI.ogESPToggleRef:SetState(false) end)
-    end
-    ESP.active.OG = false
-    VisualSettings.OGESP = false
     for plr, h in pairs(ESP.highlights.OG) do
         if h and h.Parent then h:Destroy() end
         ESP.highlights.OG[plr] = nil
@@ -3458,8 +3568,18 @@ local function setupMobileButtons()
     if not isMobile then return end
     if type(window.AddMobileButton) ~= "function" then return end
 
+    pcall(function() window:ClearMobileButtons() end)
+
     pcall(function()
-        window:ClearMobileButtons()
+        window:AddMobileButton({
+            OnClick = function()
+                if window.ToggleUI then
+                    pcall(function() window:ToggleUI() end)
+                end
+            end,
+            Icon = "rbxassetid://12804017021",
+            Tooltip = "Toggle UI"
+        })
     end)
 
     pcall(function()
@@ -3475,20 +3595,6 @@ local function setupMobileButtons()
             OnClick = function() toggleESPAll() end,
             Icon = "rbxassetid://12804017021",
             Tooltip = "Toggle ESP"
-        })
-    end)
-
-    pcall(function()
-        window:AddMobileButton({
-            OnClick = function()
-                if UI.mm2LockRef and UI.mm2LockRef.SetState and UI.mm2LockRef.GetState then
-                    local current = false
-                    pcall(function() current = UI.mm2LockRef:GetState() end)
-                    pcall(function() UI.mm2LockRef:SetState(not current) end)
-                end
-            end,
-            Icon = "rbxassetid://12804017021",
-            Tooltip = "Toggle Aimbot"
         })
     end)
 end
@@ -3627,5 +3733,3 @@ task.delay(2, function()
 end)
 
 notify("Hello again "..LocalPlayer.DisplayName, 3)
---if you publish my script using other repository you can have problems with me. You can copy all functions except all of my hub.
---script by replicated man & odecode! Open source but protected.
