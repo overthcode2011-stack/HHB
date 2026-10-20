@@ -1,4 +1,4 @@
-local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/template.lua"))()
+local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/API.lua"))()
 
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
