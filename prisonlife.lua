@@ -2,7 +2,7 @@ local API_URL = "https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs
 
 local ok, API = pcall(function()
     local src = game:HttpGet(API_URL)
-    if not src or #src < 50 then error("URL vacia") end
+    if not src or #src < 50 then error("No URL") end
     return loadstring(src)()
 end)
 if not ok or type(API) ~= "table" then
