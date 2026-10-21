@@ -1,4 +1,6 @@
-local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/API.lua"))()
+local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API"))()
+API.Config.SupportedGames = { 17625359962 }
+API.Config.KeySystem.Enabled = false
 
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -1153,7 +1155,5 @@ end
 RunService:BindToRenderStep("HappyHub", Enum.RenderPriority.Camera.Value + 1, onRenderStep)
 
 setupAutoReload()
-
 win:BuildConfigPage()
-
-API:Notify("Happy Hub loaded")
+API:Notify("Hello" .. LocalPlayer.DisplayName)
