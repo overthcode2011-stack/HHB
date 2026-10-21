@@ -1,4 +1,4 @@
-local API_URL = "https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API"
+local API_URL = 'https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API'
 
 local ok, API = pcall(function()
     local src = game:HttpGet(API_URL)
