@@ -662,7 +662,7 @@ local aimbotToggleRef, espToggleRef
 
 win:CreateImageCard(homeTab, {
     Image = "rbxthumb://type=Asset&id=" .. game.PlaceId .. "&w=420&h=420",
-    Title = "Keyless · free hub · NO STEALERS DUDE :D",
+    Title = "Keyless · free hub",
     Subtitle = "by replicatedscripts",
     Description = "Enjoy the free features.",
     Height = 140,
@@ -783,7 +783,7 @@ end)
 
 win:CreateLabel(visualsTab, "Visual Settings")
 
-espToggleRef = win:CreateToggle(visualsTab, "Rivals ESP (O)", VisualSettings.RivalsESP, function(v)
+espToggleRef = win:CreateToggle(visualsTab, "Rivals ESP [O]", VisualSettings.RivalsESP, function(v)
     VisualSettings.RivalsESP = v
     if v then
         startRivalsESP()
@@ -862,8 +862,6 @@ UserInputService.JumpRequest:Connect(function()
         end
     end
 end)
-
-win:CreateLabel(playerListTab, "Players in Server")
 
 local playerInfoContainer = Instance.new("Frame")
 playerInfoContainer.Name = "PlayerInfoContainer"
@@ -984,19 +982,19 @@ local function updateRow(refs, plr, myHRP)
     refs.info.Text = string.format("%.0fm · %d/%d HP · %s", dist, health, maxHealth, team)
 
     if plr == LocalPlayer then
-        refs.badge.Text = "YOU"
+        refs.badge.Text = "You"
         refs.badge.TextColor3 = Color3.fromRGB(0, 255, 100)
     elseif isTeammate(plr) then
-        refs.badge.Text = "ALLY"
+        refs.badge.Text = "Ally"
         refs.badge.TextColor3 = Color3.fromRGB(60, 160, 255)
     elseif AimbotSettings.MatchOnly and isActiveFighter(plr) then
-        refs.badge.Text = "ENEMY"
+        refs.badge.Text = "Enemy"
         refs.badge.TextColor3 = Color3.fromRGB(255, 60, 60)
     elseif isActiveFighter(plr) then
-        refs.badge.Text = "FIGHT"
+        refs.badge.Text = "Queue"
         refs.badge.TextColor3 = Color3.fromRGB(255, 180, 60)
     else
-        refs.badge.Text = "LOBBY"
+        refs.badge.Text = "Lobby"
         refs.badge.TextColor3 = Color3.fromRGB(140, 140, 140)
     end
 end
@@ -1057,11 +1055,11 @@ UserInputService.InputBegan:Connect(function(input, gp)
     if input.KeyCode == Enum.KeyCode.T then
         local newState = not AimbotSettings.Enabled
         if aimbotToggleRef and aimbotToggleRef.SetState then aimbotToggleRef.SetState(newState) end
-        API:Notify(newState and "Aimbot enabled (T)" or "Aimbot disabled (T)")
+        API:Notify(newState and "Aimbot enabled [T]" or "Aimbot disabled  [T]")
     elseif input.KeyCode == Enum.KeyCode.O then
         local newState = not VisualSettings.RivalsESP
         if espToggleRef and espToggleRef.SetState then espToggleRef.SetState(newState) end
-        API:Notify(newState and "ESP enabled (O)" or "ESP disabled (O)")
+        API:Notify(newState and "ESP enabled [O]" or "ESP disabled [O]")
     end
 end)
 
