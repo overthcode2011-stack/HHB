@@ -1,14 +1,18 @@
-local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API"))()
+local SRC_URL = "https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API"
+local SRC = game:HttpGet(SRC_URL)
+if getgenv then pcall(function() getgenv().__HAPPYHUB_SOURCE = SRC end) end
+local API = loadstring(SRC)()
+
 API.Config.SupportedGames = { 17625359962 }
 API.Config.KeySystem.Enabled = false
 
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local LocalPlayer = Players.LocalPlayer
-local Camera = workspace.CurrentCamera
+local UserInputService     = game:GetService("UserInputService")
+local RunService           = game:GetService("RunService")
+local Players              = game:GetService("Players")
+local ReplicatedStorage    = game:GetService("ReplicatedStorage")
+local VirtualInputManager  = game:GetService("VirtualInputManager")
+local LocalPlayer          = Players.LocalPlayer
+local Camera               = workspace.CurrentCamera
 
 local mousemoverel = mousemoverel or MouseMoveRel or (syn and syn.mousemoverel) or (fluxus and fluxus.mousemoverel)
 
@@ -20,8 +24,8 @@ local AimbotSettings = {
     TeamCheck = false, RotateRig = true, TriggerBot = false, TriggerRange = 150, AutoFire = false,
     MatchOnly = true,
 }
-local VisualSettings = { RivalsESP = false, NameTags = false }
-local MiscSettings = { InfJump = false, AntiAFK = false }
+local VisualSettings   = { RivalsESP = false, NameTags = false }
+local MiscSettings     = { InfJump = false, AntiAFK = false }
 local MovementSettings = { Noclip = false, God = false }
 
 local lockedTarget = nil
@@ -472,10 +476,10 @@ local function createRivalsBox(plr)
         return l
     end
 
-    local top = makeLine("Top", UDim2.new(1, 0, 0, t), UDim2.new(0, 0, 0, 0))
+    local top    = makeLine("Top",    UDim2.new(1, 0, 0, t), UDim2.new(0, 0, 0, 0))
     local bottom = makeLine("Bottom", UDim2.new(1, 0, 0, t), UDim2.new(0, 0, 1, -t))
-    local left = makeLine("Left", UDim2.new(0, t, 1, 0), UDim2.new(0, 0, 0, 0))
-    local right = makeLine("Right", UDim2.new(0, t, 1, 0), UDim2.new(1, -t, 0, 0))
+    local left   = makeLine("Left",   UDim2.new(0, t, 1, 0), UDim2.new(0, 0, 0, 0))
+    local right  = makeLine("Right",  UDim2.new(0, t, 1, 0), UDim2.new(1, -t, 0, 0))
 
     local nameTag = nil
     if VisualSettings.NameTags then
@@ -584,10 +588,7 @@ end
 
 local function stopRivalsESP()
     RivalsESP.active = false
-    if RivalsESP.refreshThread then
-        task.cancel(RivalsESP.refreshThread)
-        RivalsESP.refreshThread = nil
-    end
+    RivalsESP.refreshThread = nil
     if RivalsESP.heartbeat then
         RivalsESP.heartbeat:Disconnect()
         RivalsESP.heartbeat = nil
@@ -652,13 +653,23 @@ local function setupAutoReload()
 end
 
 local win = API:CreateWindow("Happy Hub", "Rivals · Keyless · by replicatedman")
-local homeTab = win:CreateTab("Home", "109951566071454")
-local aimbotTab = win:CreateTab("Aimbot", "93310349660228")
-local visualsTab = win:CreateTab("Visuals", "13321848320")
-local playerListTab = win:CreateTab("PlayerList", "122086195900803")
-local miscTab = win:CreateTab("Misc", "109962716823639")
+if not win then
+    pcall(function() API:Notify("Unsupported game or window failed to create") end)
+    return
+end
+
+local homeTab       = win:CreateTab("Home",       API.Icons.Home   or "rbxassetid://109951566071454")
+local aimbotTab     = win:CreateTab("Aimbot",     API.Icons.Combat or "rbxassetid://93310349660228")
+local visualsTab    = win:CreateTab("Visuals",    "rbxassetid://13321848320")
+local playerListTab = win:CreateTab("PlayerList", API.Icons.User   or "rbxassetid://122086195900803")
+local miscTab       = win:CreateTab("Misc",       API.Icons.Misc   or "rbxassetid://109962716823639")
 
 local aimbotToggleRef, espToggleRef
+local silentAimRef, matchOnlyRef, fovRef, smoothingRef, maxDistRef
+local wallCheckRef, teamCheckRef, showFovRef, rotateRigRef, targetDropRef
+local triggerBotRef, triggerRangeRef, autoFireRef
+local nameTagsRef
+local infJumpRef, noclipRef, godRef, antiAFKRef
 
 win:CreateImageCard(homeTab, {
     Image = "rbxthumb://type=Asset&id=" .. game.PlaceId .. "&w=420&h=420",
@@ -683,54 +694,54 @@ aimbotToggleRef = win:CreateToggle(aimbotTab, "Enabled [T]", AimbotSettings.Enab
     API:Notify(v and "Aimbot enabled" or "Aimbot disabled")
 end)
 
-win:CreateToggle(aimbotTab, "Silent Aim", AimbotSettings.SilentAim, function(v)
+silentAimRef = win:CreateToggle(aimbotTab, "Silent Aim", AimbotSettings.SilentAim, function(v)
     AimbotSettings.SilentAim = v
     silentAimEnabled = v
     API:Notify(v and "Silent Aim on" or "Silent Aim off")
 end)
 
-win:CreateToggle(aimbotTab, "Match Only", AimbotSettings.MatchOnly, function(v)
+matchOnlyRef = win:CreateToggle(aimbotTab, "Match Only", AimbotSettings.MatchOnly, function(v)
     AimbotSettings.MatchOnly = v
     lockedTarget = nil
     API:Notify(v and "Match filter on" or "Match filter off")
 end)
 
-win:CreateSlider(aimbotTab, "FOV", 20, 800, AimbotSettings.FOV, function(v)
+fovRef = win:CreateSlider(aimbotTab, "FOV", 20, 800, AimbotSettings.FOV, function(v)
     AimbotSettings.FOV = v
 end)
 
-win:CreateSlider(aimbotTab, "Smoothing", 0.05, 1, AimbotSettings.Smoothing, function(v)
+smoothingRef = win:CreateSlider(aimbotTab, "Smoothing", 0.05, 1, AimbotSettings.Smoothing, function(v)
     AimbotSettings.Smoothing = v
 end)
 
-win:CreateSlider(aimbotTab, "Max Distance", 100, 2000, AimbotSettings.MaxDistance, function(v)
+maxDistRef = win:CreateSlider(aimbotTab, "Max Distance", 100, 2000, AimbotSettings.MaxDistance, function(v)
     AimbotSettings.MaxDistance = v
 end)
 
-win:CreateToggle(aimbotTab, "Wall Check", AimbotSettings.WallCheck, function(v)
+wallCheckRef = win:CreateToggle(aimbotTab, "Wall Check", AimbotSettings.WallCheck, function(v)
     AimbotSettings.WallCheck = v
 end)
 
-win:CreateToggle(aimbotTab, "Team Check", AimbotSettings.TeamCheck, function(v)
+teamCheckRef = win:CreateToggle(aimbotTab, "Team Check", AimbotSettings.TeamCheck, function(v)
     AimbotSettings.TeamCheck = v
 end)
 
-win:CreateToggle(aimbotTab, "Show FOV Circle", AimbotSettings.ShowFOV, function(v)
+showFovRef = win:CreateToggle(aimbotTab, "Show FOV Circle", AimbotSettings.ShowFOV, function(v)
     AimbotSettings.ShowFOV = v
 end)
 
-win:CreateToggle(aimbotTab, "Rotate Rig", AimbotSettings.RotateRig, function(v)
+rotateRigRef = win:CreateToggle(aimbotTab, "Rotate Rig", AimbotSettings.RotateRig, function(v)
     AimbotSettings.RotateRig = v
 end)
 
-win:CreateDropdown(aimbotTab, "Target", { "Head", "Torso", "Random" }, "Head", function(sel)
+targetDropRef = win:CreateDropdown(aimbotTab, "Target", { "Head", "Torso", "Random" }, "Head", function(sel)
     AimbotSettings.Target = sel
     API:Notify("Target: " .. sel)
 end)
 
-win:CreateLabel(aimbotTab, "Trigger Bot")
+win:CreateLabel(aimbotTab, "Trigger Bot Settings")
 
-win:CreateToggle(aimbotTab, "Trigger Bot", AimbotSettings.TriggerBot, function(v)
+triggerBotRef = win:CreateToggle(aimbotTab, "Trigger Bot", AimbotSettings.TriggerBot, function(v)
     AimbotSettings.TriggerBot = v
     if triggerBotConn then
         triggerBotConn:Disconnect()
@@ -756,11 +767,11 @@ win:CreateToggle(aimbotTab, "Trigger Bot", AimbotSettings.TriggerBot, function(v
     end
 end)
 
-win:CreateSlider(aimbotTab, "Trigger Range", 20, 400, AimbotSettings.TriggerRange, function(v)
+triggerRangeRef = win:CreateSlider(aimbotTab, "Trigger Range", 20, 400, AimbotSettings.TriggerRange, function(v)
     AimbotSettings.TriggerRange = v
 end)
 
-win:CreateToggle(aimbotTab, "Auto Fire", AimbotSettings.AutoFire, function(v)
+autoFireRef = win:CreateToggle(aimbotTab, "Auto Fire", AimbotSettings.AutoFire, function(v)
     AimbotSettings.AutoFire = v
     if autoFireConn then
         autoFireConn:Disconnect()
@@ -793,19 +804,19 @@ espToggleRef = win:CreateToggle(visualsTab, "Rivals ESP [O]", VisualSettings.Riv
     API:Notify(v and "ESP enabled" or "ESP disabled")
 end)
 
-win:CreateToggle(visualsTab, "Name Tags", VisualSettings.NameTags, function(v)
+nameTagsRef = win:CreateToggle(visualsTab, "Name Tags", VisualSettings.NameTags, function(v)
     VisualSettings.NameTags = v
     updateNameTagVisibility()
 end)
 
 win:CreateLabel(miscTab, "Movement")
 
-win:CreateToggle(miscTab, "Infinite Jump", MiscSettings.InfJump, function(v)
+infJumpRef = win:CreateToggle(miscTab, "Infinite Jump", MiscSettings.InfJump, function(v)
     MiscSettings.InfJump = v
     API:Notify(v and "Infinite Jump enabled" or "Infinite Jump disabled")
 end)
 
-win:CreateToggle(miscTab, "Noclip", MovementSettings.Noclip, function(v)
+noclipRef = win:CreateToggle(miscTab, "Noclip", MovementSettings.Noclip, function(v)
     MovementSettings.Noclip = v
     if noclipConn then
         noclipConn:Disconnect()
@@ -823,7 +834,7 @@ win:CreateToggle(miscTab, "Noclip", MovementSettings.Noclip, function(v)
     end
 end)
 
-win:CreateToggle(miscTab, "God Mode", MovementSettings.God, function(v)
+godRef = win:CreateToggle(miscTab, "God Mode", MovementSettings.God, function(v)
     MovementSettings.God = v
     if godConn then
         godConn:Disconnect()
@@ -837,7 +848,7 @@ win:CreateToggle(miscTab, "God Mode", MovementSettings.God, function(v)
     end
 end)
 
-win:CreateToggle(miscTab, "Anti-AFK", MiscSettings.AntiAFK, function(v)
+antiAFKRef = win:CreateToggle(miscTab, "Anti-AFK", MiscSettings.AntiAFK, function(v)
     MiscSettings.AntiAFK = v
     if antiAFKConn then
         antiAFKConn:Disconnect()
@@ -1054,11 +1065,11 @@ UserInputService.InputBegan:Connect(function(input, gp)
     if UserInputService:GetFocusedTextBox() then return end
     if input.KeyCode == Enum.KeyCode.T then
         local newState = not AimbotSettings.Enabled
-        if aimbotToggleRef and aimbotToggleRef.SetState then aimbotToggleRef.SetState(newState) end
-        API:Notify(newState and "Aimbot enabled [T]" or "Aimbot disabled  [T]")
+        if aimbotToggleRef then aimbotToggleRef:SetState(newState, true) end
+        API:Notify(newState and "Aimbot enabled [T]" or "Aimbot disabled [T]")
     elseif input.KeyCode == Enum.KeyCode.O then
         local newState = not VisualSettings.RivalsESP
-        if espToggleRef and espToggleRef.SetState then espToggleRef.SetState(newState) end
+        if espToggleRef then espToggleRef:SetState(newState, true) end
         API:Notify(newState and "ESP enabled [O]" or "ESP disabled [O]")
     end
 end)
@@ -1069,7 +1080,7 @@ if isMobile then
         Tooltip = "Toggle Aimbot",
         OnClick = function()
             local newState = not AimbotSettings.Enabled
-            if aimbotToggleRef and aimbotToggleRef.SetState then aimbotToggleRef.SetState(newState) end
+            if aimbotToggleRef then aimbotToggleRef:SetState(newState, true) end
             API:Notify(newState and "Aimbot enabled" or "Aimbot disabled")
         end,
     })
@@ -1078,7 +1089,7 @@ if isMobile then
         Tooltip = "Toggle ESP",
         OnClick = function()
             local newState = not VisualSettings.RivalsESP
-            if espToggleRef and espToggleRef.SetState then espToggleRef.SetState(newState) end
+            if espToggleRef then espToggleRef:SetState(newState, true) end
             API:Notify(newState and "ESP enabled" or "ESP disabled")
         end,
     })
@@ -1162,5 +1173,58 @@ end
 RunService:BindToRenderStep("HappyHub", Enum.RenderPriority.Camera.Value + 1, onRenderStep)
 
 setupAutoReload()
+
+win:SetConfigSnapshot(function()
+    return {
+        AimEnabled   = aimbotToggleRef:GetState(),
+        SilentAim    = silentAimRef:GetState(),
+        MatchOnly    = matchOnlyRef:GetState(),
+        FOV          = fovRef:GetValue(),
+        Smoothing    = smoothingRef:GetValue(),
+        MaxDistance  = maxDistRef:GetValue(),
+        WallCheck    = wallCheckRef:GetState(),
+        TeamCheck    = teamCheckRef:GetState(),
+        ShowFOV      = showFovRef:GetState(),
+        RotateRig    = rotateRigRef:GetState(),
+        Target       = targetDropRef:GetValue(),
+        TriggerBot   = triggerBotRef:GetState(),
+        TriggerRange = triggerRangeRef:GetValue(),
+        AutoFire     = autoFireRef:GetState(),
+        RivalsESP    = espToggleRef:GetState(),
+        NameTags     = nameTagsRef:GetState(),
+        InfJump      = infJumpRef:GetState(),
+        Noclip       = noclipRef:GetState(),
+        God          = godRef:GetState(),
+        AntiAFK      = antiAFKRef:GetState(),
+        Theme        = API:GetTheme(),
+    }
+end)
+
+win:SetConfigApply(function(d)
+    if not d then return end
+    if d.Theme then API:SetTheme(d.Theme) end
+    if d.AimEnabled   ~= nil and aimbotToggleRef   then aimbotToggleRef:SetState(d.AimEnabled, true) end
+    if d.SilentAim    ~= nil and silentAimRef      then silentAimRef:SetState(d.SilentAim, true) end
+    if d.MatchOnly    ~= nil and matchOnlyRef      then matchOnlyRef:SetState(d.MatchOnly, true) end
+    if d.FOV          then fovRef:SetValue(d.FOV) end
+    if d.Smoothing    then smoothingRef:SetValue(d.Smoothing) end
+    if d.MaxDistance  then maxDistRef:SetValue(d.MaxDistance) end
+    if d.WallCheck    ~= nil and wallCheckRef      then wallCheckRef:SetState(d.WallCheck, true) end
+    if d.TeamCheck    ~= nil and teamCheckRef      then teamCheckRef:SetState(d.TeamCheck, true) end
+    if d.ShowFOV      ~= nil and showFovRef        then showFovRef:SetState(d.ShowFOV, true) end
+    if d.RotateRig    ~= nil and rotateRigRef      then rotateRigRef:SetState(d.RotateRig, true) end
+    if d.Target       then targetDropRef:SetValue(d.Target) end
+    if d.TriggerBot   ~= nil and triggerBotRef     then triggerBotRef:SetState(d.TriggerBot, true) end
+    if d.TriggerRange then triggerRangeRef:SetValue(d.TriggerRange) end
+    if d.AutoFire     ~= nil and autoFireRef       then autoFireRef:SetState(d.AutoFire, true) end
+    if d.RivalsESP    ~= nil and espToggleRef      then espToggleRef:SetState(d.RivalsESP, true) end
+    if d.NameTags     ~= nil and nameTagsRef       then nameTagsRef:SetState(d.NameTags, true) end
+    if d.InfJump      ~= nil and infJumpRef        then infJumpRef:SetState(d.InfJump, true) end
+    if d.Noclip       ~= nil and noclipRef         then noclipRef:SetState(d.Noclip, true) end
+    if d.God          ~= nil and godRef            then godRef:SetState(d.God, true) end
+    if d.AntiAFK      ~= nil and antiAFKRef        then antiAFKRef:SetState(d.AntiAFK, true) end
+end)
+
 win:BuildConfigPage()
-API:Notify("Hello" .. LocalPlayer.DisplayName)
+
+API:Notify("Hello " .. LocalPlayer.DisplayName)
