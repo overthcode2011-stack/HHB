@@ -1052,13 +1052,13 @@ UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if UserInputService:GetFocusedTextBox() then return end
     if input.KeyCode == Enum.KeyCode.T then
-        local newState = not AimbotSettings.Enabled
-        if aimbotToggleRef then aimbotToggleRef:SetState(newState, true) end
-        API:Notify(newState and "Aimbot enabled [T]" or "Aimbot disabled [T]")
+        if aimbotToggleRef then
+            aimbotToggleRef:SetState(not AimbotSettings.Enabled)
+        end
     elseif input.KeyCode == Enum.KeyCode.O then
-        local newState = not VisualSettings.RivalsESP
-        if espToggleRef then espToggleRef:SetState(newState, true) end
-        API:Notify(newState and "ESP enabled [O]" or "ESP disabled [O]")
+        if espToggleRef then
+            espToggleRef:SetState(not VisualSettings.RivalsESP)
+        end
     end
 end)
 
@@ -1067,18 +1067,14 @@ if isMobile then
         Icon = "rbxassetid://93310349660228",
         Tooltip = "Toggle Aimbot",
         OnClick = function()
-            local newState = not AimbotSettings.Enabled
-            if aimbotToggleRef then aimbotToggleRef:SetState(newState, true) end
-            API:Notify(newState and "Aimbot enabled" or "Aimbot disabled")
+            if aimbotToggleRef then aimbotToggleRef:SetState(not AimbotSettings.Enabled) end
         end,
     })
     win:AddMobileButton({
         Icon = "rbxassetid://13321848320",
         Tooltip = "Toggle ESP",
         OnClick = function()
-            local newState = not VisualSettings.RivalsESP
-            if espToggleRef then espToggleRef:SetState(newState, true) end
-            API:Notify(newState and "ESP enabled" or "ESP disabled")
+            if espToggleRef then espToggleRef:SetState(not VisualSettings.RivalsESP) end
         end,
     })
     win:AddMobileButton({
