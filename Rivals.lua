@@ -660,7 +660,7 @@ local miscTab = win:CreateTab("Misc", "109962716823639")
 
 local aimbotToggleRef, espToggleRef
 
-window:CreateImageCard(homeTab, {
+win:CreateImageCard(homeTab, {
     Image = "rbxthumb://type=Asset&id=" .. game.PlaceId .. "&w=420&h=420",
     Title = "Keyless · free hub · NO STEALERS DUDE :D",
     Subtitle = "by replicatedscripts",
