@@ -652,7 +652,7 @@ local function setupAutoReload()
 end
 
 local win = API:CreateWindow("Happy Hub", "Rivals · Keyless · by replicatedman")
-
+local homeTab = win:CreateTab("Home", "109951566071454")
 local aimbotTab = win:CreateTab("Aimbot", "93310349660228")
 local visualsTab = win:CreateTab("Visuals", "13321848320")
 local playerListTab = win:CreateTab("PlayerList", "122086195900803")
@@ -660,9 +660,18 @@ local miscTab = win:CreateTab("Misc", "109962716823639")
 
 local aimbotToggleRef, espToggleRef
 
+window:CreateImageCard(homeTab, {
+    Image = "rbxthumb://type=Asset&id=" .. game.PlaceId .. "&w=420&h=420",
+    Title = "Keyless · free hub · NO STEALERS DUDE :D",
+    Subtitle = "by replicatedscripts",
+    Description = "Enjoy the free features.",
+    Height = 140,
+    ImageWidth = 120,
+})
+
 win:CreateLabel(aimbotTab, "Aimbot Settings")
 
-aimbotToggleRef = win:CreateToggle(aimbotTab, "Enabled (T)", AimbotSettings.Enabled, function(v)
+aimbotToggleRef = win:CreateToggle(aimbotTab, "Enabled [T]", AimbotSettings.Enabled, function(v)
     AimbotSettings.Enabled = v
     local hum = getHumanoid()
     if not v then
