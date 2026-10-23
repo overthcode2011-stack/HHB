@@ -199,7 +199,7 @@ local MovementSettings = {
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
-local FarmSettings = { AutoFarm = false, CoinCooldown = 0.08, UltraOpt = true }
+local FarmSettings = { AutoFarm = false, CoinCooldown = 1.5, UltraOpt = true }
 
 local BEAM_CLEAR = Color3.fromRGB(0, 255, 100)
 local BEAM_WALL  = Color3.fromRGB(255, 50, 50)
@@ -214,12 +214,7 @@ local VisCache = {}
 local VIS_TTL = 0.05
 local MURDERER_TTL = 0.4
 
-local FARM_SPEED = 21
 local FARM_GOAL = 50
-
-local CachedCoinTarget = nil
-local CachedCoinTargetTime = 0
-local COIN_TARGET_TTL = 0.12
 
 local YARHM_SHOOT_OFFSET = 2.8
 
@@ -1867,52 +1862,6 @@ local function getCoinContainer()
     return nil
 end
 
-local function getBestCoin()
-    local coinContainer = getCoinContainer()
-    if not coinContainer then return nil end
-    local myHRP = getHRP()
-    if not myHRP then return nil end
-
-    local myPos = myHRP.Position
-    local cam = workspace.CurrentCamera
-    local camDir = cam and cam.CFrame.LookVector or Vector3.new(0, 0, -1)
-    local skipRecent = (tick() - S.lastCollectTime) < 0.5
-
-    local bestPart = nil
-    local bestScore = -math.huge
-    local fallbackPart = nil
-    local fallbackDist = math.huge
-
-    for _, child in ipairs(coinContainer:GetChildren()) do
-        local part = child:IsA("BasePart") and child or (child:IsA("Model") and child.PrimaryPart)
-        if part and part:IsA("BasePart") then
-            if not (skipRecent and part == S.lastTargetedCoin) then
-                local delta = part.Position - myPos
-                local dist = delta.Magnitude
-                if dist > 0.1 then
-                    local dot = delta.Unit:Dot(camDir)
-                    if dot > -0.2 then
-                        local score = (dot * 100) - (dist * 0.5)
-                        if dot > 0.8 and dist < 15 then score = score + 200 end
-                        if score > bestScore then
-                            bestScore = score
-                            bestPart = part
-                        end
-                    end
-                    if dist < fallbackDist then
-                        fallbackDist = dist
-                        fallbackPart = part
-                    end
-                end
-            end
-        end
-    end
-
-    local target = bestPart or fallbackPart
-    S.lastTargetedCoin = target
-    return target
-end
-
 local FAST_FLAGS = {
     ["DFIntTaskSchedulerTargetFps"]            = "9999",
     ["FFlagTaskSchedulerLimitTargetFpsTo2402"] = "false",
@@ -2106,7 +2055,7 @@ local function startCoinCollector()
         end
 
         local now = tick()
-        if now - S.lastCoinTp < (FarmSettings.CoinCooldown or 0.08) then return end
+        if now - S.lastCoinTp < FarmSettings.CoinCooldown then return end
 
         local coin = findNearestCoin(hrp)
         if not coin then
@@ -3351,8 +3300,6 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.lastCollectTime = 0
     S.lastCamUpdate = 0
     S.autoKillAll = false
-    CachedCoinTarget = nil
-    CachedCoinTargetTime = 0
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
@@ -3384,19 +3331,6 @@ UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
     end
 end)
 registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
-
-UI.coinCooldownRef = window:CreateSlider(farmTab, "TP Cooldown", 0.03, 0.30, 0.08, function(v)
-    FarmSettings.CoinCooldown = v
-end)
-registerControl(FarmSettings, "CoinCooldown", UI.coinCooldownRef)
-
-UI.ultraOptRef = window:CreateToggle(farmTab, "Ultra Optimization", true, function(v)
-    FarmSettings.UltraOpt = v
-    if S.coinCollecting then
-        if v then enableUltraOptimization() else disableUltraOptimization() end
-    end
-end)
-registerControl(FarmSettings, "UltraOpt", UI.ultraOptRef)
 
 window:CreateParagraph(farmTab, "Farms up to 40 coins per round · Mini Box animation · Auto-stops on round end")
 
@@ -3778,9 +3712,7 @@ local function snapshotSettings()
             AnimPack  = AvatarSettings.AnimPack,
         },
         Farm = {
-            AutoFarm     = FarmSettings.AutoFarm,
-            CoinCooldown = FarmSettings.CoinCooldown,
-            UltraOpt     = FarmSettings.UltraOpt,
+            AutoFarm = FarmSettings.AutoFarm,
         },
         AntiVoid = {
             Threshold = AntiVoidSettings.Threshold,
@@ -3807,8 +3739,8 @@ local function applyConfig(data)
     if data.Avatar then
         for k, v in pairs(data.Avatar) do AvatarSettings[k] = v end
     end
-    if data.Farm then
-        for k, v in pairs(data.Farm) do FarmSettings[k] = v end
+    if data.Farm and data.Farm.AutoFarm ~= nil then
+        FarmSettings.AutoFarm = data.Farm.AutoFarm
     end
     if data.AntiVoid then
         for k, v in pairs(data.AntiVoid) do AntiVoidSettings[k] = v end
