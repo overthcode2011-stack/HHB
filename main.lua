@@ -180,7 +180,7 @@ local CUSTOM_ANIMS = {
     jump  = { id = "rbxassetid://10921160088",     priority = Enum.AnimationPriority.Action4 },
 }
 
-local MINI_BOX_ANIM_ID = "rbxassetid://113994067684875"
+local MINI_BOX_ANIM_ID = "rbxassetid://89158965064756"
 
 local AimbotSettings = {
     MM2LockOn = false, MM2Smooth = 8, MM2Range = 500, MM2Target = "Head",
@@ -215,6 +215,7 @@ local VIS_TTL = 0.05
 local MURDERER_TTL = 0.4
 
 local FARM_GOAL = 50
+local FARM_ZONE_RADIUS = 55
 
 local YARHM_SHOOT_OFFSET = 2.8
 
@@ -250,7 +251,7 @@ local S = {
     silentAimHookInstalled = false, hookNamecall = nil, getNamecall = nil,
     lastMobileShot = 0,
     spectating = false, spectateTarget = nil, spectateDefaultSubject = nil,
-    lastTargetedCoin = nil, lastCollectTime = 0,
+    lastCollectTime = 0,
     lastCamUpdate = 0,
     autoKillAll = false, killAllTask = nil,
     evasionThread = nil,
@@ -259,7 +260,7 @@ local S = {
     savedLightingEffects = nil,
     savedFarmStates = nil,
     lastCoinTp = 0,
-    flingOriginalCamSubject = nil,
+    farmZoneAnchor = nil,
 }
 
 local UI = {}
@@ -1936,10 +1937,12 @@ local function enableAutoHelperFeatures()
 
     local function ensure(ref, tbl, key)
         if S.savedFarmStates[key] == nil then
-            S.savedFarmStates[key] = tbl[key]
+            S.savedFarmStates[key] = { orig = tbl[key], forced = false }
         end
+        local state = S.savedFarmStates[key]
         if not tbl[key] then
             tbl[key] = true
+            state.forced = true
             if ref and ref.SetState then
                 pcall(function() ref:SetState(true) end)
             end
@@ -1956,12 +1959,12 @@ local function disableAutoHelperFeatures()
     if not S.savedFarmStates then return end
 
     local function restore(ref, tbl, key)
-        local orig = S.savedFarmStates[key]
-        if orig == nil then return end
-        if tbl[key] ~= orig then
-            tbl[key] = orig
+        local state = S.savedFarmStates[key]
+        if not state or not state.forced then return end
+        if tbl[key] ~= state.orig then
+            tbl[key] = state.orig
             if ref and ref.SetState then
-                pcall(function() ref:SetState(orig) end)
+                pcall(function() ref:SetState(state.orig) end)
             end
         end
     end
@@ -1974,22 +1977,73 @@ local function disableAutoHelperFeatures()
     S.savedFarmStates = nil
 end
 
-local function findNearestCoin(myHRP)
+local function getAllCoins()
     local cc = getCoinContainer()
-    if not cc then return nil end
-    local myPos = myHRP.Position
-    local best, bestDist = nil, math.huge
+    if not cc then return {} end
+    local coins = {}
     for _, child in ipairs(cc:GetChildren()) do
         local part = child:IsA("BasePart") and child or (child:IsA("Model") and child.PrimaryPart)
         if part and part:IsA("BasePart") then
-            local d = (part.Position - myPos).Magnitude
-            if d > 0.1 and d < bestDist then
-                bestDist = d
-                best = part
+            table.insert(coins, part)
+        end
+    end
+    return coins
+end
+
+local function countCoinNeighbors(coins, target, radius)
+    local n = 0
+    for _, other in ipairs(coins) do
+        if other ~= target and (other.Position - target.Position).Magnitude <= radius then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+local function findBestFarmCoin(myHRP)
+    local coins = getAllCoins()
+    if #coins == 0 then return nil end
+    local myPos = myHRP.Position
+
+    if S.farmZoneAnchor then
+        local zoneCoins = {}
+        for _, coin in ipairs(coins) do
+            if (coin.Position - S.farmZoneAnchor).Magnitude <= FARM_ZONE_RADIUS then
+                table.insert(zoneCoins, coin)
+            end
+        end
+        if #zoneCoins > 0 then
+            local best, bestDist = nil, math.huge
+            for _, coin in ipairs(zoneCoins) do
+                local d = (coin.Position - myPos).Magnitude
+                if d < bestDist then
+                    bestDist = d
+                    best = coin
+                end
+            end
+            return best
+        end
+        S.farmZoneAnchor = nil
+    end
+
+    local bestCoin = nil
+    local bestScore = -math.huge
+    for _, coin in ipairs(coins) do
+        local dist = (coin.Position - myPos).Magnitude
+        if dist > 0.1 then
+            local neighbors = countCoinNeighbors(coins, coin, FARM_ZONE_RADIUS)
+            local score = neighbors * 1000 - dist
+            if score > bestScore then
+                bestScore = score
+                bestCoin = coin
             end
         end
     end
-    return best
+
+    if bestCoin then
+        S.farmZoneAnchor = bestCoin.Position
+    end
+    return bestCoin
 end
 
 local function stopCoinCollector()
@@ -2004,6 +2058,7 @@ local function stopCoinCollector()
     disableUltraOptimization()
 
     S.lastCoinTp = 0
+    S.farmZoneAnchor = nil
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     stopMiniBoxAnimation()
 
@@ -2021,6 +2076,7 @@ local function startCoinCollector()
 
     S.coinCollecting = true
     S.lastCoinTp = 0
+    S.farmZoneAnchor = nil
     if S.coinStatusSetter then S.coinStatusSetter("Farming") end
     playMiniBoxAnimation()
     enableAutoHelperFeatures()
@@ -2057,17 +2113,28 @@ local function startCoinCollector()
         local now = tick()
         if now - S.lastCoinTp < FarmSettings.CoinCooldown then return end
 
-        local coin = findNearestCoin(hrp)
-        if not coin then
+        local coin = findBestFarmCoin(hrp)
+        if not coin or not coin.Parent then
             if S.coinStatusSetter then S.coinStatusSetter("No coins") end
             return
         end
 
         S.lastCoinTp = now
-        S.lastTargetedCoin = coin
         hrp.CFrame = CFrame.new(coin.Position)
         hrp.Velocity = Vector3.zero
         hrp.RotVelocity = Vector3.zero
+
+        if firetouchinterest then
+            local targetCoin = coin
+            task.spawn(function()
+                pcall(firetouchinterest, hrp, targetCoin, 0)
+                task.wait(0.03)
+                if targetCoin and targetCoin.Parent then
+                    pcall(firetouchinterest, hrp, targetCoin, 1)
+                end
+            end)
+        end
+
         if S.coinStatusSetter then S.coinStatusSetter("Farming") end
     end)
 end
@@ -3296,10 +3363,10 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.spectating = false
     S.spectateTarget = nil
     S.spectateDefaultSubject = nil
-    S.lastTargetedCoin = nil
     S.lastCollectTime = 0
     S.lastCamUpdate = 0
     S.autoKillAll = false
+    S.farmZoneAnchor = nil
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
