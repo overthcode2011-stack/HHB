@@ -199,7 +199,7 @@ local MovementSettings = {
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
-local FarmSettings = { AutoFarm = false }
+local FarmSettings = { AutoFarm = false, CoinCooldown = 0.08, UltraOpt = true }
 
 local BEAM_CLEAR = Color3.fromRGB(0, 255, 100)
 local BEAM_WALL  = Color3.fromRGB(255, 50, 50)
@@ -259,6 +259,12 @@ local S = {
     lastCamUpdate = 0,
     autoKillAll = false, killAllTask = nil,
     evasionThread = nil,
+    ultraOptActive = false,
+    savedLighting = nil,
+    savedLightingEffects = nil,
+    savedFarmStates = nil,
+    lastCoinTp = 0,
+    flingOriginalCamSubject = nil,
 }
 
 local UI = {}
@@ -1907,37 +1913,169 @@ local function getBestCoin()
     return target
 end
 
+local FAST_FLAGS = {
+    ["DFIntTaskSchedulerTargetFps"]            = "9999",
+    ["FFlagTaskSchedulerLimitTargetFpsTo2402"] = "false",
+    ["DFIntRenderThrottleMaxFps"]              = "9999",
+    ["FFlagDebugDisableShadows"]               = "true",
+    ["FIntRenderShadowIntensity"]              = "0",
+    ["FFlagAdServiceEnabled"]                  = "false",
+    ["DFIntMinimumFrameTime"]                  = "1",
+    ["FFlagDisablePostFx"]                     = "true",
+    ["FFlagRenderCheckThreading"]              = "true",
+    ["DFIntConnectionMTimesBeforeChain"]       = "1",
+    ["DFIntSchedulerWaitTime"]                 = "1",
+}
+
+local function applyFastFlags()
+    if type(setfflag) ~= "function" then return end
+    for flag, val in pairs(FAST_FLAGS) do
+        pcall(setfflag, flag, val)
+    end
+end
+
+local function enableUltraOptimization()
+    if S.ultraOptActive then return end
+    S.ultraOptActive = true
+    applyFastFlags()
+
+    local lighting = game:GetService("Lighting")
+    S.savedLighting = { GlobalShadows = lighting.GlobalShadows, FogEnd = lighting.FogEnd }
+    lighting.GlobalShadows = false
+    lighting.FogEnd = 5000
+
+    S.savedLightingEffects = {}
+    for _, v in ipairs(lighting:GetChildren()) do
+        if v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Sky") then
+            S.savedLightingEffects[v] = v.Enabled
+            pcall(function() v.Enabled = false end)
+        end
+    end
+
+    pcall(function()
+        workspace.Terrain.WaterWaveSize = 0
+        workspace.Terrain.WaterWaveSpeed = 0
+        workspace.Terrain.WaterReflectance = 0
+        workspace.Terrain.WaterTransparency = 1
+    end)
+end
+
+local function disableUltraOptimization()
+    if not S.ultraOptActive then return end
+    S.ultraOptActive = false
+
+    if S.savedLighting then
+        local lighting = game:GetService("Lighting")
+        for k, v in pairs(S.savedLighting) do
+            pcall(function() lighting[k] = v end)
+        end
+        S.savedLighting = nil
+    end
+
+    if S.savedLightingEffects then
+        for obj, enabled in pairs(S.savedLightingEffects) do
+            if obj and obj.Parent then
+                pcall(function() obj.Enabled = enabled end)
+            end
+        end
+        S.savedLightingEffects = nil
+    end
+end
+
+local function enableAutoHelperFeatures()
+    S.savedFarmStates = S.savedFarmStates or {}
+
+    local function ensure(ref, tbl, key)
+        if S.savedFarmStates[key] == nil then
+            S.savedFarmStates[key] = tbl[key]
+        end
+        if not tbl[key] then
+            tbl[key] = true
+            if ref and ref.SetState then
+                pcall(function() ref:SetState(true) end)
+            end
+        end
+    end
+
+    ensure(UI.afkRef,       MiscSettings,     "AntiAFK")
+    ensure(UI.noclipRef,    MovementSettings, "Noclip")
+    ensure(UI.antiFlingRef, MovementSettings, "AntiFling")
+    ensure(UI.antiVoidRef,  MiscSettings,     "AntiVoid")
+end
+
+local function disableAutoHelperFeatures()
+    if not S.savedFarmStates then return end
+
+    local function restore(ref, tbl, key)
+        local orig = S.savedFarmStates[key]
+        if orig == nil then return end
+        if tbl[key] ~= orig then
+            tbl[key] = orig
+            if ref and ref.SetState then
+                pcall(function() ref:SetState(orig) end)
+            end
+        end
+    end
+
+    restore(UI.afkRef,       MiscSettings,     "AntiAFK")
+    restore(UI.noclipRef,    MovementSettings, "Noclip")
+    restore(UI.antiFlingRef, MovementSettings, "AntiFling")
+    restore(UI.antiVoidRef,  MiscSettings,     "AntiVoid")
+
+    S.savedFarmStates = nil
+end
+
+local function findNearestCoin(myHRP)
+    local cc = getCoinContainer()
+    if not cc then return nil end
+    local myPos = myHRP.Position
+    local best, bestDist = nil, math.huge
+    for _, child in ipairs(cc:GetChildren()) do
+        local part = child:IsA("BasePart") and child or (child:IsA("Model") and child.PrimaryPart)
+        if part and part:IsA("BasePart") then
+            local d = (part.Position - myPos).Magnitude
+            if d > 0.1 and d < bestDist then
+                bestDist = d
+                best = part
+            end
+        end
+    end
+    return best
+end
+
 local function stopCoinCollector()
     if not S.coinCollecting then return end
     S.coinCollecting = false
+
     if S.coinConnection then S.coinConnection:Disconnect(); S.coinConnection = nil end
-    if S.coinVelocity then S.coinVelocity:Destroy(); S.coinVelocity = nil end
-    if S.coinGyro then S.coinGyro:Destroy(); S.coinGyro = nil end
+    if S.coinVelocity   then S.coinVelocity:Destroy();   S.coinVelocity   = nil end
+    if S.coinGyro       then S.coinGyro:Destroy();       S.coinGyro       = nil end
+
+    disableAutoHelperFeatures()
+    disableUltraOptimization()
+
+    S.lastCoinTp = 0
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     stopMiniBoxAnimation()
+
+    local hrp = getHRP()
+    if hrp then
+        hrp.Velocity = Vector3.zero
+        hrp.RotVelocity = Vector3.zero
+    end
 end
 
 local function startCoinCollector()
     if S.coinCollecting then return end
     if not getCoinContainer() then return end
-    local hrp = getHRP()
-    if not hrp then return end
+    if not getHRP() then return end
 
     S.coinCollecting = true
+    S.lastCoinTp = 0
     if S.coinStatusSetter then S.coinStatusSetter("Farming") end
     playMiniBoxAnimation()
-
-    S.coinVelocity = Instance.new("BodyVelocity")
-    S.coinVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    S.coinVelocity.P = 1250
-    S.coinVelocity.Parent = hrp
-
-    S.coinGyro = Instance.new("BodyGyro")
-    S.coinGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-    S.coinGyro.P = 1e4
-    S.coinGyro.D = 500
-    S.coinGyro.CFrame = hrp.CFrame
-    S.coinGyro.Parent = hrp
+    enableAutoHelperFeatures()
+    if FarmSettings.UltraOpt then enableUltraOptimization() end
 
     S.coinConnection = RunService.Heartbeat:Connect(function()
         if not S.coinCollecting then return end
@@ -1948,80 +2086,39 @@ local function startCoinCollector()
             return
         end
 
-        local currentHRP = getHRP()
-        if not currentHRP then
-            stopCoinCollector()
-            return
-        end
-
-        if not S.coinVelocity or not S.coinVelocity.Parent then
-            S.coinVelocity = Instance.new("BodyVelocity")
-            S.coinVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-            S.coinVelocity.P = 1250
-            S.coinVelocity.Parent = currentHRP
-        end
-        if not S.coinGyro or not S.coinGyro.Parent then
-            S.coinGyro = Instance.new("BodyGyro")
-            S.coinGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-            S.coinGyro.P = 1e4
-            S.coinGyro.D = 500
-            S.coinGyro.CFrame = currentHRP.CFrame
-            S.coinGyro.Parent = currentHRP
-        end
+        local hrp = getHRP()
+        if not hrp then stopCoinCollector() return end
 
         local murderer = getMurdererCached()
-        local evadeDirection = nil
         if murderer and murderer.Character then
-            local murderHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
-            if murderHRP then
-                local distToMurderer = (currentHRP.Position - murderHRP.Position).Magnitude
-                if distToMurderer < 25 then
-                    evadeDirection = (currentHRP.Position - murderHRP.Position).Unit
+            local mHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
+            if mHRP then
+                local d = (hrp.Position - mHRP.Position).Magnitude
+                if d < 25 then
                     if S.coinStatusSetter then S.coinStatusSetter("Evading") end
+                    local away = (hrp.Position - mHRP.Position).Unit
+                    hrp.CFrame = CFrame.new(hrp.Position + away * 60)
+                    hrp.Velocity = Vector3.zero
+                    hrp.RotVelocity = Vector3.zero
+                    return
                 end
             end
         end
 
-        if evadeDirection then
-            local targetVel = evadeDirection * math.min(FARM_SPEED * 1.5, 60)
-            S.coinVelocity.Velocity = targetVel
-            S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection)
-            if tick() - S.lastCamUpdate > 0.05 then
-                S.lastCamUpdate = tick()
-                local cam = workspace.CurrentCamera
-                if cam then
-                    cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(currentHRP.Position, currentHRP.Position + evadeDirection), 0.25)
-                end
-            end
-            return
-        end
+        local now = tick()
+        if now - S.lastCoinTp < (FarmSettings.CoinCooldown or 0.08) then return end
 
-        local nowTick = tick()
-        local target
-        if CachedCoinTarget and CachedCoinTarget.Parent and (nowTick - CachedCoinTargetTime) < COIN_TARGET_TTL then
-            target = CachedCoinTarget
-        else
-            target = getBestCoin()
-            CachedCoinTarget = target
-            CachedCoinTargetTime = nowTick
-        end
-
-        if not target then
-            S.coinVelocity.Velocity = Vector3.zero
+        local coin = findNearestCoin(hrp)
+        if not coin then
             if S.coinStatusSetter then S.coinStatusSetter("No coins") end
             return
         end
 
-        local direction = (target.Position - currentHRP.Position).Unit
-        S.coinVelocity.Velocity = direction * FARM_SPEED
-        S.coinGyro.CFrame = CFrame.lookAt(currentHRP.Position, target.Position)
-        if tick() - S.lastCamUpdate > 0.05 then
-            S.lastCamUpdate = tick()
-            local cam = workspace.CurrentCamera
-            if cam then
-                cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(currentHRP.Position, target.Position), 0.25)
-            end
-        end
+        S.lastCoinTp = now
+        S.lastTargetedCoin = coin
+        hrp.CFrame = CFrame.new(coin.Position)
+        hrp.Velocity = Vector3.zero
+        hrp.RotVelocity = Vector3.zero
         if S.coinStatusSetter then S.coinStatusSetter("Farming") end
     end)
 end
@@ -2077,168 +2174,162 @@ local function getFlingTargetByName(name)
     return nil
 end
 
-local function autoEnableFling()
-    S.flingWasFlingOn = MovementSettings.Fling
-    if not MovementSettings.Fling then
-        MovementSettings.Fling = true
-        if UI.flingToggleRef and UI.flingToggleRef.SetState then
-            pcall(function() UI.flingToggleRef.SetState(true) end)
-        end
-        if not S.flingRunning then
-            S.flingRunning = true
-            S.flingTask = task.spawn(function()
-                while S.flingRunning do
-                    task.wait()
-                    local character = LocalPlayer.Character
-                    local hrp = character and character:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        local velo = hrp.Velocity
-                        hrp.Velocity = velo * 10000 + Vector3.new(0, 10000, 0)
-                        RunService.RenderStepped:Wait()
-                        hrp.Velocity = velo
-                        RunService.Stepped:Wait()
-                    end
-                end
-                S.flingTask = nil
-            end)
-        end
-    end
-end
+local function yarhmFling(targetPlr)
+    if not targetPlr or not targetPlr.Character then return false, "no target character" end
+    if targetPlr == LocalPlayer then return false, "cannot fling self" end
 
-local function autoDisableFling()
-    if not S.flingWasFlingOn then
-        MovementSettings.Fling = false
-        if UI.flingToggleRef and UI.flingToggleRef.SetState then
-            pcall(function() UI.flingToggleRef.SetState(false) end)
-        end
-        S.flingRunning = false
-        if S.flingTask then task.cancel(S.flingTask); S.flingTask = nil end
-        local hrp = getHRP()
-        if hrp then hrp.Velocity = Vector3.zero end
-    end
-    S.flingWasFlingOn = false
-end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = hum and hum.RootPart
+    if not (char and hum and root) then return false, "no local character" end
 
-local function stopFlingTarget()
-    local hadOriginal = S.flingOriginalCFrame
-    S.flingTargetRunning = false
-    S.flingRunning = false
-    if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
-    if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
-    if hadOriginal then
-        task.spawn(function()
-            for _ = 1, 8 do
-                local h = getHRP()
-                if h then
-                    h.Velocity = Vector3.zero
-                    h.RotVelocity = Vector3.zero
-                    h.CFrame = hadOriginal
-                end
-                RunService.RenderStepped:Wait()
+    local tChar = targetPlr.Character
+    local tHum = tChar:FindFirstChildOfClass("Humanoid")
+    local tRoot = tHum and tHum.RootPart
+    local tHead = tChar:FindFirstChild("Head")
+    local tAccessory = tChar:FindFirstChildOfClass("Accessory")
+    local tHandle = tAccessory and tAccessory:FindFirstChild("Handle")
+
+    if not tChar:FindFirstChildWhichIsA("BasePart") then return false, "target has no parts" end
+
+    local oldFPDH = workspace.FallenPartsDestroyHeight
+    local oldPos = root.CFrame
+    workspace.FallenPartsDestroyHeight = 0/0
+
+    local oldCamSubject = workspace.CurrentCamera.CameraSubject
+    if tHead then
+        workspace.CurrentCamera.CameraSubject = tHead
+    elseif tHandle then
+        workspace.CurrentCamera.CameraSubject = tHandle
+    elseif tHum then
+        workspace.CurrentCamera.CameraSubject = tHum
+    end
+
+    local function FPos(basePart, posOffset, angOffset)
+        local newCF = CFrame.new(basePart.Position) * posOffset * angOffset
+        root.CFrame = newCF
+        pcall(function() char:PivotTo(newCF) end)
+        root.Velocity = Vector3.new(9e7, 9e8, 9e7)
+        root.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+    end
+
+    local function SFBasePart(basePart)
+        local deadline = tick() + 2
+        local angle = 0
+        repeat
+            if not (root and tHum) then break end
+            if basePart.Velocity.Magnitude < 50 then
+                angle = angle + 100
+                FPos(basePart, CFrame.new(0, 1.5, 0) + tHum.MoveDirection * basePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(angle), 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, -1.5, 0) + tHum.MoveDirection * basePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(angle), 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(2.25, 1.5, -2.25) + tHum.MoveDirection * basePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(angle), 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(-2.25, -1.5, 2.25) + tHum.MoveDirection * basePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(angle), 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, 1.5, 0) + tHum.MoveDirection, CFrame.Angles(math.rad(angle), 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, -1.5, 0) + tHum.MoveDirection, CFrame.Angles(math.rad(angle), 0, 0))
+                task.wait()
+            else
+                FPos(basePart, CFrame.new(0, 1.5, tHum.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, -1.5, -tHum.WalkSpeed), CFrame.Angles(0, 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, 1.5, tHum.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, 1.5, tRoot.Velocity.Magnitude / 1.25), CFrame.Angles(math.rad(90), 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, -1.5, -tRoot.Velocity.Magnitude / 1.25), CFrame.Angles(0, 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, 1.5, tRoot.Velocity.Magnitude / 1.25), CFrame.Angles(math.rad(90), 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0))
+                task.wait()
+                FPos(basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                task.wait()
             end
-        end)
-    else
-        local hrp = getHRP()
-        if hrp then
-            hrp.Velocity = Vector3.zero
-            hrp.RotVelocity = Vector3.zero
-        end
+        until basePart.Velocity.Magnitude > 500
+            or basePart.Parent ~= tChar
+            or targetPlr.Parent ~= Players
+            or targetPlr.Character ~= tChar
+            or tHum.Sit
+            or hum.Health <= 0
+            or tick() > deadline
     end
-    S.flingOriginalCFrame = nil
-    S.flingOriginalPosition = nil
-    S.flingWasFlingOn = false
+
+    local bv = Instance.new("BodyVelocity")
+    bv.Parent = root
+    bv.Velocity = Vector3.new(9e8, 9e8, 9e8)
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+
+    hum:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+
+    local baseToUse
+    if tRoot and tHead then
+        if (tRoot.CFrame.Position - tHead.CFrame.Position).Magnitude > 5 then
+            baseToUse = tHead
+        else
+            baseToUse = tRoot
+        end
+    elseif tRoot then
+        baseToUse = tRoot
+    elseif tHead then
+        baseToUse = tHead
+    elseif tHandle then
+        baseToUse = tHandle
+    end
+
+    local success = false
+    if baseToUse then
+        SFBasePart(baseToUse)
+        success = true
+    end
+
+    bv:Destroy()
+    hum:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+    workspace.CurrentCamera.CameraSubject = oldCamSubject
+
+    local recoverStart = tick()
+    repeat
+        local h = getHRP()
+        if h then
+            h.CFrame = oldPos * CFrame.new(0, 0.5, 0)
+            h.Velocity = Vector3.zero
+            h.RotVelocity = Vector3.zero
+        end
+        if hum then pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end) end
+        task.wait()
+    until not getHRP() or (getHRP().Position - oldPos.Position).Magnitude < 25 or tick() > recoverStart + 3
+
+    workspace.FallenPartsDestroyHeight = oldFPDH
+
+    return success
 end
 
 local function startFlingTarget(targetPlr)
-    if not targetPlr then
-        notify("No target selected")
-        return
-    end
-    if targetPlr == LocalPlayer then
-        notify("Cannot fling yourself")
-        return
-    end
-    if S.flingTargetRunning then
-        stopFlingTarget()
-        task.wait(0.1)
-    end
-    local myHRP = getHRP()
-    if not myHRP then
-        notify("No character")
-        return
-    end
-    S.flingOriginalCFrame = myHRP.CFrame
-    S.flingOriginalPosition = myHRP.Position
-    autoEnableFling()
+    if not targetPlr then notify("No target selected") return end
+    if targetPlr == LocalPlayer then notify("Cannot fling yourself") return end
+    if S.flingTargetRunning then return end
+    if not getHRP() then notify("No character") return end
+
     S.flingTargetRunning = true
     notify("Flinging " .. targetPlr.DisplayName)
-    spectatePlayer(targetPlr)
+
     S.flingTargetThread = task.spawn(function()
-        local startTime = tick()
-        local duration = MovementSettings.FlingDuration or 3
-        local maxDist = MovementSettings.FlingDistance or 500
-        local flinged = false
-        local originalCF = S.flingOriginalCFrame
-        local shakePos = 0
-        while S.flingTargetRunning and tick() - startTime < duration do
-            local currentHRP = getHRP()
-            local theirHRP = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
-            if not currentHRP or not theirHRP then break end
-            if S.spectating and S.spectateTarget == targetPlr then
-                local theirHum = targetPlr.Character:FindFirstChildOfClass("Humanoid")
-                if theirHum then workspace.CurrentCamera.CameraSubject = theirHum end
-            end
-            if (currentHRP.Position - theirHRP.Position).Magnitude >= maxDist then
-                flinged = true
-                notify(targetPlr.DisplayName .. " FLINGED!")
-                break
-            end
-            shakePos = -shakePos
-            if shakePos == 0 then shakePos = 2 end
-            local V = currentHRP.Velocity
-            currentHRP.CFrame = theirHRP.CFrame * CFrame.new(shakePos, 0, 0)
-            RunService.RenderStepped:Wait()
-            currentHRP.Velocity = V * 10000 + Vector3.new(0, 10000, 0)
-            RunService.Stepped:Wait()
-            currentHRP.Velocity = V
-            RunService.RenderStepped:Wait()
-            currentHRP.CFrame = theirHRP.CFrame * CFrame.new(-shakePos, 0, 0)
-            RunService.Stepped:Wait()
-            currentHRP.CFrame = theirHRP.CFrame * CFrame.new(shakePos, 0, 0)
-            RunService.RenderStepped:Wait()
-            currentHRP.Velocity = V * 10000 + Vector3.new(0, 10000, 0)
-            RunService.Stepped:Wait()
-            currentHRP.Velocity = V
-            currentHRP.CFrame = originalCF
-            RunService.RenderStepped:Wait()
-        end
+        local ok = yarhmFling(targetPlr)
         S.flingTargetRunning = false
-        S.flingRunning = false
-        if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
-        S.flingWasFlingOn = false
-        MovementSettings.Fling = false
-        if UI.flingToggleRef and UI.flingToggleRef.SetState then
-            pcall(function() UI.flingToggleRef.SetState(false) end)
-        end
-        if originalCF then
-            for _ = 1, 8 do
-                local h = getHRP()
-                if h then
-                    h.Velocity = Vector3.zero
-                    h.RotVelocity = Vector3.zero
-                    h.CFrame = originalCF
-                end
-                RunService.RenderStepped:Wait()
-            end
-        end
-        if not flinged then
+        S.flingTargetThread = nil
+        if ok then
+            notify(targetPlr.DisplayName .. " FLINGED!")
+        else
             notify(targetPlr.DisplayName .. " not flinged")
         end
-        task.wait(1.5)
-        stopSpectating()
-        S.flingOriginalCFrame = nil
-        S.flingOriginalPosition = nil
-        S.flingTargetThread = nil
     end)
 end
 
@@ -3286,16 +3377,26 @@ window:CreateLabel(farmTab, "Coin Farm")
 UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
     FarmSettings.AutoFarm = v
     if v then
-        if S.roundActive then
-            if not S.coinCollecting then startCoinCollector() end
-            startEvasion()
-        end
+        if S.roundActive and not S.coinCollecting then startCoinCollector() end
     else
         stopCoinCollector()
         stopEvasion()
     end
 end)
 registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
+
+UI.coinCooldownRef = window:CreateSlider(farmTab, "TP Cooldown", 0.03, 0.30, 0.08, function(v)
+    FarmSettings.CoinCooldown = v
+end)
+registerControl(FarmSettings, "CoinCooldown", UI.coinCooldownRef)
+
+UI.ultraOptRef = window:CreateToggle(farmTab, "Ultra Optimization", true, function(v)
+    FarmSettings.UltraOpt = v
+    if S.coinCollecting then
+        if v then enableUltraOptimization() else disableUltraOptimization() end
+    end
+end)
+registerControl(FarmSettings, "UltraOpt", UI.ultraOptRef)
 
 window:CreateParagraph(farmTab, "Farms up to 40 coins per round · Mini Box animation · Auto-stops on round end")
 
@@ -3677,7 +3778,9 @@ local function snapshotSettings()
             AnimPack  = AvatarSettings.AnimPack,
         },
         Farm = {
-            AutoFarm = FarmSettings.AutoFarm,
+            AutoFarm     = FarmSettings.AutoFarm,
+            CoinCooldown = FarmSettings.CoinCooldown,
+            UltraOpt     = FarmSettings.UltraOpt,
         },
         AntiVoid = {
             Threshold = AntiVoidSettings.Threshold,
