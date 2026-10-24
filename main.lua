@@ -216,8 +216,15 @@ local MURDERER_TTL = 0.4
 
 local FARM_GOAL = 50
 local FARM_REACH_RADIUS = 10
-local FARM_BATCH_STEP = 0.05
-local FARM_STALL_TIMEOUT = 15
+local FARM_MAX_TP_DIST = 50
+local FARM_COOLDOWN_MIN = 1.0
+local FARM_COOLDOWN_MAX = 2.2
+local FARM_BATCH_STEP_MIN = 0.04
+local FARM_BATCH_STEP_MAX = 0.12
+local FARM_POS_JITTER_H = 1.2
+local FARM_POS_JITTER_V = 0.6
+local FARM_WALK_TIMEOUT = 3.0
+local FARM_STALL_TIMEOUT = 20
 
 local YARHM_SHOOT_OFFSET = 2.8
 
@@ -262,8 +269,11 @@ local S = {
     savedFarmStates = nil,
     lastCoinTp = 0,
     coinBatch = nil,
-    lastBatchProcess = 0,
+    farmNextActionAt = 0,
     farmStartedAt = 0,
+    lastGyroUpdate = 0,
+    farmWalkTarget = nil,
+    farmWalkStartedAt = 0,
 }
 
 local UI = {}
@@ -2013,16 +2023,20 @@ local function findBestFarmCoin(myHRP)
     return bestCoin
 end
 
-local function buildCoinBatch(centerPos)
+local function buildCoinBatch(centerPos, myPos)
     local coins = getAllCoins()
     local batch = {}
     for _, c in ipairs(coins) do
-        if c and c.Parent and (c.Position - centerPos).Magnitude <= FARM_REACH_RADIUS then
-            table.insert(batch, c)
+        if c and c.Parent then
+            local centerDist = (c.Position - centerPos).Magnitude
+            local playerDist = (c.Position - myPos).Magnitude
+            if centerDist <= FARM_REACH_RADIUS and playerDist <= FARM_MAX_TP_DIST then
+                table.insert(batch, c)
+            end
         end
     end
     table.sort(batch, function(a, b)
-        return (a.Position - centerPos).Magnitude < (b.Position - centerPos).Magnitude
+        return (a.Position - myPos).Magnitude < (b.Position - myPos).Magnitude
     end)
     return batch
 end
@@ -2035,8 +2049,25 @@ local function attachFarmGyro()
     S.coinGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
     S.coinGyro.P = 1e5
     S.coinGyro.D = 500
-    S.coinGyro.CFrame = hrp.CFrame
+    S.coinGyro.CFrame = CFrame.new(hrp.Position)
     S.coinGyro.Parent = hrp
+    S.lastGyroUpdate = tick()
+end
+
+local function rollFarmCooldown()
+    return FARM_COOLDOWN_MIN + math.random() * (FARM_COOLDOWN_MAX - FARM_COOLDOWN_MIN)
+end
+
+local function rollBatchStep()
+    return FARM_BATCH_STEP_MIN + math.random() * (FARM_BATCH_STEP_MAX - FARM_BATCH_STEP_MIN)
+end
+
+local function jitterCoinPos(pos)
+    return pos + Vector3.new(
+        (math.random() - 0.5) * 2 * FARM_POS_JITTER_H,
+        (math.random() - 0.5) * 2 * FARM_POS_JITTER_V,
+        (math.random() - 0.5) * 2 * FARM_POS_JITTER_H
+    )
 end
 
 local function stopCoinCollector()
@@ -2050,11 +2081,16 @@ local function stopCoinCollector()
     disableUltraOptimization()
 
     S.coinBatch = nil
-    S.lastBatchProcess = 0
+    S.farmNextActionAt = 0
     S.lastCoinTp = 0
     S.farmStartedAt = 0
+    S.farmWalkTarget = nil
+    S.farmWalkStartedAt = 0
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     stopMiniBoxAnimation()
+
+    local hum = getHumanoid()
+    if hum then pcall(function() hum:MoveTo(Vector3.zero) end) end
 
     local hrp = getHRP()
     if hrp then
@@ -2071,8 +2107,10 @@ local function startCoinCollector()
     S.coinCollecting = true
     S.lastCoinTp = 0
     S.coinBatch = nil
-    S.lastBatchProcess = 0
+    S.farmNextActionAt = 0
     S.farmStartedAt = tick()
+    S.farmWalkTarget = nil
+    S.farmWalkStartedAt = 0
     if S.coinStatusSetter then S.coinStatusSetter("Farming") end
     playMiniBoxAnimation()
     enableAutoHelperFeatures()
@@ -2082,7 +2120,6 @@ local function startCoinCollector()
 
     S.coinConnection = RunService.Heartbeat:Connect(function()
         if not S.coinCollecting then return end
-
         if not S.roundActive then stopCoinCollector() return end
 
         if S.totalCoins >= FARM_GOAL then
@@ -2094,13 +2131,17 @@ local function startCoinCollector()
         local hrp = getHRP()
         if not hrp then stopCoinCollector() return end
 
+        local now = tick()
+
         if S.coinGyro and S.coinGyro.Parent then
-            S.coinGyro.CFrame = CFrame.new(hrp.Position)
+            if now - S.lastGyroUpdate > 0.15 + math.random() * 0.15 then
+                S.coinGyro.CFrame = CFrame.new(hrp.Position)
+                S.lastGyroUpdate = now
+            end
         elseif not S.coinGyro then
             attachFarmGyro()
         end
 
-        local now = tick()
         local lastActivity = math.max(S.farmStartedAt, S.lastCollectTime)
         if now - lastActivity > FARM_STALL_TIMEOUT then
             if S.coinStatusSetter then S.coinStatusSetter("Stalled") end
@@ -2119,47 +2160,111 @@ local function startCoinCollector()
                     hrp.CFrame = CFrame.new(hrp.Position + away * 60)
                     hrp.Velocity = Vector3.zero
                     hrp.RotVelocity = Vector3.zero
+                    S.farmNextActionAt = now + 0.4 + math.random() * 0.3
                     return
                 end
             end
         end
 
-        if S.coinBatch and #S.coinBatch > 0 then
-            if now - S.lastBatchProcess < FARM_BATCH_STEP then return end
-            S.lastBatchProcess = now
+        if now < (S.farmNextActionAt or 0) then return end
 
-            local target = table.remove(S.coinBatch, 1)
-            if target and target.Parent then
-                hrp.CFrame = CFrame.new(target.Position)
-                hrp.Velocity = Vector3.zero
-                hrp.RotVelocity = Vector3.zero
-                local targetRef = target
-                task.defer(function()
-                    task.wait(0.03)
-                    if not targetRef or not targetRef.Parent then return end
-                    if firetouchinterest then
-                        pcall(firetouchinterest, hrp, targetRef, 0)
-                        task.wait(0.01)
-                        if targetRef and targetRef.Parent then
-                            pcall(firetouchinterest, hrp, targetRef, 1)
-                        end
-                    end
-                end)
+        if S.coinBatch and #S.coinBatch > 0 then
+            while #S.coinBatch > 0 do
+                local head = S.coinBatch[1]
+                if not head or not head.Parent then
+                    table.remove(S.coinBatch, 1)
+                else
+                    break
+                end
             end
+            if #S.coinBatch == 0 then
+                S.coinBatch = nil
+                S.farmNextActionAt = now + 0.4 + math.random() * 0.3
+                return
+            end
+
+            local target = S.coinBatch[1]
+            local dist = (target.Position - hrp.Position).Magnitude
+            if dist > FARM_MAX_TP_DIST then
+                table.remove(S.coinBatch, 1)
+                S.farmNextActionAt = now + 0.1
+                return
+            end
+
+            table.remove(S.coinBatch, 1)
+            local jitterPos = jitterCoinPos(target.Position)
+            hrp.CFrame = CFrame.new(jitterPos)
+            hrp.Velocity = Vector3.zero
+            hrp.RotVelocity = Vector3.zero
+
+            local targetRef = target
+            task.defer(function()
+                task.wait(0.05 + math.random() * 0.08)
+                if targetRef and targetRef.Parent and firetouchinterest then
+                    pcall(firetouchinterest, hrp, targetRef, 0)
+                    task.wait(0.02 + math.random() * 0.03)
+                    if targetRef and targetRef.Parent then
+                        pcall(firetouchinterest, hrp, targetRef, 1)
+                    end
+                end
+            end)
+
+            S.farmNextActionAt = now + rollBatchStep()
+            if S.coinStatusSetter then S.coinStatusSetter("Batch x" .. (#S.coinBatch + 1)) end
             return
         end
 
-        if now - S.lastCoinTp < FarmSettings.CoinCooldown then return end
+        if S.farmWalkTarget then
+            local walkDist = (S.farmWalkTarget - hrp.Position).Magnitude
+            if walkDist <= FARM_MAX_TP_DIST then
+                S.farmWalkTarget = nil
+                S.farmWalkStartedAt = 0
+                S.farmNextActionAt = now + 0.1
+                return
+            end
+            if now - S.farmWalkStartedAt > FARM_WALK_TIMEOUT then
+                S.farmWalkTarget = nil
+                S.farmWalkStartedAt = 0
+                S.farmNextActionAt = now + rollFarmCooldown()
+                return
+            end
+            local hum = getHumanoid()
+            if hum then
+                pcall(function() hum:MoveTo(S.farmWalkTarget) end)
+            end
+            S.farmNextActionAt = now + 0.4 + math.random() * 0.2
+            if S.coinStatusSetter then S.coinStatusSetter("Walking " .. math.floor(walkDist) .. "m") end
+            return
+        end
 
         local coin = findBestFarmCoin(hrp)
         if not coin or not coin.Parent then
             if S.coinStatusSetter then S.coinStatusSetter("No coins") end
+            S.farmNextActionAt = now + rollFarmCooldown()
+            return
+        end
+
+        local distToCoin = (coin.Position - hrp.Position).Magnitude
+        if distToCoin > FARM_MAX_TP_DIST then
+            S.farmWalkTarget = coin.Position
+            S.farmWalkStartedAt = now
+            local hum = getHumanoid()
+            if hum then
+                pcall(function() hum:MoveTo(coin.Position) end)
+            end
+            S.farmNextActionAt = now + 0.4 + math.random() * 0.2
+            if S.coinStatusSetter then S.coinStatusSetter("Walking " .. math.floor(distToCoin) .. "m") end
             return
         end
 
         S.lastCoinTp = now
-        S.coinBatch = buildCoinBatch(coin.Position)
+        S.coinBatch = buildCoinBatch(coin.Position, hrp.Position)
+        if #S.coinBatch == 0 then
+            S.farmNextActionAt = now + rollFarmCooldown()
+            return
+        end
         if S.coinStatusSetter then S.coinStatusSetter("Batch x" .. #S.coinBatch) end
+        S.farmNextActionAt = now + 0.1
     end)
 end
 
@@ -3391,8 +3496,11 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.lastCamUpdate = 0
     S.autoKillAll = false
     S.coinBatch = nil
-    S.lastBatchProcess = 0
+    S.farmNextActionAt = 0
     S.farmStartedAt = 0
+    S.farmWalkTarget = nil
+    S.farmWalkStartedAt = 0
+    S.lastGyroUpdate = 0
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
