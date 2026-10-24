@@ -190,7 +190,7 @@ local MiscSettings = {
 }
 local MovementSettings = {
     Noclip = false, God = false, Fly = false, WalkSpeed = 16, JumpPower = 50,
-    FlySpeed = 40, AntiFling = false, Fling = false, TPAll = false,
+    FlySpeed = 20, AntiFling = false, Fling = false, TPAll = false,
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
@@ -213,7 +213,7 @@ local FARM_GOAL = 50
 local FARM_TOUCH_RADIUS = 9
 local FARM_ARRIVE_DIST = 6
 local FARM_CLUSTER_RADIUS = 22
-local FARM_FLY_SPEED = 45
+local FARM_FLY_SPEED = 20
 local FARM_DANGER_DIST = 20
 local FARM_NEAR_DIST = 38
 local FARM_GROUND_OFFSET = -1.5
