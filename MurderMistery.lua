@@ -211,20 +211,21 @@ local MURDERER_TTL = 0.4
 
 local FARM_GOAL = 50
 local FARM_NEAR_DIST = 25
-local FARM_COLLECT_RADIUS = 25
-local FARM_EVADE_DIST = 25
-local FARM_ARRIVE_DIST = 3
-local FARM_FLY_SPEED = 23
-local FARM_WALK_TIMEOUT = 4
-local FARM_NO_COLLECT_TIMEOUT = 1.5
-local FARM_WAIT_MIN = 1.0
-local FARM_WAIT_MAX = 2.0
+local FARM_COLLECT_RADIUS = 30
+local FARM_EVADE_DIST = 50
+local FARM_ARRIVE_DIST = 5
+local FARM_FLY_SPEED = 21
+local FARM_WALK_TIMEOUT = 2
+local FARM_NO_COLLECT_TIMEOUT = 2
+local FARM_WAIT_MIN = 0.5
+local FARM_WAIT_MAX = 1.5
 local FARM_POS_JITTER_H = 1.2
 local FARM_POS_JITTER_V = 0.6
-local FARM_STALL_TIMEOUT = 30
-local FARM_VISITED_TTL = 15
+local FARM_STALL_TIMEOUT = 15
+local FARM_VISITED_TTL = 10
 local FARM_VISITED_RADIUS = 15
-local FARM_FIRE_THROTTLE = 0.25
+local FARM_FIRE_THROTTLE = 0.05
+local FARM_MAGNET_RADIUS = 6
 
 local YARHM_SHOOT_OFFSET = 2.8
 
@@ -281,6 +282,8 @@ local S = {
     farmWaitEndAt = 0,
     lastGyroUpdate = 0,
     visitedPositions = {},
+    lastPosCheck = 0,
+    lastPos = Vector3.zero,
 }
 
 local UI = {}
@@ -2296,9 +2299,14 @@ local function startCoinCollector()
         if S.farmPhase == "scan" then
             local coin = findBestFarmCoin(hrp)
             if not coin or not coin.Parent then
-                if S.coinStatusSetter then S.coinStatusSetter("No coins") end
-                S.farmPhase = "wait"
-                S.farmWaitEndAt = now + rollWaitTime()
+                if #S.visitedPositions > 0 then
+                    table.clear(S.visitedPositions)
+                    if S.coinStatusSetter then S.coinStatusSetter("Resetting visited") end
+                else
+                    if S.coinStatusSetter then S.coinStatusSetter("No coins") end
+                    S.farmPhase = "wait"
+                    S.farmWaitEndAt = now + rollWaitTime()
+                end
                 return
             end
             S.farmCollectCoins = getCoinsInRadius(coin.Position, FARM_COLLECT_RADIUS)
@@ -2313,7 +2321,7 @@ local function startCoinCollector()
             if now >= S.farmWaitEndAt then
                 S.farmPhase = "scan"
             else
-                if S.coinStatusSetter then S.coinStatusSetter("Waiting bypass") end
+                if S.coinStatusSetter then S.coinStatusSetter("Waiting") end
                 return
             end
         end
@@ -2330,7 +2338,7 @@ local function startCoinCollector()
                 if not S.farmCurrentCoin.Parent then
                     S.farmCurrentCoin = nil
                     stopFarmWalk()
-                    S.farmNextActionAt = now + rollBatchStep()
+                    S.farmNextActionAt = now + 0.1
                     return
                 end
 
@@ -2354,6 +2362,15 @@ local function startCoinCollector()
                             end)
                         end
                     end
+                    
+                    if hrp.Position.Y - S.lastPos.Y > 0.5 then
+                        S.lastPos = hrp.Position
+                        S.lastPosCheck = now
+                    elseif now - S.lastPosCheck > 0.8 then
+                        hrp.CFrame = hrp.CFrame + Vector3.new(0, 2, 0)
+                        S.lastPosCheck = now
+                    end
+
                     if now - S.farmWalkStartedAt > FARM_WALK_TIMEOUT then
                         if S.farmCurrentCoin then
                             markPositionVisited(S.farmCurrentCoin.Position)
@@ -3649,6 +3666,8 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.farmWaitEndAt = 0
     S.visitedPositions = {}
     S.farmLastTouchAt = 0
+    S.lastPosCheck = 0
+    S.lastPos = Vector3.zero
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
