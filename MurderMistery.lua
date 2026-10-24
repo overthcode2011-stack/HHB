@@ -211,20 +211,18 @@ local MURDERER_TTL = 0.4
 
 local FARM_GOAL = 50
 local FARM_NEAR_DIST = 25
+local FARM_EVADE_FAR = 35
 local FARM_COLLECT_RADIUS = 30
 local FARM_ARRIVE_DIST = 5
 local FARM_FLY_SPEED = 25
-local FARM_WALK_TIMEOUT = 1.5
-local FARM_NO_COLLECT_TIMEOUT = 2
+local FARM_WALK_TIMEOUT = 5
 local FARM_WAIT_MIN = 0.5
 local FARM_WAIT_MAX = 1.5
-local FARM_POS_JITTER_H = 1.2
-local FARM_POS_JITTER_V = 0.6
 local FARM_STALL_TIMEOUT = 15
 local FARM_VISITED_TTL = 10
 local FARM_VISITED_RADIUS = 15
 local FARM_FIRE_THROTTLE = 0.05
-local FARM_MAGNET_RADIUS = 6
+local FARM_GROUND_OFFSET = -1.5
 
 local YARHM_SHOOT_OFFSET = 2.8
 
@@ -2157,38 +2155,39 @@ local function startFarmWalk(coin)
     if not hrp or not coin then return end
     local hum = getHumanoid()
     if hum then hum.PlatformStand = true end
-    if S.farmWalkBV then S.farmWalkBV:Destroy() end
-    S.farmWalkBV = Instance.new("BodyVelocity")
-    S.farmWalkBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    S.farmWalkBV.P = 500
+    if not S.farmWalkBV or not S.farmWalkBV.Parent then
+        S.farmWalkBV = Instance.new("BodyVelocity")
+        S.farmWalkBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        S.farmWalkBV.P = 500
+        S.farmWalkBV.Parent = hrp
+    end
     S.farmWalkBV.Velocity = Vector3.zero
-    S.farmWalkBV.Parent = hrp
     S.farmWalkStartedAt = tick()
     S.farmLastTouchAt = 0
 end
 
-local function stopFarmWalk()
+local function stopFarmWalk(skipPopUp)
     if S.farmWalkBV then
         S.farmWalkBV.Velocity = Vector3.zero
-        S.farmWalkBV:Destroy()
-        S.farmWalkBV = nil
+        if not skipPopUp then
+            S.farmWalkBV:Destroy()
+            S.farmWalkBV = nil
+        end
+    end
+    if not skipPopUp then
+        local hrp = getHRP()
+        local hum = getHumanoid()
+        if hrp then
+            hrp.CFrame = hrp.CFrame + Vector3.new(0, math.abs(FARM_GROUND_OFFSET) + 0.5, 0)
+        end
+        if hum then hum.PlatformStand = false end
     end
     S.farmWalkStartedAt = 0
     S.farmLastTouchAt = 0
-    local hum = getHumanoid()
-    if hum then hum.PlatformStand = false end
 end
 
 local function rollWaitTime()
     return FARM_WAIT_MIN + math.random() * (FARM_WAIT_MAX - FARM_WAIT_MIN)
-end
-
-local function jitterCoinPos(pos)
-    return pos + Vector3.new(
-        (math.random() - 0.5) * 2 * FARM_POS_JITTER_H,
-        (math.random() - 0.5) * 2 * FARM_POS_JITTER_V,
-        (math.random() - 0.5) * 2 * FARM_POS_JITTER_H
-    )
 end
 
 local function stopCoinCollector()
@@ -2278,53 +2277,90 @@ local function startCoinCollector()
         end
 
         local murderer = getMurdererCached()
-        if murderer and murderer.Character then
-            local mHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
-            if mHRP then
-                local d = (hrp.Position - mHRP.Position).Magnitude
-                if d < FARM_NEAR_DIST then
-                    if S.farmPhase ~= "evade" then
-                        local safeCoin = findCoverPoint(hrp.Position, mHRP.Position, murderer.Character)
-                        if safeCoin then
-                            if S.coinStatusSetter then S.coinStatusSetter("Evading") end
-                            stopFarmWalk()
-                            S.farmCurrentCoin = safeCoin
-                            startFarmWalk(safeCoin)
-                            S.farmPhase = "evade"
-                            return
-                        end
-                    end
+        local mHRP = murderer and murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
+
+        if mHRP and S.farmPhase ~= "evade" then
+            local d = (hrp.Position - mHRP.Position).Magnitude
+            if d < FARM_NEAR_DIST then
+                local safeCoin = findCoverPoint(hrp.Position, mHRP.Position, murderer.Character)
+                if safeCoin then
+                    if S.coinStatusSetter then S.coinStatusSetter("Evading") end
+                    stopFarmWalk(true)
+                    S.farmCurrentCoin = safeCoin
+                    startFarmWalk(safeCoin)
+                    S.farmPhase = "evade"
+                    return
                 end
             end
         end
 
         if S.farmPhase == "evade" then
+            if not mHRP then
+                S.farmPhase = "scan"
+                stopFarmWalk(true)
+                return
+            end
+            local d = (hrp.Position - mHRP.Position).Magnitude
+            if d > FARM_EVADE_FAR then
+                S.farmPhase = "scan"
+                stopFarmWalk(true)
+                return
+            end
+
             if not S.farmCurrentCoin or not S.farmCurrentCoin.Parent then
-                S.farmPhase = "scan"
-                stopFarmWalk()
+                local nextCover = findCoverPoint(hrp.Position, mHRP.Position, murderer.Character)
+                if nextCover then
+                    S.farmCurrentCoin = nextCover
+                    startFarmWalk(nextCover)
+                else
+                    S.farmPhase = "scan"
+                    stopFarmWalk(true)
+                end
                 return
             end
 
-            local delta = S.farmCurrentCoin.Position - hrp.Position
-            local horizDelta = Vector3.new(delta.X, 0, delta.Z)
-            local dist = horizDelta.Magnitude
+            local coinPos = S.farmCurrentCoin.Position
+            local horizDelta = Vector3.new(coinPos.X - hrp.Position.X, 0, coinPos.Z - hrp.Position.Z)
+            local horizDist = horizDelta.Magnitude
 
-            if dist > 0.5 and S.farmWalkBV and S.farmWalkBV.Parent then
-                local speedCap = math.min(FARM_FLY_SPEED, dist * 4)
+            if horizDist <= FARM_ARRIVE_DIST then
+                if S.farmWalkBV and S.farmWalkBV.Parent then
+                    S.farmWalkBV.Velocity = Vector3.zero
+                end
+                if now - S.farmLastTouchAt > FARM_FIRE_THROTTLE then
+                    S.farmLastTouchAt = now
+                    local coinRef = S.farmCurrentCoin
+                    task.spawn(function()
+                        pcall(firetouchinterest, hrp, coinRef, 0)
+                        task.wait(0.02)
+                        if coinRef and coinRef.Parent then
+                            pcall(firetouchinterest, hrp, coinRef, 1)
+                        end
+                    end)
+                end
+                markPositionVisited(coinPos)
+                S.farmCurrentCoin = nil
+                local nextCover = findCoverPoint(hrp.Position, mHRP.Position, murderer.Character)
+                if nextCover then
+                    S.farmCurrentCoin = nextCover
+                    startFarmWalk(nextCover)
+                else
+                    S.farmPhase = "scan"
+                    stopFarmWalk(true)
+                end
+                return
+            end
+
+            local targetPos = coinPos + Vector3.new(0, FARM_GROUND_OFFSET, 0)
+            local delta = targetPos - hrp.Position
+            if S.farmWalkBV and S.farmWalkBV.Parent then
+                local speedCap = math.min(FARM_FLY_SPEED, horizDist * 4)
                 S.farmWalkBV.Velocity = horizDelta.Unit * speedCap + Vector3.new(0, math.clamp(delta.Y * 2, -5, 5), 0)
-            elseif S.farmWalkBV and S.farmWalkBV.Parent then
-                S.farmWalkBV.Velocity = Vector3.zero
-            end
-
-            if mHRP and not isVisibleForShot(mHRP.Position, hrp.Position, LocalPlayer.Character, LocalPlayer) then
-                S.farmPhase = "scan"
-                stopFarmWalk()
-                return
             end
 
             if now - S.farmWalkStartedAt > FARM_WALK_TIMEOUT then
                 S.farmPhase = "scan"
-                stopFarmWalk()
+                stopFarmWalk(true)
                 return
             end
             return
@@ -2371,60 +2407,60 @@ local function startCoinCollector()
             if S.farmCurrentCoin then
                 if not S.farmCurrentCoin.Parent then
                     S.farmCurrentCoin = nil
-                    stopFarmWalk()
+                    stopFarmWalk(true)
                     S.farmNextActionAt = now + 0.1
                     return
                 end
 
-                local delta = S.farmCurrentCoin.Position - hrp.Position
-                local horizDelta = Vector3.new(delta.X, 0, delta.Z)
-                local dist = horizDelta.Magnitude
+                if now - S.farmWalkStartedAt > FARM_WALK_TIMEOUT then
+                    local coinRef = S.farmCurrentCoin
+                    if coinRef and coinRef.Parent then
+                        hrp.CFrame = CFrame.new(coinRef.Position + Vector3.new(0, 2, 0))
+                        task.wait(0.05)
+                        pcall(firetouchinterest, hrp, coinRef, 0)
+                        task.wait(0.02)
+                        if coinRef and coinRef.Parent then
+                            pcall(firetouchinterest, hrp, coinRef, 1)
+                        end
+                        markPositionVisited(coinRef.Position)
+                    end
+                    S.farmCurrentCoin = nil
+                    stopFarmWalk(true)
+                    S.farmNextActionAt = now + 0.1
+                    return
+                end
 
-                if dist <= FARM_ARRIVE_DIST then
+                local coinPos = S.farmCurrentCoin.Position
+                local horizDelta = Vector3.new(coinPos.X - hrp.Position.X, 0, coinPos.Z - hrp.Position.Z)
+                local horizDist = horizDelta.Magnitude
+
+                if horizDist <= FARM_ARRIVE_DIST then
                     if S.farmWalkBV and S.farmWalkBV.Parent then
                         S.farmWalkBV.Velocity = Vector3.zero
                     end
                     if now - S.farmLastTouchAt > FARM_FIRE_THROTTLE then
                         S.farmLastTouchAt = now
-                        if firetouchinterest then
-                            local coinRef = S.farmCurrentCoin
-                            task.spawn(function()
-                                pcall(firetouchinterest, hrp, coinRef, 0)
-                                task.wait(0.02)
-                                if coinRef and coinRef.Parent then
-                                    pcall(firetouchinterest, hrp, coinRef, 1)
-                                end
-                            end)
-                        end
-                    end
-
-                    if now - S.farmWalkStartedAt > FARM_WALK_TIMEOUT then
-                        if S.farmCurrentCoin then
-                            markPositionVisited(S.farmCurrentCoin.Position)
-                        end
-                        S.farmCurrentCoin = nil
-                        stopFarmWalk()
-                        S.farmNextActionAt = now + 0.1
+                        local coinRef = S.farmCurrentCoin
+                        task.spawn(function()
+                            pcall(firetouchinterest, hrp, coinRef, 0)
+                            task.wait(0.02)
+                            if coinRef and coinRef.Parent then
+                                pcall(firetouchinterest, hrp, coinRef, 1)
+                            end
+                        end)
                     end
                     return
                 end
 
+                local targetPos = coinPos + Vector3.new(0, FARM_GROUND_OFFSET, 0)
+                local delta = targetPos - hrp.Position
                 if S.farmWalkBV and S.farmWalkBV.Parent then
-                    if dist > 0.5 then
-                        local speedCap = math.min(FARM_FLY_SPEED, dist * 4)
+                    if horizDist > 0.5 then
+                        local speedCap = math.min(FARM_FLY_SPEED, horizDist * 4)
                         S.farmWalkBV.Velocity = horizDelta.Unit * speedCap + Vector3.new(0, math.clamp(delta.Y * 2, -5, 5), 0)
                     else
                         S.farmWalkBV.Velocity = Vector3.zero
                     end
-                end
-
-                if now - S.farmWalkStartedAt > FARM_WALK_TIMEOUT then
-                    if S.farmCurrentCoin then
-                        markPositionVisited(S.farmCurrentCoin.Position)
-                    end
-                    S.farmCurrentCoin = nil
-                    stopFarmWalk()
-                    S.farmNextActionAt = now + 0.1
                 end
                 return
             end
