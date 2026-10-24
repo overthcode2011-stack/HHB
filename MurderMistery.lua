@@ -2093,8 +2093,8 @@ end
 local function findCoverPoint(myPos, murdererPos, murdererChar)
     local coins = getAllCoins()
     if #coins == 0 then return nil end
-
     local best, bestScore = nil, -math.huge
+    local myDistToMurderer = (myPos - murdererPos).Magnitude
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = { LocalPlayer.Character, murdererChar }
@@ -2103,10 +2103,10 @@ local function findCoverPoint(myPos, murdererPos, murdererChar)
     for _, coin in ipairs(coins) do
         local dir = coin.Position - murdererPos
         local hit = workspace:Raycast(murdererPos, dir, params)
-
         if hit then
-            local dist = (coin.Position - myPos).Magnitude
-            local score = -dist
+            local distToMe = (coin.Position - myPos).Magnitude
+            local distToMurderer = (coin.Position - murdererPos).Magnitude
+            local score = -distToMe + (distToMurderer - myDistToMurderer) * 3
             if score > bestScore then
                 bestScore = score
                 best = coin
@@ -2115,14 +2115,17 @@ local function findCoverPoint(myPos, murdererPos, murdererChar)
     end
 
     if not best then
+        bestScore = -math.huge
         for _, coin in ipairs(coins) do
-            local dist = (coin.Position - murdererPos).Magnitude
-            if dist > FARM_NEAR_DIST * 2 then
-                return coin
+            local distToMe = (coin.Position - myPos).Magnitude
+            local distToMurderer = (coin.Position - murdererPos).Magnitude
+            local score = distToMurderer * 2 - distToMe
+            if score > bestScore then
+                bestScore = score
+                best = coin
             end
         end
     end
-
     return best
 end
 
