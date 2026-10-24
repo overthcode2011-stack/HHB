@@ -223,7 +223,8 @@ local FARM_BATCH_STEP_MIN = 0.04
 local FARM_BATCH_STEP_MAX = 0.12
 local FARM_POS_JITTER_H = 1.2
 local FARM_POS_JITTER_V = 0.6
-local FARM_WALK_TIMEOUT = 3.0
+local FARM_FLY_SPEED = 21
+local FARM_FLY_TIMEOUT = 5
 local FARM_STALL_TIMEOUT = 20
 
 local YARHM_SHOOT_OFFSET = 2.8
@@ -272,8 +273,9 @@ local S = {
     farmNextActionAt = 0,
     farmStartedAt = 0,
     lastGyroUpdate = 0,
-    farmWalkTarget = nil,
-    farmWalkStartedAt = 0,
+    farmFlightBV = nil,
+    farmFlyTarget = nil,
+    farmFlyStartedAt = 0,
 }
 
 local UI = {}
@@ -1937,49 +1939,68 @@ local function disableUltraOptimization()
     end
 end
 
-local function enableAutoHelperFeatures()
-    S.savedFarmStates = S.savedFarmStates or {}
-
-    local function ensure(ref, tbl, key)
-        if S.savedFarmStates[key] == nil then
-            S.savedFarmStates[key] = { orig = tbl[key], forced = false }
-        end
-        local state = S.savedFarmStates[key]
-        if not tbl[key] then
-            tbl[key] = true
-            state.forced = true
-            if ref and ref.SetState then
-                pcall(function() ref:SetState(true) end)
-            end
-        end
-    end
-
-    ensure(UI.afkRef,       MiscSettings,     "AntiAFK")
-    ensure(UI.noclipRef,    MovementSettings, "Noclip")
-    ensure(UI.antiFlingRef, MovementSettings, "AntiFling")
-    ensure(UI.antiVoidRef,  MiscSettings,     "AntiVoid")
+local function getHelperRefs(name)
+    if name == "AntiAFK"   then return UI.afkRef,       MiscSettings,     "AntiAFK"   end
+    if name == "AntiFling" then return UI.antiFlingRef, MovementSettings, "AntiFling" end
+    if name == "AntiVoid"  then return UI.antiVoidRef,  MiscSettings,     "AntiVoid"  end
+    if name == "Noclip"    then return UI.noclipRef,    MovementSettings, "Noclip"    end
+    return nil, nil, nil
 end
 
-local function disableAutoHelperFeatures()
-    if not S.savedFarmStates then return end
-
-    local function restore(ref, tbl, key)
-        local state = S.savedFarmStates[key]
-        if not state or not state.forced then return end
-        if tbl[key] ~= state.orig then
-            tbl[key] = state.orig
-            if ref and ref.SetState then
-                pcall(function() ref:SetState(state.orig) end)
-            end
+local function ensureHelper(name)
+    local ref, tbl, key = getHelperRefs(name)
+    if not ref or not tbl or not key then return end
+    S.savedFarmStates = S.savedFarmStates or {}
+    if S.savedFarmStates[name] == nil then
+        S.savedFarmStates[name] = { orig = tbl[key], forced = false }
+    end
+    local st = S.savedFarmStates[name]
+    if not tbl[key] then
+        tbl[key] = true
+        st.forced = true
+        if ref.SetState then
+            pcall(function() ref:SetState(true) end)
         end
     end
+end
 
-    restore(UI.afkRef,       MiscSettings,     "AntiAFK")
-    restore(UI.noclipRef,    MovementSettings, "Noclip")
-    restore(UI.antiFlingRef, MovementSettings, "AntiFling")
-    restore(UI.antiVoidRef,  MiscSettings,     "AntiVoid")
+local function restoreHelper(name)
+    local ref, tbl, key = getHelperRefs(name)
+    if not ref or not tbl or not key then return end
+    S.savedFarmStates = S.savedFarmStates or {}
+    local st = S.savedFarmStates[name]
+    if not st or not st.forced then
+        S.savedFarmStates[name] = nil
+        return
+    end
+    if tbl[key] ~= st.orig then
+        tbl[key] = st.orig
+        if ref.SetState then
+            pcall(function() ref:SetState(st.orig) end)
+        end
+    end
+    S.savedFarmStates[name] = nil
+end
 
-    S.savedFarmStates = nil
+local function ensureFarmHelpers()
+    ensureHelper("AntiAFK")
+    ensureHelper("AntiFling")
+    ensureHelper("AntiVoid")
+end
+
+local function restoreFarmHelpers()
+    restoreHelper("AntiAFK")
+    restoreHelper("AntiFling")
+    restoreHelper("AntiVoid")
+end
+
+local function ensureFarmNoclip()
+    if not S.roundActive then return end
+    ensureHelper("Noclip")
+end
+
+local function restoreFarmNoclip()
+    restoreHelper("Noclip")
 end
 
 local function getAllCoins()
@@ -2054,6 +2075,49 @@ local function attachFarmGyro()
     S.lastGyroUpdate = tick()
 end
 
+local function startFarmFlight(targetPos)
+    if not targetPos then return end
+    local hrp = getHRP()
+    if not hrp then return end
+    if not S.farmFlightBV or not S.farmFlightBV.Parent then
+        if S.farmFlightBV then S.farmFlightBV:Destroy() end
+        S.farmFlightBV = Instance.new("BodyVelocity")
+        S.farmFlightBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        S.farmFlightBV.P = 1250
+        S.farmFlightBV.Velocity = Vector3.zero
+        S.farmFlightBV.Parent = hrp
+    end
+    local hum = getHumanoid()
+    if hum then hum.PlatformStand = true end
+    S.farmFlyTarget = targetPos
+    S.farmFlyStartedAt = tick()
+end
+
+local function updateFarmFlight()
+    if not S.farmFlyTarget then return end
+    local hrp = getHRP()
+    if not hrp or not S.farmFlightBV or not S.farmFlightBV.Parent then return end
+    local delta = S.farmFlyTarget - hrp.Position
+    local dist = delta.Magnitude
+    if dist < 1 then
+        S.farmFlightBV.Velocity = Vector3.zero
+        return
+    end
+    S.farmFlightBV.Velocity = delta.Unit * FARM_FLY_SPEED
+end
+
+local function stopFarmFlight()
+    if S.farmFlightBV then
+        S.farmFlightBV.Velocity = Vector3.zero
+        S.farmFlightBV:Destroy()
+        S.farmFlightBV = nil
+    end
+    S.farmFlyTarget = nil
+    S.farmFlyStartedAt = 0
+    local hum = getHumanoid()
+    if hum then hum.PlatformStand = false end
+end
+
 local function rollFarmCooldown()
     return FARM_COOLDOWN_MIN + math.random() * (FARM_COOLDOWN_MAX - FARM_COOLDOWN_MIN)
 end
@@ -2077,20 +2141,16 @@ local function stopCoinCollector()
     if S.coinConnection then S.coinConnection:Disconnect(); S.coinConnection = nil end
     if S.coinGyro then S.coinGyro:Destroy(); S.coinGyro = nil end
 
-    disableAutoHelperFeatures()
+    stopFarmFlight()
+
     disableUltraOptimization()
 
     S.coinBatch = nil
     S.farmNextActionAt = 0
     S.lastCoinTp = 0
     S.farmStartedAt = 0
-    S.farmWalkTarget = nil
-    S.farmWalkStartedAt = 0
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     stopMiniBoxAnimation()
-
-    local hum = getHumanoid()
-    if hum then pcall(function() hum:MoveTo(Vector3.zero) end) end
 
     local hrp = getHRP()
     if hrp then
@@ -2109,11 +2169,10 @@ local function startCoinCollector()
     S.coinBatch = nil
     S.farmNextActionAt = 0
     S.farmStartedAt = tick()
-    S.farmWalkTarget = nil
-    S.farmWalkStartedAt = 0
     if S.coinStatusSetter then S.coinStatusSetter("Farming") end
     playMiniBoxAnimation()
-    enableAutoHelperFeatures()
+    ensureFarmHelpers()
+    ensureFarmNoclip()
     if FarmSettings.UltraOpt then enableUltraOptimization() end
 
     attachFarmGyro()
@@ -2156,6 +2215,7 @@ local function startCoinCollector()
                 local d = (hrp.Position - mHRP.Position).Magnitude
                 if d < 25 then
                     if S.coinStatusSetter then S.coinStatusSetter("Evading") end
+                    stopFarmFlight()
                     local away = (hrp.Position - mHRP.Position).Unit
                     hrp.CFrame = CFrame.new(hrp.Position + away * 60)
                     hrp.Velocity = Vector3.zero
@@ -2166,7 +2226,28 @@ local function startCoinCollector()
             end
         end
 
-        if now < (S.farmNextActionAt or 0) then return end
+        if now < (S.farmNextActionAt or 0) then
+            if S.farmFlyTarget then updateFarmFlight() end
+            return
+        end
+
+        if S.farmFlyTarget then
+            local flyDist = (S.farmFlyTarget - hrp.Position).Magnitude
+            if flyDist <= FARM_MAX_TP_DIST then
+                stopFarmFlight()
+                S.farmNextActionAt = now + 0.1
+                return
+            end
+            if now - S.farmFlyStartedAt > FARM_FLY_TIMEOUT then
+                stopFarmFlight()
+                S.farmNextActionAt = now + rollFarmCooldown()
+                return
+            end
+            updateFarmFlight()
+            S.farmNextActionAt = now + 0.1
+            if S.coinStatusSetter then S.coinStatusSetter("Flying " .. math.floor(flyDist) .. "m") end
+            return
+        end
 
         if S.coinBatch and #S.coinBatch > 0 then
             while #S.coinBatch > 0 do
@@ -2214,29 +2295,6 @@ local function startCoinCollector()
             return
         end
 
-        if S.farmWalkTarget then
-            local walkDist = (S.farmWalkTarget - hrp.Position).Magnitude
-            if walkDist <= FARM_MAX_TP_DIST then
-                S.farmWalkTarget = nil
-                S.farmWalkStartedAt = 0
-                S.farmNextActionAt = now + 0.1
-                return
-            end
-            if now - S.farmWalkStartedAt > FARM_WALK_TIMEOUT then
-                S.farmWalkTarget = nil
-                S.farmWalkStartedAt = 0
-                S.farmNextActionAt = now + rollFarmCooldown()
-                return
-            end
-            local hum = getHumanoid()
-            if hum then
-                pcall(function() hum:MoveTo(S.farmWalkTarget) end)
-            end
-            S.farmNextActionAt = now + 0.4 + math.random() * 0.2
-            if S.coinStatusSetter then S.coinStatusSetter("Walking " .. math.floor(walkDist) .. "m") end
-            return
-        end
-
         local coin = findBestFarmCoin(hrp)
         if not coin or not coin.Parent then
             if S.coinStatusSetter then S.coinStatusSetter("No coins") end
@@ -2246,14 +2304,9 @@ local function startCoinCollector()
 
         local distToCoin = (coin.Position - hrp.Position).Magnitude
         if distToCoin > FARM_MAX_TP_DIST then
-            S.farmWalkTarget = coin.Position
-            S.farmWalkStartedAt = now
-            local hum = getHumanoid()
-            if hum then
-                pcall(function() hum:MoveTo(coin.Position) end)
-            end
-            S.farmNextActionAt = now + 0.4 + math.random() * 0.2
-            if S.coinStatusSetter then S.coinStatusSetter("Walking " .. math.floor(distToCoin) .. "m") end
+            startFarmFlight(coin.Position)
+            S.farmNextActionAt = now + 0.1
+            if S.coinStatusSetter then S.coinStatusSetter("Flying " .. math.floor(distToCoin) .. "m") end
             return
         end
 
@@ -3498,9 +3551,10 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.coinBatch = nil
     S.farmNextActionAt = 0
     S.farmStartedAt = 0
-    S.farmWalkTarget = nil
-    S.farmWalkStartedAt = 0
     S.lastGyroUpdate = 0
+    S.farmFlightBV = nil
+    S.farmFlyTarget = nil
+    S.farmFlyStartedAt = 0
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
@@ -3525,10 +3579,14 @@ window:CreateLabel(farmTab, "Coin Farm")
 UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
     FarmSettings.AutoFarm = v
     if v then
+        ensureFarmHelpers()
+        ensureFarmNoclip()
         if S.roundActive and not S.coinCollecting then startCoinCollector() end
     else
         stopCoinCollector()
         stopEvasion()
+        restoreFarmNoclip()
+        restoreFarmHelpers()
     end
 end)
 registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
@@ -3566,8 +3624,9 @@ if coinsStartedEvent then
         S.totalCoins = 0
         if S.coinCountSetter then S.coinCountSetter(0) end
         S.roundActive = true
-        if FarmSettings.AutoFarm and not S.coinCollecting then
-            startCoinCollector()
+        if FarmSettings.AutoFarm then
+            ensureFarmNoclip()
+            if not S.coinCollecting then startCoinCollector() end
         end
     end)
 end
@@ -3601,6 +3660,7 @@ if roundStartEvent then
         refreshBeam()
         onRoundBegin()
         if FarmSettings.AutoFarm then
+            ensureFarmNoclip()
             task.wait(0.5)
             if not S.coinCollecting then startCoinCollector() end
             startEvasion()
@@ -3617,6 +3677,9 @@ if roundEndFadeEvent then
         stopCoinCollector()
         stopEvasion()
         onRoundEnd()
+        if FarmSettings.AutoFarm then
+            restoreFarmNoclip()
+        end
         task.wait(0.05)
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer then clearHighlights(plr) end
@@ -3956,12 +4019,16 @@ local function applyConfig(data)
     end
     if AvatarSettings.Korblox then pcall(applyKorblox) else pcall(removeKorblox) end
     if AvatarSettings.AnimPack then pcall(applyAnimPack) end
-    if FarmSettings.AutoFarm and S.roundActive then
-        if not S.coinCollecting then startCoinCollector() end
-        startEvasion()
+    if FarmSettings.AutoFarm then
+        ensureFarmHelpers()
+        ensureFarmNoclip()
+        if S.roundActive and not S.coinCollecting then startCoinCollector() end
+        if S.roundActive then startEvasion() end
     else
         stopCoinCollector()
         stopEvasion()
+        restoreFarmNoclip()
+        restoreFarmHelpers()
     end
     if MiscSettings.MusicCompanion then playMusic() else stopMusic() end
     syncUIControls()
