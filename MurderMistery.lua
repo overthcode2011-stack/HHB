@@ -219,8 +219,8 @@ local FARM_WALK_TIMEOUT = 4
 local FARM_NO_COLLECT_TIMEOUT = 1
 local FARM_TP_LAND_MIN = 4
 local FARM_TP_LAND_MAX = 8
-local FARM_COOLDOWN_MIN = 1.0
-local FARM_COOLDOWN_MAX = 3.0
+local FARM_WAIT_MIN = 2.0
+local FARM_WAIT_MAX = 3.0
 local FARM_BATCH_STEP_MIN = 0.08
 local FARM_BATCH_STEP_MAX = 0.15
 local FARM_POS_JITTER_H = 1.2
@@ -283,7 +283,7 @@ local S = {
     farmPhase = "tp",
     farmCollectCoins = {},
     farmCollectClusterCenter = nil,
-    nextFarmTpAt = 0,
+    farmWaitEndAt = 0,
     lastGyroUpdate = 0,
     visitedPositions = {},
 }
@@ -2174,8 +2174,8 @@ local function stopFarmWalk()
     if hum then hum.PlatformStand = false end
 end
 
-local function rollFarmCooldown()
-    return FARM_COOLDOWN_MIN + math.random() * (FARM_COOLDOWN_MAX - FARM_COOLDOWN_MIN)
+local function rollWaitTime()
+    return FARM_WAIT_MIN + math.random() * (FARM_WAIT_MAX - FARM_WAIT_MIN)
 end
 
 local function rollBatchStep()
@@ -2204,12 +2204,12 @@ local function stopCoinCollector()
     S.farmCurrentCoin = nil
     S.farmCollectCoins = {}
     S.farmCollectClusterCenter = nil
-    S.farmPhase = "tp"
+    S.farmPhase = "wait"
     S.farmNextActionAt = 0
     S.lastCoinTp = 0
     S.farmStartedAt = 0
     S.farmLastCollectAt = 0
-    S.nextFarmTpAt = 0
+    S.farmWaitEndAt = 0
     S.visitedPositions = {}
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     stopMiniBoxAnimation()
@@ -2235,7 +2235,7 @@ local function startCoinCollector()
     S.farmNextActionAt = 0
     S.farmStartedAt = tick()
     S.farmLastCollectAt = tick()
-    S.nextFarmTpAt = 0
+    S.farmWaitEndAt = 0
     S.visitedPositions = {}
     if S.coinStatusSetter then S.coinStatusSetter("Farming") end
     playMiniBoxAnimation()
@@ -2296,31 +2296,27 @@ local function startCoinCollector()
                         S.farmCollectClusterCenter = safeCoin.Position
                         S.farmLastCollectAt = now
                         S.farmPhase = "collect"
-                        S.nextFarmTpAt = now + 0.5
                         return
                     end
                 end
             end
         end
 
-        if S.farmPhase == "collect" then
-            if now - S.farmLastCollectAt > FARM_NO_COLLECT_TIMEOUT then
+        if S.farmPhase == "wait" then
+            if now >= S.farmWaitEndAt then
                 S.farmPhase = "tp"
-                S.farmCollectCoins = {}
-                S.farmCollectClusterCenter = nil
-                S.farmCurrentCoin = nil
-                stopFarmWalk()
-                S.nextFarmTpAt = now
+            else
+                if S.coinStatusSetter then S.coinStatusSetter("Waiting bypass") end
                 return
             end
         end
 
         if S.farmPhase == "tp" then
-            if now < S.nextFarmTpAt then return end
             local coin = findBestFarmCoin(hrp)
             if not coin or not coin.Parent then
                 if S.coinStatusSetter then S.coinStatusSetter("No coins") end
-                S.nextFarmTpAt = now + rollFarmCooldown()
+                S.farmPhase = "wait"
+                S.farmWaitEndAt = now + rollWaitTime()
                 return
             end
             stopFarmWalk()
@@ -2339,12 +2335,21 @@ local function startCoinCollector()
             S.farmCollectClusterCenter = coin.Position
             S.farmLastCollectAt = now
             S.farmPhase = "collect"
-            S.nextFarmTpAt = now + rollFarmCooldown()
             if S.coinStatusSetter then S.coinStatusSetter("TP · " .. #S.farmCollectCoins .. " coins") end
             return
         end
 
         if S.farmPhase == "collect" then
+            if now - S.farmLastCollectAt > FARM_NO_COLLECT_TIMEOUT then
+                S.farmPhase = "wait"
+                S.farmCollectCoins = {}
+                S.farmCollectClusterCenter = nil
+                S.farmCurrentCoin = nil
+                stopFarmWalk()
+                S.farmWaitEndAt = now + rollWaitTime()
+                return
+            end
+
             for i = #S.farmCollectCoins, 1, -1 do
                 local c = S.farmCollectCoins[i]
                 if not c or not c.Parent then
@@ -2429,9 +2434,9 @@ local function startCoinCollector()
                 return
             end
 
-            S.farmPhase = "tp"
+            S.farmPhase = "wait"
             S.farmCollectClusterCenter = nil
-            S.farmNextActionAt = now + 0.1
+            S.farmWaitEndAt = now + rollWaitTime()
             return
         end
     end)
@@ -3667,12 +3672,12 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.farmCurrentCoin = nil
     S.farmCollectCoins = {}
     S.farmCollectClusterCenter = nil
-    S.farmPhase = "tp"
+    S.farmPhase = "wait"
     S.farmNextActionAt = 0
     S.farmStartedAt = 0
     S.farmLastCollectAt = 0
     S.lastGyroUpdate = 0
-    S.nextFarmTpAt = 0
+    S.farmWaitEndAt = 0
     S.visitedPositions = {}
     S.farmLastTouchAt = 0
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
