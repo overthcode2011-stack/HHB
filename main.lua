@@ -215,17 +215,20 @@ local VIS_TTL = 0.05
 local MURDERER_TTL = 0.4
 
 local FARM_GOAL = 50
+local FARM_NEAR_DIST = 25
 local FARM_REACH_RADIUS = 10
-local FARM_MAX_TP_DIST = 50
+local FARM_ARRIVE_DIST = 2
+local FARM_FLY_SPEED = 21
+local FARM_WALK_TIMEOUT = 4
+local FARM_TP_LAND_MIN = 4
+local FARM_TP_LAND_MAX = 8
 local FARM_COOLDOWN_MIN = 1.0
 local FARM_COOLDOWN_MAX = 2.2
 local FARM_BATCH_STEP_MIN = 0.04
 local FARM_BATCH_STEP_MAX = 0.12
 local FARM_POS_JITTER_H = 1.2
 local FARM_POS_JITTER_V = 0.6
-local FARM_FLY_SPEED = 21
-local FARM_FLY_TIMEOUT = 5
-local FARM_STALL_TIMEOUT = 20
+local FARM_STALL_TIMEOUT = 25
 
 local YARHM_SHOOT_OFFSET = 2.8
 
@@ -273,9 +276,10 @@ local S = {
     farmNextActionAt = 0,
     farmStartedAt = 0,
     lastGyroUpdate = 0,
-    farmFlightBV = nil,
-    farmFlyTarget = nil,
-    farmFlyStartedAt = 0,
+    farmCurrentCoin = nil,
+    farmWalkBV = nil,
+    farmWalkStartedAt = 0,
+    nextFarmTpAt = 0,
 }
 
 local UI = {}
@@ -2044,20 +2048,19 @@ local function findBestFarmCoin(myHRP)
     return bestCoin
 end
 
-local function buildCoinBatch(centerPos, myPos)
+local function buildCoinBatch(centerPos)
     local coins = getAllCoins()
     local batch = {}
     for _, c in ipairs(coins) do
         if c and c.Parent then
             local centerDist = (c.Position - centerPos).Magnitude
-            local playerDist = (c.Position - myPos).Magnitude
-            if centerDist <= FARM_REACH_RADIUS and playerDist <= FARM_MAX_TP_DIST then
+            if centerDist <= FARM_REACH_RADIUS then
                 table.insert(batch, c)
             end
         end
     end
     table.sort(batch, function(a, b)
-        return (a.Position - myPos).Magnitude < (b.Position - myPos).Magnitude
+        return (a.Position - centerPos).Magnitude < (b.Position - centerPos).Magnitude
     end)
     return batch
 end
@@ -2075,45 +2078,27 @@ local function attachFarmGyro()
     S.lastGyroUpdate = tick()
 end
 
-local function startFarmFlight(targetPos)
-    if not targetPos then return end
+local function startFarmWalk(coin)
     local hrp = getHRP()
-    if not hrp then return end
-    if not S.farmFlightBV or not S.farmFlightBV.Parent then
-        if S.farmFlightBV then S.farmFlightBV:Destroy() end
-        S.farmFlightBV = Instance.new("BodyVelocity")
-        S.farmFlightBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-        S.farmFlightBV.P = 1250
-        S.farmFlightBV.Velocity = Vector3.zero
-        S.farmFlightBV.Parent = hrp
-    end
+    if not hrp or not coin then return end
     local hum = getHumanoid()
     if hum then hum.PlatformStand = true end
-    S.farmFlyTarget = targetPos
-    S.farmFlyStartedAt = tick()
+    if S.farmWalkBV then S.farmWalkBV:Destroy() end
+    S.farmWalkBV = Instance.new("BodyVelocity")
+    S.farmWalkBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    S.farmWalkBV.P = 1250
+    S.farmWalkBV.Velocity = Vector3.zero
+    S.farmWalkBV.Parent = hrp
+    S.farmWalkStartedAt = tick()
 end
 
-local function updateFarmFlight()
-    if not S.farmFlyTarget then return end
-    local hrp = getHRP()
-    if not hrp or not S.farmFlightBV or not S.farmFlightBV.Parent then return end
-    local delta = S.farmFlyTarget - hrp.Position
-    local dist = delta.Magnitude
-    if dist < 1 then
-        S.farmFlightBV.Velocity = Vector3.zero
-        return
+local function stopFarmWalk()
+    if S.farmWalkBV then
+        S.farmWalkBV.Velocity = Vector3.zero
+        S.farmWalkBV:Destroy()
+        S.farmWalkBV = nil
     end
-    S.farmFlightBV.Velocity = delta.Unit * FARM_FLY_SPEED
-end
-
-local function stopFarmFlight()
-    if S.farmFlightBV then
-        S.farmFlightBV.Velocity = Vector3.zero
-        S.farmFlightBV:Destroy()
-        S.farmFlightBV = nil
-    end
-    S.farmFlyTarget = nil
-    S.farmFlyStartedAt = 0
+    S.farmWalkStartedAt = 0
     local hum = getHumanoid()
     if hum then hum.PlatformStand = false end
 end
@@ -2141,7 +2126,7 @@ local function stopCoinCollector()
     if S.coinConnection then S.coinConnection:Disconnect(); S.coinConnection = nil end
     if S.coinGyro then S.coinGyro:Destroy(); S.coinGyro = nil end
 
-    stopFarmFlight()
+    stopFarmWalk()
 
     disableUltraOptimization()
 
@@ -2149,6 +2134,8 @@ local function stopCoinCollector()
     S.farmNextActionAt = 0
     S.lastCoinTp = 0
     S.farmStartedAt = 0
+    S.farmCurrentCoin = nil
+    S.nextFarmTpAt = 0
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     stopMiniBoxAnimation()
 
@@ -2167,8 +2154,10 @@ local function startCoinCollector()
     S.coinCollecting = true
     S.lastCoinTp = 0
     S.coinBatch = nil
+    S.farmCurrentCoin = nil
     S.farmNextActionAt = 0
     S.farmStartedAt = tick()
+    S.nextFarmTpAt = 0
     if S.coinStatusSetter then S.coinStatusSetter("Farming") end
     playMiniBoxAnimation()
     ensureFarmHelpers()
@@ -2215,84 +2204,87 @@ local function startCoinCollector()
                 local d = (hrp.Position - mHRP.Position).Magnitude
                 if d < 25 then
                     if S.coinStatusSetter then S.coinStatusSetter("Evading") end
-                    stopFarmFlight()
+                    stopFarmWalk()
                     local away = (hrp.Position - mHRP.Position).Unit
                     hrp.CFrame = CFrame.new(hrp.Position + away * 60)
                     hrp.Velocity = Vector3.zero
                     hrp.RotVelocity = Vector3.zero
+                    S.farmCurrentCoin = nil
+                    S.coinBatch = nil
                     S.farmNextActionAt = now + 0.4 + math.random() * 0.3
                     return
                 end
             end
         end
 
-        if now < (S.farmNextActionAt or 0) then
-            if S.farmFlyTarget then updateFarmFlight() end
+        if S.farmCurrentCoin then
+            if not S.farmCurrentCoin.Parent then
+                S.farmCurrentCoin = nil
+                stopFarmWalk()
+                S.farmNextActionAt = now + rollBatchStep()
+                return
+            end
+
+            local delta = S.farmCurrentCoin.Position - hrp.Position
+            local dist = delta.Magnitude
+
+            if dist <= FARM_ARRIVE_DIST then
+                if firetouchinterest then
+                    pcall(firetouchinterest, hrp, S.farmCurrentCoin, 0)
+                    pcall(firetouchinterest, hrp, S.farmCurrentCoin, 1)
+                end
+                S.lastCollectTime = now
+                if now - S.farmWalkStartedAt > FARM_WALK_TIMEOUT then
+                    S.farmCurrentCoin = nil
+                    stopFarmWalk()
+                    S.farmNextActionAt = now + rollBatchStep()
+                end
+                return
+            end
+
+            if S.farmWalkBV and S.farmWalkBV.Parent then
+                if dist > 0.5 then
+                    S.farmWalkBV.Velocity = delta.Unit * FARM_FLY_SPEED
+                else
+                    S.farmWalkBV.Velocity = Vector3.zero
+                end
+            end
+
+            if now - S.farmWalkStartedAt > FARM_WALK_TIMEOUT then
+                S.farmCurrentCoin = nil
+                stopFarmWalk()
+                S.farmNextActionAt = now + rollBatchStep()
+            end
             return
         end
 
-        if S.farmFlyTarget then
-            local flyDist = (S.farmFlyTarget - hrp.Position).Magnitude
-            if flyDist <= FARM_MAX_TP_DIST then
-                stopFarmFlight()
-                S.farmNextActionAt = now + 0.1
-                return
+        if now < (S.farmNextActionAt or 0) then return end
+
+        if S.coinBatch then
+            for i = #S.coinBatch, 1, -1 do
+                if not S.coinBatch[i] or not S.coinBatch[i].Parent then
+                    table.remove(S.coinBatch, i)
+                end
             end
-            if now - S.farmFlyStartedAt > FARM_FLY_TIMEOUT then
-                stopFarmFlight()
-                S.farmNextActionAt = now + rollFarmCooldown()
-                return
-            end
-            updateFarmFlight()
-            S.farmNextActionAt = now + 0.1
-            if S.coinStatusSetter then S.coinStatusSetter("Flying " .. math.floor(flyDist) .. "m") end
-            return
         end
 
         if S.coinBatch and #S.coinBatch > 0 then
-            while #S.coinBatch > 0 do
-                local head = S.coinBatch[1]
-                if not head or not head.Parent then
-                    table.remove(S.coinBatch, 1)
-                else
-                    break
+            local closestCoin, closestIdx, closestDist = nil, nil, math.huge
+            for i, c in ipairs(S.coinBatch) do
+                local d = (c.Position - hrp.Position).Magnitude
+                if d < closestDist then
+                    closestDist = d
+                    closestCoin = c
+                    closestIdx = i
                 end
             end
-            if #S.coinBatch == 0 then
-                S.coinBatch = nil
-                S.farmNextActionAt = now + 0.4 + math.random() * 0.3
+            if closestCoin then
+                table.remove(S.coinBatch, closestIdx)
+                S.farmCurrentCoin = closestCoin
+                startFarmWalk(closestCoin)
                 return
             end
-
-            local target = S.coinBatch[1]
-            local dist = (target.Position - hrp.Position).Magnitude
-            if dist > FARM_MAX_TP_DIST then
-                table.remove(S.coinBatch, 1)
-                S.farmNextActionAt = now + 0.1
-                return
-            end
-
-            table.remove(S.coinBatch, 1)
-            local jitterPos = jitterCoinPos(target.Position)
-            hrp.CFrame = CFrame.new(jitterPos)
-            hrp.Velocity = Vector3.zero
-            hrp.RotVelocity = Vector3.zero
-
-            local targetRef = target
-            task.defer(function()
-                task.wait(0.05 + math.random() * 0.08)
-                if targetRef and targetRef.Parent and firetouchinterest then
-                    pcall(firetouchinterest, hrp, targetRef, 0)
-                    task.wait(0.02 + math.random() * 0.03)
-                    if targetRef and targetRef.Parent then
-                        pcall(firetouchinterest, hrp, targetRef, 1)
-                    end
-                end
-            end)
-
-            S.farmNextActionAt = now + rollBatchStep()
-            if S.coinStatusSetter then S.coinStatusSetter("Batch x" .. (#S.coinBatch + 1)) end
-            return
+            S.coinBatch = nil
         end
 
         local coin = findBestFarmCoin(hrp)
@@ -2302,22 +2294,30 @@ local function startCoinCollector()
             return
         end
 
-        local distToCoin = (coin.Position - hrp.Position).Magnitude
-        if distToCoin > FARM_MAX_TP_DIST then
-            startFarmFlight(coin.Position)
+        local clusterDist = (coin.Position - hrp.Position).Magnitude
+        if clusterDist > FARM_NEAR_DIST then
+            if now < S.nextFarmTpAt then return end
+            stopFarmWalk()
+            S.farmCurrentCoin = nil
+            local dir = (hrp.Position - coin.Position).Unit
+            if dir.Magnitude < 0.1 then dir = Vector3.new(0, 0, 1) end
+            local landDist = FARM_TP_LAND_MIN + math.random() * (FARM_TP_LAND_MAX - FARM_TP_LAND_MIN)
+            local landPos = coin.Position + dir * landDist
+            local jittered = jitterCoinPos(landPos)
+            hrp.CFrame = CFrame.new(jittered)
+            hrp.Velocity = Vector3.zero
+            hrp.RotVelocity = Vector3.zero
+            S.nextFarmTpAt = now + rollFarmCooldown()
             S.farmNextActionAt = now + 0.1
-            if S.coinStatusSetter then S.coinStatusSetter("Flying " .. math.floor(distToCoin) .. "m") end
+            if S.coinStatusSetter then S.coinStatusSetter("TP " .. math.floor(clusterDist) .. "m") end
             return
         end
 
-        S.lastCoinTp = now
-        S.coinBatch = buildCoinBatch(coin.Position, hrp.Position)
+        S.coinBatch = buildCoinBatch(coin.Position)
         if #S.coinBatch == 0 then
-            S.farmNextActionAt = now + rollFarmCooldown()
-            return
+            S.coinBatch = { coin }
         end
-        if S.coinStatusSetter then S.coinStatusSetter("Batch x" .. #S.coinBatch) end
-        S.farmNextActionAt = now + 0.1
+        S.farmNextActionAt = 0
     end)
 end
 
@@ -3549,16 +3549,16 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.lastCamUpdate = 0
     S.autoKillAll = false
     S.coinBatch = nil
+    S.farmCurrentCoin = nil
     S.farmNextActionAt = 0
     S.farmStartedAt = 0
     S.lastGyroUpdate = 0
-    S.farmFlightBV = nil
-    S.farmFlyTarget = nil
-    S.farmFlyStartedAt = 0
+    S.nextFarmTpAt = 0
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
     if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
+    stopFarmWalk()
     stopEvasion()
     clearBeamPool(S.beamData)
     task.wait(0.6)
