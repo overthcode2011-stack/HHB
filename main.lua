@@ -215,7 +215,9 @@ local VIS_TTL = 0.05
 local MURDERER_TTL = 0.4
 
 local FARM_GOAL = 50
-local FARM_ZONE_RADIUS = 55
+local FARM_REACH_RADIUS = 10
+local FARM_BATCH_STEP = 0.05
+local FARM_STALL_TIMEOUT = 15
 
 local YARHM_SHOOT_OFFSET = 2.8
 
@@ -239,8 +241,7 @@ local S = {
     korbloxPart = nil,
     mobileFlyVec = Vector3.zero, mobileFlyDragging = false,
     beamData = { segments = {}, updateConn = nil, lastTick = 0 },
-    coinCollecting = false, coinConnection = nil, coinVelocity = nil,
-    coinGyro = nil,
+    coinCollecting = false, coinConnection = nil, coinGyro = nil,
     roundActive = false, bagProgress = {}, totalCoins = 0,
     coinStatusSetter = nil, coinCountSetter = nil,
     roleCache = {},
@@ -260,7 +261,9 @@ local S = {
     savedLightingEffects = nil,
     savedFarmStates = nil,
     lastCoinTp = 0,
-    farmZoneAnchor = nil,
+    coinBatch = nil,
+    lastBatchProcess = 0,
+    farmStartedAt = 0,
 }
 
 local UI = {}
@@ -896,14 +899,6 @@ local function yarhmInstakill(targetPlr)
     end)
     if not ok then return false, "FireServer: " .. tostring(err) end
     return true, "instakill via " .. gun.Name .. ".Shoot"
-end
-
-local function fireGunAt(targetPart, targetPlr, useRedirect)
-    if targetPlr and not isTargetSafe(targetPlr) then return false end
-    if targetPlr then
-        return (yarhmFireAt(targetPlr, targetPart))
-    end
-    return false, "no target"
 end
 
 local function mobileForceShoot()
@@ -2004,46 +1999,44 @@ local function findBestFarmCoin(myHRP)
     local coins = getAllCoins()
     if #coins == 0 then return nil end
     local myPos = myHRP.Position
-
-    if S.farmZoneAnchor then
-        local zoneCoins = {}
-        for _, coin in ipairs(coins) do
-            if (coin.Position - S.farmZoneAnchor).Magnitude <= FARM_ZONE_RADIUS then
-                table.insert(zoneCoins, coin)
-            end
-        end
-        if #zoneCoins > 0 then
-            local best, bestDist = nil, math.huge
-            for _, coin in ipairs(zoneCoins) do
-                local d = (coin.Position - myPos).Magnitude
-                if d < bestDist then
-                    bestDist = d
-                    best = coin
-                end
-            end
-            return best
-        end
-        S.farmZoneAnchor = nil
-    end
-
     local bestCoin = nil
     local bestScore = -math.huge
     for _, coin in ipairs(coins) do
+        local neighbors = countCoinNeighbors(coins, coin, FARM_REACH_RADIUS)
         local dist = (coin.Position - myPos).Magnitude
-        if dist > 0.1 then
-            local neighbors = countCoinNeighbors(coins, coin, FARM_ZONE_RADIUS)
-            local score = neighbors * 1000 - dist
-            if score > bestScore then
-                bestScore = score
-                bestCoin = coin
-            end
+        local score = neighbors * 1000 - dist
+        if score > bestScore then
+            bestScore = score
+            bestCoin = coin
         end
     end
-
-    if bestCoin then
-        S.farmZoneAnchor = bestCoin.Position
-    end
     return bestCoin
+end
+
+local function buildCoinBatch(centerPos)
+    local coins = getAllCoins()
+    local batch = {}
+    for _, c in ipairs(coins) do
+        if c and c.Parent and (c.Position - centerPos).Magnitude <= FARM_REACH_RADIUS then
+            table.insert(batch, c)
+        end
+    end
+    table.sort(batch, function(a, b)
+        return (a.Position - centerPos).Magnitude < (b.Position - centerPos).Magnitude
+    end)
+    return batch
+end
+
+local function attachFarmGyro()
+    local hrp = getHRP()
+    if not hrp then return end
+    if S.coinGyro then S.coinGyro:Destroy() end
+    S.coinGyro = Instance.new("BodyGyro")
+    S.coinGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+    S.coinGyro.P = 1e5
+    S.coinGyro.D = 500
+    S.coinGyro.CFrame = hrp.CFrame
+    S.coinGyro.Parent = hrp
 end
 
 local function stopCoinCollector()
@@ -2051,14 +2044,15 @@ local function stopCoinCollector()
     S.coinCollecting = false
 
     if S.coinConnection then S.coinConnection:Disconnect(); S.coinConnection = nil end
-    if S.coinVelocity   then S.coinVelocity:Destroy();   S.coinVelocity   = nil end
-    if S.coinGyro       then S.coinGyro:Destroy();       S.coinGyro       = nil end
+    if S.coinGyro then S.coinGyro:Destroy(); S.coinGyro = nil end
 
     disableAutoHelperFeatures()
     disableUltraOptimization()
 
+    S.coinBatch = nil
+    S.lastBatchProcess = 0
     S.lastCoinTp = 0
-    S.farmZoneAnchor = nil
+    S.farmStartedAt = 0
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     stopMiniBoxAnimation()
 
@@ -2076,14 +2070,20 @@ local function startCoinCollector()
 
     S.coinCollecting = true
     S.lastCoinTp = 0
-    S.farmZoneAnchor = nil
+    S.coinBatch = nil
+    S.lastBatchProcess = 0
+    S.farmStartedAt = tick()
     if S.coinStatusSetter then S.coinStatusSetter("Farming") end
     playMiniBoxAnimation()
     enableAutoHelperFeatures()
     if FarmSettings.UltraOpt then enableUltraOptimization() end
 
+    attachFarmGyro()
+
     S.coinConnection = RunService.Heartbeat:Connect(function()
         if not S.coinCollecting then return end
+
+        if not S.roundActive then stopCoinCollector() return end
 
         if S.totalCoins >= FARM_GOAL then
             if S.coinStatusSetter then S.coinStatusSetter("Goal reached") end
@@ -2093,6 +2093,20 @@ local function startCoinCollector()
 
         local hrp = getHRP()
         if not hrp then stopCoinCollector() return end
+
+        if S.coinGyro and S.coinGyro.Parent then
+            S.coinGyro.CFrame = CFrame.new(hrp.Position)
+        elseif not S.coinGyro then
+            attachFarmGyro()
+        end
+
+        local now = tick()
+        local lastActivity = math.max(S.farmStartedAt, S.lastCollectTime)
+        if now - lastActivity > FARM_STALL_TIMEOUT then
+            if S.coinStatusSetter then S.coinStatusSetter("Stalled") end
+            stopCoinCollector()
+            return
+        end
 
         local murderer = getMurdererCached()
         if murderer and murderer.Character then
@@ -2110,7 +2124,31 @@ local function startCoinCollector()
             end
         end
 
-        local now = tick()
+        if S.coinBatch and #S.coinBatch > 0 then
+            if now - S.lastBatchProcess < FARM_BATCH_STEP then return end
+            S.lastBatchProcess = now
+
+            local target = table.remove(S.coinBatch, 1)
+            if target and target.Parent then
+                hrp.CFrame = CFrame.new(target.Position)
+                hrp.Velocity = Vector3.zero
+                hrp.RotVelocity = Vector3.zero
+                local targetRef = target
+                task.defer(function()
+                    task.wait(0.03)
+                    if not targetRef or not targetRef.Parent then return end
+                    if firetouchinterest then
+                        pcall(firetouchinterest, hrp, targetRef, 0)
+                        task.wait(0.01)
+                        if targetRef and targetRef.Parent then
+                            pcall(firetouchinterest, hrp, targetRef, 1)
+                        end
+                    end
+                end)
+            end
+            return
+        end
+
         if now - S.lastCoinTp < FarmSettings.CoinCooldown then return end
 
         local coin = findBestFarmCoin(hrp)
@@ -2120,22 +2158,8 @@ local function startCoinCollector()
         end
 
         S.lastCoinTp = now
-        hrp.CFrame = CFrame.new(coin.Position)
-        hrp.Velocity = Vector3.zero
-        hrp.RotVelocity = Vector3.zero
-
-        if firetouchinterest then
-            local targetCoin = coin
-            task.spawn(function()
-                pcall(firetouchinterest, hrp, targetCoin, 0)
-                task.wait(0.03)
-                if targetCoin and targetCoin.Parent then
-                    pcall(firetouchinterest, hrp, targetCoin, 1)
-                end
-            end)
-        end
-
-        if S.coinStatusSetter then S.coinStatusSetter("Farming") end
+        S.coinBatch = buildCoinBatch(coin.Position)
+        if S.coinStatusSetter then S.coinStatusSetter("Batch x" .. #S.coinBatch) end
     end)
 end
 
@@ -3366,7 +3390,9 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.lastCollectTime = 0
     S.lastCamUpdate = 0
     S.autoKillAll = false
-    S.farmZoneAnchor = nil
+    S.coinBatch = nil
+    S.lastBatchProcess = 0
+    S.farmStartedAt = 0
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
