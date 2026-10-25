@@ -213,15 +213,13 @@ local FARM_GOAL = 50
 local FARM_TOUCH_RADIUS = 25
 local FARM_ARRIVE_DIST = 5
 local FARM_CLUSTER_RADIUS = 22
-local FARM_FLY_SPEED = 25
+local FARM_FLY_SPEED = 21
 local FARM_DANGER_DIST = 20
-local FARM_NEAR_DIST = 38
 local FARM_GROUND_OFFSET = -1.5
 local FARM_STALL_TIMEOUT = 15
 local FARM_TOUCH_COOLDOWN = 0.28
 local FARM_FALLBACK_TIMEOUT = 14
 local FARM_FALLBACK_COOLDOWN = 3.5
-local FARM_FALLBACK_MIN_SAFE = 30
 local FARM_STUCK_TIME = 1.6
 local FARM_STUCK_DIST = 2.5
 
@@ -2191,31 +2189,29 @@ local function startCoinCollector()
         local timeSinceCollect = now - math.max(S.farmLastCollectAt, S.farmStartedAt)
         if timeSinceCollect > FARM_FALLBACK_TIMEOUT
             and now - S.farmLastFallbackAt > FARM_FALLBACK_COOLDOWN
-            and (not mHRP or distToMurderer > 30) then
+            and (not mHRP or distToMurderer > 25) then
             S.farmLastFallbackAt = now
-            local minSafeDist = math.max(FARM_FALLBACK_MIN_SAFE, distToMurderer + 10)
             local safeCoins = {}
             for _, coin in ipairs(coins) do
                 if coin and coin.Parent then
-                    if not mHRP or (coin.Position - mHRP.Position).Magnitude > minSafeDist then
+                    if not mHRP or (coin.Position - mHRP.Position).Magnitude > 25 then
                         table.insert(safeCoins, coin)
                     end
                 end
             end
-            if #safeCoins > 0 then
-                local pick = safeCoins[math.random(1, #safeCoins)]
-                local usedRemote = fireTeleportToPart(hrp, pick)
-                if not usedRemote then
-                    local d = (pick.Position - hrp.Position).Magnitude
-                    if d < 60 then
-                        hrp.CFrame = CFrame.new(pick.Position + Vector3.new(0, 3, 0))
-                    end
+            if #safeCoins == 0 then safeCoins = coins end
+            local pick = safeCoins[math.random(1, #safeCoins)]
+            local usedRemote = fireTeleportToPart(hrp, pick)
+            if not usedRemote then
+                local d = (pick.Position - hrp.Position).Magnitude
+                if d < 60 then
+                    hrp.CFrame = CFrame.new(pick.Position + Vector3.new(0, 3, 0))
                 end
-                S.farmTargetCoin = nil
-                S.farmLastPos = nil
-                S.farmLastPosTime = 0
-                if S.coinStatusSetter then S.coinStatusSetter("Fallback → safe coin") end
             end
+            S.farmTargetCoin = nil
+            S.farmLastPos = nil
+            S.farmLastPosTime = 0
+            if S.coinStatusSetter then S.coinStatusSetter("Fallback → safe coin") end
         end
 
         local target = S.farmTargetCoin
@@ -2224,19 +2220,12 @@ local function startCoinCollector()
 
         if needNew then
             local bestCoin, bestScore = nil, -math.huge
-            local evading = distToMurderer < FARM_NEAR_DIST
             for _, coin in ipairs(coins) do
                 if coin and coin.Parent then
                     local d = (coin.Position - myPos).Magnitude
                     if d > 1 then
-                        local score
-                        if evading and mHRP then
-                            local dToM = (coin.Position - mHRP.Position).Magnitude
-                            score = dToM * 3 - d
-                        else
-                            local nb = countCoinNeighbors(coins, coin, FARM_CLUSTER_RADIUS)
-                            score = nb * 1000 - d
-                        end
+                        local nb = countCoinNeighbors(coins, coin, FARM_CLUSTER_RADIUS)
+                        local score = nb * 1000 - d
                         if score > bestScore then
                             bestScore = score
                             bestCoin = coin
@@ -2256,8 +2245,7 @@ local function startCoinCollector()
             local horiz = Vector3.new(delta.X, 0, delta.Z)
             local hDist = horiz.Magnitude
             if hDist > 0.5 then
-                local speedMul = distToMurderer < FARM_NEAR_DIST and 1.4 or 1.0
-                local speed = math.min(FARM_FLY_SPEED * speedMul, hDist * 5)
+                local speed = math.min(FARM_FLY_SPEED, hDist * 5)
                 S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
             else
                 S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
@@ -2280,11 +2268,7 @@ local function startCoinCollector()
         end
 
         if S.coinStatusSetter then
-            if distToMurderer < FARM_NEAR_DIST then
-                S.coinStatusSetter("Evading · " .. #coins .. " coins")
-            else
-                S.coinStatusSetter("Flowing · " .. #coins .. " coins")
-            end
+            S.coinStatusSetter("Flowing · " .. #coins .. " coins")
         end
     end)
 end
