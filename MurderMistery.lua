@@ -211,17 +211,19 @@ local MURDERER_TTL = 0.4
 
 local FARM_GOAL = 50
 local FARM_TOUCH_RADIUS = 25
-local FARM_ARRIVE_DIST = 8
+local FARM_ARRIVE_DIST = 5
 local FARM_CLUSTER_RADIUS = 22
-local FARM_FLY_SPEED = 20
+local FARM_FLY_SPEED = 28
 local FARM_DANGER_DIST = 20
 local FARM_NEAR_DIST = 38
 local FARM_GROUND_OFFSET = -1.5
 local FARM_STALL_TIMEOUT = 15
 local FARM_TOUCH_COOLDOWN = 0.28
-local FARM_FALLBACK_TIMEOUT = 10
-local FARM_FALLBACK_COOLDOWN = 1.5
+local FARM_FALLBACK_TIMEOUT = 14
+local FARM_FALLBACK_COOLDOWN = 3.5
 local FARM_FALLBACK_MIN_SAFE = 30
+local FARM_STUCK_TIME = 1.6
+local FARM_STUCK_DIST = 2.5
 
 local YARHM_SHOOT_OFFSET = 2.8
 
@@ -270,6 +272,8 @@ local S = {
     farmLastCollectAt = 0,
     farmStartedAt = 0,
     farmLastFallbackAt = 0,
+    farmLastPos = nil,
+    farmLastPosTime = 0,
     lastGyroUpdate = 0,
 }
 
@@ -2053,12 +2057,12 @@ local function stopFarmBodyMovers()
         S.farmWalkBV:Destroy()
         S.farmWalkBV = nil
     end
-    local hrp = getHRP()
     local hum = getHumanoid()
-    if hrp then
-        hrp.CFrame = hrp.CFrame + Vector3.new(0, math.abs(FARM_GROUND_OFFSET) + 0.5, 0)
-    end
     if hum then hum.PlatformStand = false end
+    local hrp = getHRP()
+    if hrp and hrp.Position.Y < -50 then
+        hrp.CFrame = hrp.CFrame + Vector3.new(0, 60, 0)
+    end
 end
 
 local function stopCoinCollector()
@@ -2073,6 +2077,8 @@ local function stopCoinCollector()
     S.farmLastCollectAt = 0
     S.farmStartedAt = 0
     S.farmLastFallbackAt = 0
+    S.farmLastPos = nil
+    S.farmLastPosTime = 0
     S.lastGyroUpdate = 0
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     stopMiniBoxAnimation()
@@ -2094,6 +2100,8 @@ local function startCoinCollector()
     S.farmStartedAt = tick()
     S.farmLastCollectAt = tick()
     S.farmLastFallbackAt = tick()
+    S.farmLastPos = nil
+    S.farmLastPosTime = 0
     if S.coinStatusSetter then S.coinStatusSetter("Flowing") end
     playMiniBoxAnimation()
     ensureFarmHelpers()
@@ -2164,7 +2172,7 @@ local function startCoinCollector()
         end
 
         for coin, t in pairs(S.farmTouchedCoins) do
-            if now - t > 5 then S.farmTouchedCoins[coin] = nil end
+            if now - t > 5 or not coin.Parent then S.farmTouchedCoins[coin] = nil end
         end
 
         local murderer = getMurdererCached()
@@ -2183,7 +2191,7 @@ local function startCoinCollector()
         local timeSinceCollect = now - math.max(S.farmLastCollectAt, S.farmStartedAt)
         if timeSinceCollect > FARM_FALLBACK_TIMEOUT
             and now - S.farmLastFallbackAt > FARM_FALLBACK_COOLDOWN
-            and (not mHRP or distToMurderer > 25) then
+            and (not mHRP or distToMurderer > 30) then
             S.farmLastFallbackAt = now
             local minSafeDist = math.max(FARM_FALLBACK_MIN_SAFE, distToMurderer + 10)
             local safeCoins = {}
@@ -2196,16 +2204,17 @@ local function startCoinCollector()
             end
             if #safeCoins > 0 then
                 local pick = safeCoins[math.random(1, #safeCoins)]
-                hrp.CFrame = CFrame.new(pick.Position + Vector3.new(0, 2, 0))
-                task.spawn(function()
-                    pcall(firetouchinterest, hrp, pick, 0)
-                    task.wait(0.02)
-                    if pick and pick.Parent then
-                        pcall(firetouchinterest, hrp, pick, 1)
+                local usedRemote = fireTeleportToPart(hrp, pick)
+                if not usedRemote then
+                    local d = (pick.Position - hrp.Position).Magnitude
+                    if d < 60 then
+                        hrp.CFrame = CFrame.new(pick.Position + Vector3.new(0, 3, 0))
                     end
-                end)
+                end
                 S.farmTargetCoin = nil
-                if S.coinStatusSetter then S.coinStatusSetter("Fallback TP → moneda segura") end
+                S.farmLastPos = nil
+                S.farmLastPosTime = 0
+                if S.coinStatusSetter then S.coinStatusSetter("Fallback → safe coin") end
             end
         end
 
@@ -2237,6 +2246,8 @@ local function startCoinCollector()
             end
             target = bestCoin
             S.farmTargetCoin = bestCoin
+            S.farmLastPos = nil
+            S.farmLastPosTime = 0
         end
 
         if target and target.Parent then
@@ -2250,6 +2261,19 @@ local function startCoinCollector()
                 S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
             else
                 S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+            end
+
+            if not S.farmLastPos then
+                S.farmLastPos = myPos
+                S.farmLastPosTime = now
+            elseif (myPos - S.farmLastPos).Magnitude > FARM_STUCK_DIST then
+                S.farmLastPos = myPos
+                S.farmLastPosTime = now
+            elseif now - S.farmLastPosTime > FARM_STUCK_TIME then
+                S.farmTargetCoin = nil
+                S.farmLastPos = nil
+                S.farmLastPosTime = 0
+                if S.coinStatusSetter then S.coinStatusSetter("Unsticking · " .. #coins .. " coins") end
             end
         else
             S.farmWalkBV.Velocity = Vector3.zero
@@ -3498,6 +3522,8 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.farmLastCollectAt = 0
     S.farmStartedAt = 0
     S.farmLastFallbackAt = 0
+    S.farmLastPos = nil
+    S.farmLastPosTime = 0
     S.lastGyroUpdate = 0
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
@@ -3536,7 +3562,7 @@ UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
 end)
 registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
 
-window:CreateParagraph(farmTab, "Recorre monedas de corrido · evade murderer automatico · fallback TP si no agarra monedas")
+window:CreateParagraph(farmTab, "Flows through coins · auto-evades murderer · fallback TP if stuck")
 
 window:CreateLabel(farmTab, "Stats")
 local coinCountFrame = window:CreateParagraph(farmTab, "0")
