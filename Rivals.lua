@@ -12,27 +12,23 @@ local LocalPlayer          = Players.LocalPlayer
 local Camera               = workspace.CurrentCamera
 
 local mousemoverel = mousemoverel or MouseMoveRel or (syn and syn.mousemoverel) or (fluxus and fluxus.mousemoverel)
-
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
 local AimbotSettings = {
     Enabled = false, SilentAim = false, FOV = 150, Smoothing = 0.35,
     WallCheck = false, MaxDistance = 150, Target = "Head", ShowFOV = false,
-    TeamCheck = false, RotateRig = true, TriggerBot = false, TriggerRange = 150, AutoFire = false,
-    MatchOnly = true,
+    TeamCheck = false, TriggerBot = false, TriggerRange = 150, AutoFire = false,
 }
-local VisualSettings   = { RivalsESP = false, NameTags = false, Tracers = false }
-local MiscSettings     = { InfJump = false, AntiAFK = false }
+local VisualSettings   = { RivalsESP = false, NameTags = false, Tracers = false, Skeleton = true, HealthBar = true }
+local MiscSettings     = { InfJump = false, AntiAFK = false, FullOptimized = false }
 local MovementSettings = { Noclip = false, God = false, Fly = false, FlySpeed = 60 }
 
 local lockedTarget = nil
 local silentAimEnabled = false
 local noclipConn, godConn, antiAFKConn, flyConn = nil, nil, nil, nil
-local triggerBotConn = nil
-local autoFireConn = nil
+local triggerBotConn, autoFireConn = nil, nil
 local fovCircle = nil
 local flyState = { enabled = false, speed = 60 }
-
 local activeFighters = {}
 
 local function markActive(name)
@@ -199,7 +195,7 @@ end
 
 local function isEnemy(p)
     if not p or p == LocalPlayer then return false end
-    if AimbotSettings.MatchOnly and not isActiveFighter(p) then return false end
+    if not isActiveFighter(p) then return false end
     if not AimbotSettings.TeamCheck then return true end
     return not isTeammate(p)
 end
@@ -275,7 +271,6 @@ local function getAimTarget(crosshair)
 end
 
 local function rotateRigTowards(part)
-    if not AimbotSettings.RotateRig then return end
     if not part or not part.Parent then return end
     local char = LocalPlayer.Character
     if not char then return end
@@ -356,271 +351,472 @@ pcall(function()
     if Drawing then
         fovCircle = Drawing.new("Circle")
         fovCircle.Thickness = 2
-        fovCircle.Color = Color3.fromRGB(0, 255, 63)
+        fovCircle.Color = Color3.fromRGB(255, 255, 255)
         fovCircle.Filled = false
         fovCircle.Visible = false
         fovCircle.NumSides = 60
     end
 end)
 
-local ESP_COLORS = {
-    Enemy = Color3.fromRGB(255, 60, 60),
-    Ally  = Color3.fromRGB(60, 160, 255),
-    Self  = Color3.fromRGB(0, 255, 63),
+local function healthColor(ratio)
+    ratio = math.clamp(ratio, 0, 1)
+    if ratio > 0.5 then
+        return Color3.new(2 - ratio * 2, 1, 0)
+    else
+        return Color3.new(1, ratio * 2, 0)
+    end
+end
+
+local R15_BONES = {
+    {"Head","UpperTorso"}, {"UpperTorso","LowerTorso"},
+    {"UpperTorso","LeftUpperArm"}, {"LeftUpperArm","LeftLowerArm"}, {"LeftLowerArm","LeftHand"},
+    {"UpperTorso","RightUpperArm"}, {"RightUpperArm","RightLowerArm"}, {"RightLowerArm","RightHand"},
+    {"LowerTorso","LeftUpperLeg"}, {"LeftUpperLeg","LeftLowerLeg"}, {"LeftLowerLeg","LeftFoot"},
+    {"LowerTorso","RightUpperLeg"}, {"RightUpperLeg","RightLowerLeg"}, {"RightLowerLeg","RightFoot"},
+}
+local R6_BONES = {
+    {"Head","Torso"}, {"Torso","Left Arm"}, {"Torso","Right Arm"},
+    {"Torso","Left Leg"}, {"Torso","Right Leg"},
 }
 
-local function getRivalsESPColor(plr)
-    if plr == LocalPlayer then return ESP_COLORS.Self end
-    if isTeammate(plr) then return ESP_COLORS.Ally end
-    return ESP_COLORS.Enemy
+local ESP = {
+    active = false,
+    boxes = {}, skeletons = {}, tracers = {}, names = {}, hpbars = {},
+    heartbeat = nil, refreshTask = nil,
+}
+
+local function newGlowLine(color, coreThickness)
+    local glow1 = Drawing.new("Line")
+    glow1.Color = color
+    glow1.Thickness = coreThickness * 4
+    glow1.Transparency = 0.85
+    glow1.Visible = false
+
+    local glow2 = Drawing.new("Line")
+    glow2.Color = color
+    glow2.Thickness = coreThickness * 2
+    glow2.Transparency = 0.55
+    glow2.Visible = false
+
+    local core = Drawing.new("Line")
+    core.Color = Color3.new(1, 1, 1)
+    core.Thickness = coreThickness
+    core.Transparency = 1
+    core.Visible = false
+
+    return { glow1 = glow1, glow2 = glow2, core = core }
 end
 
-local RivalsESP = { active = false, boxes = {}, updaters = {}, tracers = {}, heartbeat = nil, refreshThread = nil }
-
-local function clearRivalsBox(plr)
-    local data = RivalsESP.boxes[plr]
-    if data then
-        if data.bb and data.bb.Parent then data.bb:Destroy() end
-        RivalsESP.boxes[plr] = nil
+local function destroyGlowLine(g)
+    if not g then return end
+    for _, obj in ipairs({ g.glow1, g.glow2, g.core }) do
+        if obj and obj.Remove then pcall(obj.Remove, obj) end
     end
-    RivalsESP.updaters[plr] = nil
-    local t = RivalsESP.tracers[plr]
-    if t and t.line and t.line.Remove then pcall(t.line.Remove, t.line) end
-    RivalsESP.tracers[plr] = nil
 end
 
-local function applyBoxColor(data, color)
-    for _, l in ipairs(data.lines) do
-        if l and l.Parent then l.BackgroundColor3 = color end
+local function setGlowVisible(g, visible)
+    if not g then return end
+    g.glow1.Visible = visible
+    g.glow2.Visible = visible
+    g.core.Visible = visible
+end
+
+local function setGlowPoints(g, from, to)
+    if not g then return end
+    g.glow1.From = from; g.glow1.To = to
+    g.glow2.From = from; g.glow2.To = to
+    g.core.From = from;  g.core.To = to
+end
+
+local function createBox(plr)
+    if plr == LocalPlayer or ESP.boxes[plr] then return end
+    local box = {
+        TL_H = newGlowLine(Color3.new(1, 1, 1), 1.5),
+        TL_V = newGlowLine(Color3.new(1, 1, 1), 1.5),
+        TR_H = newGlowLine(Color3.new(1, 1, 1), 1.5),
+        TR_V = newGlowLine(Color3.new(1, 1, 1), 1.5),
+        BL_H = newGlowLine(Color3.new(1, 1, 1), 1.5),
+        BL_V = newGlowLine(Color3.new(1, 1, 1), 1.5),
+        BR_H = newGlowLine(Color3.new(1, 1, 1), 1.5),
+        BR_V = newGlowLine(Color3.new(1, 1, 1), 1.5),
+    }
+    ESP.boxes[plr] = box
+end
+
+local function destroyBox(plr)
+    local box = ESP.boxes[plr]
+    if not box then return end
+    for _, g in pairs(box) do destroyGlowLine(g) end
+    ESP.boxes[plr] = nil
+end
+
+local function updateBox(plr, cam)
+    local box = ESP.boxes[plr]
+    if not box then return end
+    local char = plr.Character
+    if not char then
+        for _, g in pairs(box) do setGlowVisible(g, false) end
+        return
     end
-    if data.nameTag and data.nameTag.Parent then data.nameTag.TextColor3 = color end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then
+        for _, g in pairs(box) do setGlowVisible(g, false) end
+        return
+    end
+    local screen, onScreen = cam:WorldToViewportPoint(root.Position)
+    if not onScreen then
+        for _, g in pairs(box) do setGlowVisible(g, false) end
+        return
+    end
+
+    local dist = (root.Position - cam.CFrame.Position).Magnitude
+    if dist < 1 then dist = 1 end
+    local ppS = (cam.ViewportSize.Y / 2) / (dist * math.tan(math.rad(cam.FieldOfView) / 2))
+    local w = 3 * ppS
+    local h = 5 * ppS
+    local x = screen.X - w / 2
+    local y = screen.Y - h / 2
+    local c = math.min(w, h) * 0.22
+
+    setGlowPoints(box.TL_H, Vector2.new(x, y), Vector2.new(x + c, y))
+    setGlowPoints(box.TL_V, Vector2.new(x, y), Vector2.new(x, y + c))
+    setGlowPoints(box.TR_H, Vector2.new(x + w - c, y), Vector2.new(x + w, y))
+    setGlowPoints(box.TR_V, Vector2.new(x + w, y), Vector2.new(x + w, y + c))
+    setGlowPoints(box.BL_H, Vector2.new(x, y + h), Vector2.new(x + c, y + h))
+    setGlowPoints(box.BL_V, Vector2.new(x, y + h - c), Vector2.new(x, y + h))
+    setGlowPoints(box.BR_H, Vector2.new(x + w - c, y + h), Vector2.new(x + w, y + h))
+    setGlowPoints(box.BR_V, Vector2.new(x + w, y + h - c), Vector2.new(x + w, y + h))
+
+    for _, g in pairs(box) do setGlowVisible(g, true) end
 end
 
-local function createRivalsBox(plr)
-    if plr == LocalPlayer then return end
+local function createSkeleton(plr)
+    if plr == LocalPlayer or ESP.skeletons[plr] then return end
     local char = plr.Character
     if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then return end
+    local bones = char:FindFirstChild("UpperTorso") and R15_BONES
+              or char:FindFirstChild("Torso") and R6_BONES
+    if not bones then return end
 
-    local color = getRivalsESPColor(plr)
-
-    local bb = Instance.new("BillboardGui")
-    bb.Name = "HappyHub_Box"
-    bb.AlwaysOnTop = true
-    bb.Adornee = hrp
-    bb.LightInfluence = 0
-    bb.ResetOnSpawn = false
-    bb.Size = UDim2.fromOffset(60, 100)
-    bb.Parent = hrp
-
-    local box = Instance.new("Frame")
-    box.Name = "Box"
-    box.BackgroundTransparency = 1
-    box.Size = UDim2.new(1, 0, 1, 0)
-    box.Parent = bb
-
-    local t = 2
-
-    local function makeLine(n, size, pos)
-        local l = Instance.new("Frame")
-        l.Name = n
-        l.Size = size
-        l.Position = pos
-        l.BackgroundColor3 = color
-        l.BorderSizePixel = 0
-        l.Parent = box
-        return l
+    local lines = {}
+    for _, bone in ipairs(bones) do
+        local g = newGlowLine(Color3.new(1, 1, 1), 1.2)
+        table.insert(lines, { g = g, a = bone[1], b = bone[2] })
     end
-
-    local top    = makeLine("Top",    UDim2.new(1, 0, 0, t), UDim2.new(0, 0, 0, 0))
-    local bottom = makeLine("Bottom", UDim2.new(1, 0, 0, t), UDim2.new(0, 0, 1, -t))
-    local left   = makeLine("Left",   UDim2.new(0, t, 1, 0), UDim2.new(0, 0, 0, 0))
-    local right  = makeLine("Right",  UDim2.new(0, t, 1, 0), UDim2.new(1, -t, 0, 0))
-
-    local nameTag = nil
-    if VisualSettings.NameTags then
-        nameTag = Instance.new("TextLabel")
-        nameTag.Name = "NameTag"
-        nameTag.Size = UDim2.new(1, 0, 0, 14)
-        nameTag.Position = UDim2.new(0, 0, 1, 3)
-        nameTag.BackgroundTransparency = 1
-        nameTag.TextColor3 = color
-        nameTag.Font = Enum.Font.GothamBold
-        nameTag.TextSize = 12
-        nameTag.TextStrokeTransparency = 0.4
-        nameTag.TextStrokeColor3 = Color3.new(0, 0, 0)
-        nameTag.Text = plr.DisplayName
-        nameTag.Parent = bb
-    end
-
-    RivalsESP.boxes[plr] = {
-        bb = bb, box = box, lines = { top, bottom, left, right }, nameTag = nameTag,
-    }
-
-    local function updateSize()
-        local data = RivalsESP.boxes[plr]
-        if not data or not data.bb or not data.bb.Parent then
-            RivalsESP.updaters[plr] = nil
-            return
-        end
-        local c = plr.Character
-        if not c then return end
-        local root = c:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        local cam = workspace.CurrentCamera
-        if not cam then return end
-        local dist = (root.Position - cam.CFrame.Position).Magnitude
-        if dist < 1 then dist = 1 end
-        local vpY = cam.ViewportSize.Y
-        local fovRad = math.rad(cam.FieldOfView)
-        local pixelsPerStud = (vpY / 2) / (dist * math.tan(fovRad / 2))
-        data.bb.Size = UDim2.fromOffset(3 * pixelsPerStud, 5 * pixelsPerStud)
-    end
-
-    RivalsESP.updaters[plr] = updateSize
-    updateSize()
-
-    if VisualSettings.Tracers and Drawing then
-        local line = Drawing.new("Line")
-        line.Thickness = 1
-        line.Transparency = 1
-        line.Visible = false
-        RivalsESP.tracers[plr] = { line = line }
-    end
+    ESP.skeletons[plr] = lines
 end
 
-local function refreshAllRivalsESP()
-    if not RivalsESP.active then return end
-    local seen = {}
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            seen[plr] = true
-            local char = plr.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            local existing = RivalsESP.boxes[plr]
-
-            if existing and (not existing.bb or not existing.bb.Parent or existing.bb.Adornee ~= hrp) then
-                clearRivalsBox(plr)
-                existing = nil
-            end
-
-            if hrp and hum and hum.Health > 0 then
-                if not existing then
-                    createRivalsBox(plr)
-                else
-                    applyBoxColor(existing, getRivalsESPColor(plr))
-                end
-            elseif existing then
-                clearRivalsBox(plr)
-            end
-        end
-    end
-    for plr in pairs(RivalsESP.boxes) do
-        if not seen[plr] then clearRivalsBox(plr) end
-    end
+local function destroySkeleton(plr)
+    local lines = ESP.skeletons[plr]
+    if not lines then return end
+    for _, l in ipairs(lines) do destroyGlowLine(l.g) end
+    ESP.skeletons[plr] = nil
 end
 
-local function startRivalsESP()
-    RivalsESP.active = true
-    refreshAllRivalsESP()
-    if not RivalsESP.heartbeat then
-        RivalsESP.heartbeat = RunService.RenderStepped:Connect(function()
-            if not RivalsESP.active then return end
-            local myHRP = getHRP()
-            local cam = workspace.CurrentCamera
-            for plr, updater in pairs(RivalsESP.updaters) do
-                pcall(updater)
-                local data = RivalsESP.boxes[plr]
-                if data and data.nameTag and data.nameTag.Parent and myHRP and plr.Character and cam then
-                    local theirHRP = plr.Character:FindFirstChild("HumanoidRootPart")
-                    if theirHRP then
-                        local d = math.floor((myHRP.Position - theirHRP.Position).Magnitude)
-                        data.nameTag.Text = plr.DisplayName .. " [" .. d .. "m]"
-                    end
-                end
-            end
-            if Drawing then
-                if VisualSettings.Tracers and cam then
-                    for plr, t in pairs(RivalsESP.tracers) do
-                        if t and t.line and plr.Character then
-                            local root = plr.Character:FindFirstChild("HumanoidRootPart")
-                            if root then
-                                local sp, on = cam:WorldToViewportPoint(root.Position)
-                                if on then
-                                    t.line.From = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y)
-                                    t.line.To = Vector2.new(sp.X, sp.Y)
-                                    t.line.Color = getRivalsESPColor(plr)
-                                    t.line.Visible = true
-                                else t.line.Visible = false end
-                            else t.line.Visible = false end
-                        end
-                    end
-                else
-                    for _, t in pairs(RivalsESP.tracers) do
-                        if t and t.line then t.line.Visible = false end
-                    end
-                end
-            end
-        end)
+local function updateSkeleton(plr, cam)
+    local lines = ESP.skeletons[plr]
+    if not lines then return end
+    local char = plr.Character
+    if not char then
+        for _, l in ipairs(lines) do setGlowVisible(l.g, false) end
+        return
     end
-    if not RivalsESP.refreshThread then
-        RivalsESP.refreshThread = task.spawn(function()
-            while RivalsESP.active do
-                task.wait(0.5)
-                if RivalsESP.active then refreshAllRivalsESP() end
-            end
-            RivalsESP.refreshThread = nil
-        end)
-    end
-end
-
-local function stopRivalsESP()
-    RivalsESP.active = false
-    if RivalsESP.refreshThread then
-        pcall(task.cancel, RivalsESP.refreshThread)
-        RivalsESP.refreshThread = nil
-    end
-    if RivalsESP.heartbeat then
-        RivalsESP.heartbeat:Disconnect()
-        RivalsESP.heartbeat = nil
-    end
-    for plr in pairs(RivalsESP.boxes) do clearRivalsBox(plr) end
-    RivalsESP.boxes = {}
-    RivalsESP.updaters = {}
-    RivalsESP.tracers = {}
-end
-
-local function updateNameTagVisibility()
-    for plr, data in pairs(RivalsESP.boxes) do
-        if VisualSettings.NameTags then
-            if not data.nameTag or not data.nameTag.Parent then
-                local nt = Instance.new("TextLabel")
-                nt.Name = "NameTag"
-                nt.Size = UDim2.new(1, 0, 0, 14)
-                nt.Position = UDim2.new(0, 0, 1, 3)
-                nt.BackgroundTransparency = 1
-                nt.TextColor3 = getRivalsESPColor(plr)
-                nt.Font = Enum.Font.GothamBold
-                nt.TextSize = 12
-                nt.TextStrokeTransparency = 0.4
-                nt.TextStrokeColor3 = Color3.new(0, 0, 0)
-                nt.Text = plr.DisplayName
-                nt.Parent = data.bb
-                data.nameTag = nt
+    for _, l in ipairs(lines) do
+        local pa = char:FindFirstChild(l.a)
+        local pb = char:FindFirstChild(l.b)
+        if pa and pb then
+            local sa, onA = cam:WorldToViewportPoint(pa.Position)
+            local sb, onB = cam:WorldToViewportPoint(pb.Position)
+            if onA and onB then
+                setGlowPoints(l.g, Vector2.new(sa.X, sa.Y), Vector2.new(sb.X, sb.Y))
+                setGlowVisible(l.g, true)
+            else
+                setGlowVisible(l.g, false)
             end
         else
-            if data.nameTag and data.nameTag.Parent then
-                data.nameTag:Destroy()
-                data.nameTag = nil
-            end
+            setGlowVisible(l.g, false)
         end
     end
 end
 
+local function createTracer(plr)
+    if plr == LocalPlayer or ESP.tracers[plr] then return end
+    ESP.tracers[plr] = newGlowLine(Color3.new(1, 1, 1), 1.2)
+end
+
+local function destroyTracer(plr)
+    local g = ESP.tracers[plr]
+    if g then destroyGlowLine(g); ESP.tracers[plr] = nil end
+end
+
+local function updateTracer(plr, cam)
+    local g = ESP.tracers[plr]
+    if not g then return end
+    local char = plr.Character
+    if not char then setGlowVisible(g, false); return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then setGlowVisible(g, false); return end
+    local sp, on = cam:WorldToViewportPoint(root.Position)
+    if not on then setGlowVisible(g, false); return end
+    setGlowPoints(g, Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y), Vector2.new(sp.X, sp.Y))
+    setGlowVisible(g, true)
+end
+
+local function createNameTag(plr)
+    if plr == LocalPlayer or ESP.names[plr] then return end
+    local txt = Drawing.new("Text")
+    txt.Color = Color3.new(1, 1, 1)
+    txt.Size = 14
+    txt.Center = true
+    txt.Outline = true
+    txt.OutlineColor = Color3.new(0, 0, 0)
+    txt.Visible = false
+    ESP.names[plr] = txt
+end
+
+local function destroyNameTag(plr)
+    local txt = ESP.names[plr]
+    if txt and txt.Remove then pcall(txt.Remove, txt) end
+    ESP.names[plr] = nil
+end
+
+local function updateNameTag(plr, cam)
+    local txt = ESP.names[plr]
+    if not txt then return end
+    local char = plr.Character
+    if not char then txt.Visible = false; return end
+    local head = char:FindFirstChild("Head")
+    if not head then txt.Visible = false; return end
+    local sp, on = cam:WorldToViewportPoint(head.Position)
+    if not on then txt.Visible = false; return end
+    txt.Position = Vector2.new(sp.X, sp.Y - 20)
+    txt.Text = plr.DisplayName
+    txt.Visible = true
+end
+
+local function createHealthBar(plr)
+    if plr == LocalPlayer or ESP.hpbars[plr] then return end
+    local bg = Drawing.new("Line")
+    bg.Color = Color3.fromRGB(20, 20, 20)
+    bg.Thickness = 3
+    bg.Transparency = 0.5
+    bg.Visible = false
+    local fill = Drawing.new("Line")
+    fill.Color = Color3.fromRGB(0, 255, 100)
+    fill.Thickness = 3
+    fill.Transparency = 1
+    fill.Visible = false
+    ESP.hpbars[plr] = { bg = bg, fill = fill }
+end
+
+local function destroyHealthBar(plr)
+    local hb = ESP.hpbars[plr]
+    if hb then
+        if hb.bg.Remove then pcall(hb.bg.Remove, hb.bg) end
+        if hb.fill.Remove then pcall(hb.fill.Remove, hb.fill) end
+        ESP.hpbars[plr] = nil
+    end
+end
+
+local function updateHealthBar(plr, cam)
+    local hb = ESP.hpbars[plr]
+    if not hb then return end
+    local char = plr.Character
+    if not char then hb.bg.Visible = false; hb.fill.Visible = false; return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum or hum.MaxHealth <= 0 then
+        hb.bg.Visible = false; hb.fill.Visible = false; return
+    end
+    local screen, on = cam:WorldToViewportPoint(root.Position)
+    if not on then hb.bg.Visible = false; hb.fill.Visible = false; return end
+    local dist = (root.Position - cam.CFrame.Position).Magnitude
+    if dist < 1 then dist = 1 end
+    local ppS = (cam.ViewportSize.Y / 2) / (dist * math.tan(math.rad(cam.FieldOfView) / 2))
+    local barH = 5 * ppS * 0.7
+    local x = screen.X - (3 * ppS) / 2 - 6
+    local yTop = screen.Y - barH / 2
+    local yBot = screen.Y + barH / 2
+
+    hb.bg.From = Vector2.new(x, yTop)
+    hb.bg.To   = Vector2.new(x, yBot)
+    hb.bg.Visible = true
+
+    local ratio = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+    local yFill = yBot - (yBot - yTop) * ratio
+    hb.fill.From = Vector2.new(x, yFill)
+    hb.fill.To   = Vector2.new(x, yBot)
+    hb.fill.Color = healthColor(ratio)
+    hb.fill.Visible = true
+end
+
+local function syncESP()
+    if not ESP.active then return end
+    local active = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        active[plr] = true
+        if plr ~= LocalPlayer and isActiveFighter(plr) then
+            local char = plr.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local alive = char and hum and hum.Health > 0
+
+            if alive then
+                if VisualSettings.RivalsESP then
+                    if not ESP.boxes[plr] then createBox(plr) end
+                else
+                    destroyBox(plr)
+                end
+                if VisualSettings.Skeleton then
+                    if not ESP.skeletons[plr] then createSkeleton(plr) end
+                else
+                    destroySkeleton(plr)
+                end
+                if VisualSettings.Tracers then
+                    if not ESP.tracers[plr] then createTracer(plr) end
+                else
+                    destroyTracer(plr)
+                end
+                if VisualSettings.NameTags then
+                    if not ESP.names[plr] then createNameTag(plr) end
+                else
+                    destroyNameTag(plr)
+                end
+                if VisualSettings.HealthBar then
+                    if not ESP.hpbars[plr] then createHealthBar(plr) end
+                else
+                    destroyHealthBar(plr)
+                end
+            else
+                destroyBox(plr); destroySkeleton(plr); destroyTracer(plr)
+                destroyNameTag(plr); destroyHealthBar(plr)
+            end
+        else
+            destroyBox(plr); destroySkeleton(plr); destroyTracer(plr)
+            destroyNameTag(plr); destroyHealthBar(plr)
+        end
+    end
+    for plr in pairs(ESP.boxes) do if not active[plr] then destroyBox(plr) end end
+    for plr in pairs(ESP.skeletons) do if not active[plr] then destroySkeleton(plr) end end
+    for plr in pairs(ESP.tracers) do if not active[plr] then destroyTracer(plr) end end
+    for plr in pairs(ESP.names) do if not active[plr] then destroyNameTag(plr) end end
+    for plr in pairs(ESP.hpbars) do if not active[plr] then destroyHealthBar(plr) end end
+end
+
+local function startESP()
+    if ESP.active then return end
+    ESP.active = true
+    syncESP()
+    if not ESP.heartbeat then
+        ESP.heartbeat = RunService.RenderStepped:Connect(function()
+            if not ESP.active then return end
+            local cam = workspace.CurrentCamera
+            if not cam then return end
+            syncESP()
+            for plr in pairs(ESP.boxes) do updateBox(plr, cam) end
+            for plr in pairs(ESP.skeletons) do updateSkeleton(plr, cam) end
+            for plr in pairs(ESP.tracers) do updateTracer(plr, cam) end
+            for plr in pairs(ESP.names) do updateNameTag(plr, cam) end
+            for plr in pairs(ESP.hpbars) do updateHealthBar(plr, cam) end
+        end)
+    end
+    if not ESP.refreshTask then
+        ESP.refreshTask = task.spawn(function()
+            while ESP.active do
+                task.wait(0.5)
+                if ESP.active then syncESP() end
+            end
+            ESP.refreshTask = nil
+        end)
+    end
+end
+
+local function stopESP()
+    ESP.active = false
+    if ESP.refreshTask then pcall(task.cancel, ESP.refreshTask); ESP.refreshTask = nil end
+    if ESP.heartbeat then ESP.heartbeat:Disconnect(); ESP.heartbeat = nil end
+    for plr in pairs(ESP.boxes) do destroyBox(plr) end
+    for plr in pairs(ESP.skeletons) do destroySkeleton(plr) end
+    for plr in pairs(ESP.tracers) do destroyTracer(plr) end
+    for plr in pairs(ESP.names) do destroyNameTag(plr) end
+    for plr in pairs(ESP.hpbars) do destroyHealthBar(plr) end
+    ESP.boxes = {}; ESP.skeletons = {}; ESP.tracers = {}; ESP.names = {}; ESP.hpbars = {}
+end
+
+local function anyVisualOn()
+    return VisualSettings.RivalsESP or VisualSettings.Skeleton
+        or VisualSettings.Tracers or VisualSettings.NameTags
+        or VisualSettings.HealthBar
+end
+
+local function refreshESPState()
+    if anyVisualOn() then
+        if not ESP.active then startESP() end
+    else
+        if ESP.active then stopESP() end
+    end
+end
+
+-- ============================================================
+-- FULL OPTIMIZED (FFlags)
+-- ============================================================
+local FULL_OPTIMIZED_FLAGS = {
+    -- Renderizado
+    ["DFIntCSGLevelOfDetailSwitchingDistance"] = "0",
+    ["DFIntCSGLevelOfDetailSwitchingDistanceL12"] = "0",
+    ["DFIntCSGLevelOfDetailSwitchingDistanceL23"] = "0",
+    ["DFIntCSGLevelOfDetailSwitchingDistanceL34"] = "0",
+    ["DFIntDebugFRMQualityLevelOverride"] = "1",
+    ["FFlagDebugGraphicsPreferD3D11"] = "True",
+    ["FFlagDebugSkyGray"] = "True",
+    ["DFFlagDebugRenderForceTechnologyVoxel"] = "True",
+    ["FIntRenderShadowIntensity"] = "0",
+    ["FFlagDisablePostFx"] = "True",
+    ["FIntDebugForceMSAASamples"] = "0",
+    ["FIntFRMMinGrassDistance"] = "0",
+    ["FIntFRMMaxGrassDistance"] = "0",
+    ["FIntRenderGrassDetailStrands"] = "0",
+    ["FIntRenderGrassHeightScaler"] = "0",
+    -- Texturas
+    ["DFFlagTextureQualityOverrideEnabled"] = "True",
+    ["DFIntTextureQualityOverride"] = "0",
+    ["FIntDebugTextureManagerSkipMips"] = "8",
+    ["DFIntTextureCompositorActiveJobs"] = "0",
+    -- FPS / Scheduler
+    ["DFIntTaskSchedulerTargetFps"] = "999999",
+    ["FFlagTaskSchedulerLimitTargetFpsTo2402"] = "False",
+    -- Telemetría / Red
+    ["FFlagDebugDisableTelemetryEventIngest"] = "True",
+    ["FFlagDebugDisableTelemetryPoint"] = "True",
+    ["FFlagDebugDisableTelemetryEphemeralCounter"] = "True",
+    ["FFlagDebugDisableTelemetryV2Stat"] = "True",
+    ["FFlagDebugDisableTelemetryV2Counter"] = "True",
+    ["DFStringTelemetryV2Url"] = "null",
+    ["DFStringTelegrafHTTPTransportUrl"] = "null",
+    ["DFStringRobloxAnalyticsURL"] = "null",
+    ["FLogNetwork"] = "7",
+    -- Misc
+    ["DFFlagDebugPauseVoxelizer"] = "True",
+    ["FFlagHandleAltEnterFullscreenManually"] = "False",
+    ["FIntFullscreenTitleBarTriggerDelayMillis"] = "3600000",
+}
+
+local function applyFullOptimized()
+    if not setfflag then
+        API:Notify("setfflag no disponible en este executor")
+        return false
+    end
+    local ok = 0
+    for flag, value in pairs(FULL_OPTIMIZED_FLAGS) do
+        local success = pcall(setfflag, flag, value)
+        if success then ok = ok + 1 end
+    end
+    API:Notify(string.format("Full Optimized aplicado (%d/%d flags)", ok, #FULL_OPTIMIZED_FLAGS))
+    return true
+end
+
+-- ============================================================
+-- FLY
+-- ============================================================
 local function startFly()
     if flyConn then flyConn:Disconnect(); flyConn = nil end
     local char = LocalPlayer.Character
@@ -675,6 +871,9 @@ local function stopFly()
     end
 end
 
+-- ============================================================
+-- UI
+-- ============================================================
 local win = API:CreateWindow("Happy Hub", "Rivals · Keyless · by replicatedman")
 if not win then return end
 
@@ -685,11 +884,11 @@ local playerListTab = win:CreateTab("PlayerList", API.Icons.User   or "rbxasseti
 local miscTab       = win:CreateTab("Misc",       API.Icons.Misc   or "rbxassetid://109962716823639")
 
 local aimbotToggleRef, espToggleRef
-local silentAimRef, matchOnlyRef, fovRef, smoothingRef, maxDistRef
-local wallCheckRef, teamCheckRef, showFovRef, rotateRigRef, targetDropRef
+local silentAimRef, fovRef, smoothingRef, maxDistRef
+local wallCheckRef, teamCheckRef, showFovRef, targetDropRef
 local triggerBotRef, triggerRangeRef, autoFireRef
-local nameTagsRef, tracersRef
-local infJumpRef, noclipRef, godRef, antiAFKRef, flyRef, flySpeedRef
+local nameTagsRef, tracersRef, skeletonRef, healthBarRef
+local infJumpRef, noclipRef, godRef, antiAFKRef, flyRef, flySpeedRef, fullOptimizedRef
 
 win:CreateImageCard(homeTab, {
     Image = "rbxthumb://type=Asset&id=" .. game.PlaceId .. "&w=420&h=420",
@@ -720,12 +919,6 @@ silentAimRef = win:CreateToggle(aimbotTab, "Silent Aim", AimbotSettings.SilentAi
     API:Notify(v and "Silent Aim on" or "Silent Aim off")
 end)
 
-matchOnlyRef = win:CreateToggle(aimbotTab, "Match Only", AimbotSettings.MatchOnly, function(v)
-    AimbotSettings.MatchOnly = v
-    lockedTarget = nil
-    API:Notify(v and "Match filter on" or "Match filter off")
-end)
-
 fovRef = win:CreateSlider(aimbotTab, "FOV", 20, 800, AimbotSettings.FOV, function(v) AimbotSettings.FOV = v end)
 smoothingRef = win:CreateSlider(aimbotTab, "Smoothing", 0.05, 1, AimbotSettings.Smoothing, function(v) AimbotSettings.Smoothing = v end)
 maxDistRef = win:CreateSlider(aimbotTab, "Max Distance", 100, 2000, AimbotSettings.MaxDistance, function(v) AimbotSettings.MaxDistance = v end)
@@ -733,7 +926,6 @@ maxDistRef = win:CreateSlider(aimbotTab, "Max Distance", 100, 2000, AimbotSettin
 wallCheckRef = win:CreateToggle(aimbotTab, "Wall Check", AimbotSettings.WallCheck, function(v) AimbotSettings.WallCheck = v end)
 teamCheckRef = win:CreateToggle(aimbotTab, "Team Check", AimbotSettings.TeamCheck, function(v) AimbotSettings.TeamCheck = v end)
 showFovRef = win:CreateToggle(aimbotTab, "Show FOV Circle", AimbotSettings.ShowFOV, function(v) AimbotSettings.ShowFOV = v end)
-rotateRigRef = win:CreateToggle(aimbotTab, "Rotate Rig", AimbotSettings.RotateRig, function(v) AimbotSettings.RotateRig = v end)
 
 targetDropRef = win:CreateDropdown(aimbotTab, "Target", { "Head", "Torso", "Random" }, "Head", function(sel)
     AimbotSettings.Target = sel
@@ -791,18 +983,28 @@ win:CreateLabel(visualsTab, "Visual Settings")
 
 espToggleRef = win:CreateToggle(visualsTab, "Rivals ESP [O]", VisualSettings.RivalsESP, function(v)
     VisualSettings.RivalsESP = v
-    if v then startRivalsESP() else stopRivalsESP() end
+    refreshESPState()
     API:Notify(v and "ESP enabled" or "ESP disabled")
 end)
 
 nameTagsRef = win:CreateToggle(visualsTab, "Name Tags", VisualSettings.NameTags, function(v)
     VisualSettings.NameTags = v
-    updateNameTagVisibility()
+    refreshESPState()
 end)
 
 tracersRef = win:CreateToggle(visualsTab, "Tracers", VisualSettings.Tracers, function(v)
     VisualSettings.Tracers = v
-    if RivalsESP.active then refreshAllRivalsESP() end
+    refreshESPState()
+end)
+
+skeletonRef = win:CreateToggle(visualsTab, "Skeleton R15", VisualSettings.Skeleton, function(v)
+    VisualSettings.Skeleton = v
+    refreshESPState()
+end)
+
+healthBarRef = win:CreateToggle(visualsTab, "Health Bar", VisualSettings.HealthBar, function(v)
+    VisualSettings.HealthBar = v
+    refreshESPState()
 end)
 
 win:CreateLabel(miscTab, "Movement")
@@ -860,6 +1062,17 @@ antiAFKRef = win:CreateToggle(miscTab, "Anti-AFK", MiscSettings.AntiAFK, functio
     end
 end)
 
+win:CreateLabel(miscTab, "Performance")
+
+fullOptimizedRef = win:CreateToggle(miscTab, "Full Optimized (FFlags)", false, function(v)
+    MiscSettings.FullOptimized = v
+    if v then
+        applyFullOptimized()
+    else
+        API:Notify("Reinicia el cliente para revertir FFlags")
+    end
+end)
+
 UserInputService.JumpRequest:Connect(function()
     if MiscSettings.InfJump then
         local c = LocalPlayer.Character
@@ -870,6 +1083,9 @@ UserInputService.JumpRequest:Connect(function()
     end
 end)
 
+-- ============================================================
+-- PLAYER LIST
+-- ============================================================
 local playerInfoContainer = Instance.new("Frame")
 playerInfoContainer.Name = "PlayerInfoContainer"
 playerInfoContainer.Size = UDim2.new(1, -40, 0, 0)
@@ -980,12 +1196,9 @@ local function updateRow(refs, plr, myHRP)
     elseif isTeammate(plr) then
         refs.badge.Text = "Ally"
         refs.badge.TextColor3 = Color3.fromRGB(60, 160, 255)
-    elseif AimbotSettings.MatchOnly and isActiveFighter(plr) then
+    elseif isActiveFighter(plr) then
         refs.badge.Text = "Enemy"
         refs.badge.TextColor3 = Color3.fromRGB(255, 60, 60)
-    elseif isActiveFighter(plr) then
-        refs.badge.Text = "Queue"
-        refs.badge.TextColor3 = Color3.fromRGB(255, 180, 60)
     else
         refs.badge.Text = "Lobby"
         refs.badge.TextColor3 = Color3.fromRGB(140, 140, 140)
@@ -1019,14 +1232,17 @@ Players.PlayerAdded:Connect(function(plr)
     plr.CharacterAdded:Connect(function()
         task.wait(0.3)
         refreshPlayerList()
-        if RivalsESP.active then refreshAllRivalsESP() end
     end)
     task.wait(0.2)
     refreshPlayerList()
 end)
 
 Players.PlayerRemoving:Connect(function(plr)
-    clearRivalsBox(plr)
+    destroyBox(plr)
+    destroySkeleton(plr)
+    destroyTracer(plr)
+    destroyNameTag(plr)
+    destroyHealthBar(plr)
     task.wait(0.1)
     refreshPlayerList()
 end)
@@ -1036,7 +1252,6 @@ for _, plr in ipairs(Players:GetPlayers()) do
         plr.CharacterAdded:Connect(function()
             task.wait(0.3)
             refreshPlayerList()
-            if RivalsESP.active then refreshAllRivalsESP() end
         end)
     end
 end
@@ -1048,6 +1263,9 @@ task.spawn(function()
     end
 end)
 
+-- ============================================================
+-- KEYBINDS
+-- ============================================================
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if UserInputService:GetFocusedTextBox() then return end
@@ -1084,19 +1302,17 @@ if isMobile then
     })
 end
 
+-- ============================================================
+-- CHARACTER HOOKS
+-- ============================================================
 LocalPlayer.CharacterAdded:Connect(function(char)
     lockedTarget = nil
     rayParams.FilterDescendantsInstances = {}
     silentAimEnabled = AimbotSettings.SilentAim
-
     local hum = char:WaitForChild("Humanoid", 3)
     if hum and AimbotSettings.Enabled then hum.AutoRotate = false end
     task.wait(0.1)
     rebuildRayFilter()
-    if RivalsESP.active then
-        task.wait(0.2)
-        refreshAllRivalsESP()
-    end
     refreshPlayerList()
 end)
 
@@ -1106,51 +1322,34 @@ LocalPlayer.CharacterRemoving:Connect(function()
     stopFly()
 end)
 
+-- ============================================================
+-- RENDER LOOP
+-- ============================================================
 local frameCounter = 0
 
 local function onRenderStep()
     Camera = workspace.CurrentCamera
     if not Camera then return end
-
     frameCounter = frameCounter + 1
     if frameCounter % 5 == 0 then rebuildRayFilter() end
-
     if not LocalPlayer.Character then
         if fovCircle then fovCircle.Visible = false end
         return
     end
-
     local crosshair = getCrosshairPosition()
-
     if fovCircle then
         if AimbotSettings.Enabled and AimbotSettings.ShowFOV then
             fovCircle.Position = crosshair
             fovCircle.Radius = AimbotSettings.FOV
-            fovCircle.Color = Color3.fromRGB(0, 255, 63)
+            fovCircle.Color = Color3.fromRGB(255, 255, 255)
             fovCircle.Visible = true
         else
             fovCircle.Visible = false
         end
     end
-
     if AimbotSettings.Enabled then
         local targetPart = getAimTarget(crosshair)
-        if targetPart then
-            aimViaMouse(targetPart)
-        elseif AimbotSettings.RotateRig then
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local camLook = Camera.CFrame.LookVector
-                local targetYaw = math.atan2(-camLook.X, -camLook.Z)
-                local currentYaw = math.atan2(-hrp.CFrame.LookVector.X, -hrp.CFrame.LookVector.Z)
-                local diff = math.atan2(math.sin(targetYaw - currentYaw), math.cos(targetYaw - currentYaw))
-                local newYaw = currentYaw + diff * 0.4
-                local look = Vector3.new(-math.sin(newYaw), 0, -math.cos(newYaw))
-                local right = Vector3.new(math.cos(newYaw), 0, -math.sin(newYaw))
-                hrp.CFrame = CFrame.fromMatrix(hrp.CFrame.Position, right, Vector3.new(0, 1, 0), -look)
-            end
-        end
+        if targetPart then aimViaMouse(targetPart) end
     else
         lockedTarget = nil
     end
@@ -1158,18 +1357,19 @@ end
 
 RunService:BindToRenderStep("HappyHub", Enum.RenderPriority.Camera.Value + 1, onRenderStep)
 
+-- ============================================================
+-- CONFIG
+-- ============================================================
 win:SetConfigSnapshot(function()
     return {
         AimEnabled   = aimbotToggleRef:GetState(),
         SilentAim    = silentAimRef:GetState(),
-        MatchOnly    = matchOnlyRef:GetState(),
         FOV          = fovRef:GetValue(),
         Smoothing    = smoothingRef:GetValue(),
         MaxDistance  = maxDistRef:GetValue(),
         WallCheck    = wallCheckRef:GetState(),
         TeamCheck    = teamCheckRef:GetState(),
         ShowFOV      = showFovRef:GetState(),
-        RotateRig    = rotateRigRef:GetState(),
         Target       = targetDropRef:GetValue(),
         TriggerBot   = triggerBotRef:GetState(),
         TriggerRange = triggerRangeRef:GetValue(),
@@ -1177,12 +1377,15 @@ win:SetConfigSnapshot(function()
         RivalsESP    = espToggleRef:GetState(),
         NameTags     = nameTagsRef:GetState(),
         Tracers      = tracersRef:GetState(),
+        Skeleton     = skeletonRef:GetState(),
+        HealthBar    = healthBarRef:GetState(),
         InfJump      = infJumpRef:GetState(),
         Noclip       = noclipRef:GetState(),
         God          = godRef:GetState(),
         AntiAFK      = antiAFKRef:GetState(),
         Fly          = flyRef:GetState(),
         FlySpeed     = flySpeedRef:GetValue(),
+        FullOptimized = fullOptimizedRef:GetState(),
         Theme        = API:GetTheme(),
     }
 end)
@@ -1192,14 +1395,12 @@ win:SetConfigApply(function(d)
     if d.Theme then API:SetTheme(d.Theme) end
     if d.AimEnabled   ~= nil and aimbotToggleRef   then aimbotToggleRef:SetState(d.AimEnabled, true) end
     if d.SilentAim    ~= nil and silentAimRef      then silentAimRef:SetState(d.SilentAim, true) end
-    if d.MatchOnly    ~= nil and matchOnlyRef      then matchOnlyRef:SetState(d.MatchOnly, true) end
     if d.FOV          then fovRef:SetValue(d.FOV) end
     if d.Smoothing    then smoothingRef:SetValue(d.Smoothing) end
     if d.MaxDistance  then maxDistRef:SetValue(d.MaxDistance) end
     if d.WallCheck    ~= nil and wallCheckRef      then wallCheckRef:SetState(d.WallCheck, true) end
     if d.TeamCheck    ~= nil and teamCheckRef      then teamCheckRef:SetState(d.TeamCheck, true) end
     if d.ShowFOV      ~= nil and showFovRef        then showFovRef:SetState(d.ShowFOV, true) end
-    if d.RotateRig    ~= nil and rotateRigRef      then rotateRigRef:SetState(d.RotateRig, true) end
     if d.Target       then targetDropRef:SetValue(d.Target) end
     if d.TriggerBot   ~= nil and triggerBotRef     then triggerBotRef:SetState(d.TriggerBot, true) end
     if d.TriggerRange then triggerRangeRef:SetValue(d.TriggerRange) end
@@ -1207,12 +1408,15 @@ win:SetConfigApply(function(d)
     if d.RivalsESP    ~= nil and espToggleRef      then espToggleRef:SetState(d.RivalsESP, true) end
     if d.NameTags     ~= nil and nameTagsRef       then nameTagsRef:SetState(d.NameTags, true) end
     if d.Tracers      ~= nil and tracersRef        then tracersRef:SetState(d.Tracers, true) end
+    if d.Skeleton     ~= nil and skeletonRef       then skeletonRef:SetState(d.Skeleton, true) end
+    if d.HealthBar    ~= nil and healthBarRef      then healthBarRef:SetState(d.HealthBar, true) end
     if d.InfJump      ~= nil and infJumpRef        then infJumpRef:SetState(d.InfJump, true) end
     if d.Noclip       ~= nil and noclipRef         then noclipRef:SetState(d.Noclip, true) end
     if d.God          ~= nil and godRef            then godRef:SetState(d.God, true) end
     if d.AntiAFK      ~= nil and antiAFKRef        then antiAFKRef:SetState(d.AntiAFK, true) end
     if d.Fly          ~= nil and flyRef            then flyRef:SetState(d.Fly, true) end
     if d.FlySpeed     then flySpeedRef:SetValue(d.FlySpeed) end
+    if d.FullOptimized ~= nil and fullOptimizedRef then fullOptimizedRef:SetState(d.FullOptimized, true) end
 end)
 
 win:BuildConfigPage()
