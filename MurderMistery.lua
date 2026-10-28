@@ -213,19 +213,19 @@ local MURDERER_TTL = 0.4
 local FARM_GOAL = 50
 local FARM_TOUCH_RADIUS = 25
 local FARM_ARRIVE_DIST = 5
-local FARM_FLY_SPEED = 20
+local FARM_FLY_SPEED = 21
 local FARM_DANGER_DIST = 20
 local FARM_GROUND_OFFSET = -1.5
 local FARM_STALL_TIMEOUT = 15
 local FARM_TOUCH_COOLDOWN = 0.28
 local FARM_FALLBACK_TIMEOUT = 14
 local FARM_FALLBACK_COOLDOWN = 3.5
-local FARM_STUCK_TIME = 1.6
+local FARM_STUCK_TIME = 3.0
 local FARM_STUCK_DIST = 2.5
 local FARM_SLOW_RADIUS = 15
 local FARM_SLOW_AMOUNT = 3
 local FARM_COLLECT_SPEED_RESET_TIME = 0.5
-local FARM_MAX_CONSECUTIVE_SKIPS = 3
+local FARM_MAX_CONSECUTIVE_SKIPS = 5
 
 local KNIFE_DODGE_MIN_DIST = 12
 local KNIFE_DODGE_OFFSET = 20
@@ -299,6 +299,12 @@ end
 local function getHumanoid()
     local c = LocalPlayer.Character
     return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+local function isCoinValid(coin)
+    if not coin or not coin.Parent then return false end
+    if coin:GetAttribute("Collected") then return false end
+    return coin:FindFirstChildWhichIsA("TouchTransmitter") ~= nil
 end
 
 local function tryDodgeKnife(p1, p2)
@@ -2093,7 +2099,7 @@ local function computeFarmPath(coins, hrpPos)
     if not hrpPos then return {} end
     local remaining = {}
     for _, c in ipairs(coins) do
-        if c and c.Parent then
+        if isCoinValid(c) then
             table.insert(remaining, c)
         end
     end
@@ -2291,7 +2297,7 @@ local function startCoinCollector()
 
         while S.farmPathIndex <= #S.farmPath do
             local c = S.farmPath[S.farmPathIndex]
-            if not c or not c.Parent then
+            if not isCoinValid(c) then
                 S.farmPathIndex = S.farmPathIndex + 1
             else
                 break
@@ -2362,18 +2368,20 @@ local function startCoinCollector()
             S.farmLastFallbackAt = now
             local tpCoin = nil
             local tpIdx = S.farmPathIndex
+            
             while tpIdx <= #S.farmPath do
                 local c = S.farmPath[tpIdx]
-                if c and c.Parent then
+                if isCoinValid(c) then
                     tpCoin = c
                     break
                 end
                 tpIdx = tpIdx + 1
             end
+            
             if not tpCoin then
                 local bestDist = math.huge
                 for _, c in ipairs(coins) do
-                    if c and c.Parent and (not mHRP or (c.Position - mHRP.Position).Magnitude > 25) then
+                    if isCoinValid(c) and (not mHRP or (c.Position - mHRP.Position).Magnitude > 25) then
                         local d = (c.Position - hrp.Position).Magnitude
                         if d < bestDist then
                             bestDist = d
@@ -2382,6 +2390,7 @@ local function startCoinCollector()
                     end
                 end
             end
+            
             if tpCoin then
                 S.farmPathIndex = tpIdx
                 local usedRemote = fireTeleportToPart(hrp, tpCoin)
