@@ -216,7 +216,6 @@ local FARM_ARRIVE_DIST = 5
 local FARM_FLY_SPEED = 21
 local FARM_DANGER_DIST = 20
 local FARM_GROUND_OFFSET = -1.5
-local FARM_STALL_TIMEOUT = 15
 local FARM_TOUCH_COOLDOWN = 0.28
 local FARM_FALLBACK_TIMEOUT = 14
 local FARM_FALLBACK_COOLDOWN = 3.5
@@ -225,7 +224,6 @@ local FARM_STUCK_DIST = 2.5
 local FARM_SLOW_RADIUS = 15
 local FARM_SLOW_AMOUNT = 3
 local FARM_COLLECT_SPEED_RESET_TIME = 0.5
-local FARM_MAX_CONSECUTIVE_SKIPS = 5
 
 local KNIFE_DODGE_MIN_DIST = 12
 local KNIFE_DODGE_OFFSET = 20
@@ -277,15 +275,9 @@ local S = {
     farmLastCollectAt = 0,
     farmStartedAt = 0,
     farmLastFallbackAt = 0,
-    farmLastPos = nil,
-    farmLastPosTime = 0,
-    farmPath = {},
-    farmPathIndex = 1,
-    farmPathValid = false,
     farmStuckPos = nil,
     farmStuckAt = 0,
     farmLastCollectSpeedAt = 0,
-    farmConsecutiveSkips = 0,
     lastGyroUpdate = 0,
     lastKnifeDodge = 0,
 }
@@ -356,7 +348,7 @@ local function tryDodgeKnife(p1, p2)
 
     if S.coinCollecting then
         if S.farmWalkBV then S.farmWalkBV.Velocity = Vector3.zero end
-        S.farmPathIndex = S.farmPathIndex + 1
+        S.farmTargetCoin = nil
         S.farmStuckPos = nil
         S.farmStuckAt = 0
     end
@@ -2094,34 +2086,6 @@ local function getAllCoins()
     return coins
 end
 
-local function computeFarmPath(coins, hrpPos)
-    if not coins or #coins == 0 then return {} end
-    if not hrpPos then return {} end
-    local remaining = {}
-    for _, c in ipairs(coins) do
-        if isCoinValid(c) then
-            table.insert(remaining, c)
-        end
-    end
-    local path = {}
-    local currentPos = hrpPos
-    while #remaining > 0 do
-        local bestIdx, bestDist = 1, math.huge
-        for i, c in ipairs(remaining) do
-            local d = (c.Position - currentPos).Magnitude
-            if d < bestDist then
-                bestDist = d
-                bestIdx = i
-            end
-        end
-        local c = remaining[bestIdx]
-        table.insert(path, c)
-        currentPos = c.Position
-        table.remove(remaining, bestIdx)
-    end
-    return path
-end
-
 local function attachFarmGyro()
     local hrp = getHRP()
     if not hrp then return end
@@ -2174,15 +2138,9 @@ local function stopCoinCollector()
     S.farmLastCollectAt = 0
     S.farmStartedAt = 0
     S.farmLastFallbackAt = 0
-    S.farmLastPos = nil
-    S.farmLastPosTime = 0
-    S.farmPath = {}
-    S.farmPathIndex = 1
-    S.farmPathValid = false
     S.farmStuckPos = nil
     S.farmStuckAt = 0
     S.farmLastCollectSpeedAt = 0
-    S.farmConsecutiveSkips = 0
     S.lastGyroUpdate = 0
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     stopMiniBoxAnimation()
@@ -2205,16 +2163,10 @@ local function startCoinCollector()
     S.farmStartedAt = tick()
     S.farmLastCollectAt = tick()
     S.farmLastFallbackAt = tick()
-    S.farmLastPos = nil
-    S.farmLastPosTime = 0
-    S.farmPath = {}
-    S.farmPathIndex = 1
-    S.farmPathValid = false
     S.farmStuckPos = nil
     S.farmStuckAt = 0
     S.farmLastCollectSpeedAt = 0
-    S.farmConsecutiveSkips = 0
-    if S.coinStatusSetter then S.coinStatusSetter("Computing path...") end
+    if S.coinStatusSetter then S.coinStatusSetter("Searching target...") end
     playMiniBoxAnimation()
     ensureFarmHelpers()
     ensureFarmNoclip()
@@ -2235,10 +2187,12 @@ local function startCoinCollector()
         if not hrp then return end
 
         local now = tick()
+        local myPos = hrp.Position
+        local coins = getAllCoins()
 
         if S.coinGyro and S.coinGyro.Parent then
             if now - S.lastGyroUpdate > 0.15 then
-                S.coinGyro.CFrame = CFrame.new(hrp.Position)
+                S.coinGyro.CFrame = CFrame.new(myPos)
                 S.lastGyroUpdate = now
             end
         elseif not S.coinGyro then
@@ -2249,9 +2203,6 @@ local function startCoinCollector()
             ensureFarmBodyMovers()
             if not S.farmWalkBV then return end
         end
-
-        local myPos = hrp.Position
-        local coins = getAllCoins()
 
         for _, coin in ipairs(coins) do
             if coin and coin.Parent then
@@ -2287,59 +2238,54 @@ local function startCoinCollector()
             return
         end
 
-        if not S.farmPathValid or #S.farmPath == 0 then
-            S.farmPath = computeFarmPath(coins, myPos)
-            S.farmPathIndex = 1
-            S.farmPathValid = true
+        if not S.farmTargetCoin or not S.farmTargetCoin.Parent or not isCoinValid(S.farmTargetCoin) then
+            S.farmTargetCoin = nil
+            local bestCoin, bestDist = nil, math.huge
+            for _, coin in ipairs(coins) do
+                if isCoinValid(coin) then
+                    local d = (coin.Position - myPos).Magnitude
+                    if d < bestDist then
+                        bestDist = d
+                        bestCoin = coin
+                    end
+                end
+            end
+            S.farmTargetCoin = bestCoin
             S.farmStuckPos = nil
             S.farmStuckAt = 0
         end
 
-        while S.farmPathIndex <= #S.farmPath do
-            local c = S.farmPath[S.farmPathIndex]
-            if not isCoinValid(c) then
-                S.farmPathIndex = S.farmPathIndex + 1
-            else
-                break
-            end
-        end
-
-        if S.farmPathIndex > #S.farmPath then
-            if #coins == 0 then
-                S.farmWalkBV.Velocity = Vector3.zero
-                if S.coinStatusSetter then S.coinStatusSetter("No coins · waiting") end
-                return
-            end
-            S.farmPathValid = false
+        local target = S.farmTargetCoin
+        if not target then
+            S.farmWalkBV.Velocity = Vector3.zero
+            if S.coinStatusSetter then S.coinStatusSetter("No valid coins") end
             return
         end
 
-        local target = S.farmPath[S.farmPathIndex]
         local distToTarget = (target.Position - myPos).Magnitude
-
+        
         if distToTarget < FARM_ARRIVE_DIST then
-            S.farmPathIndex = S.farmPathIndex + 1
-            S.farmStuckPos = nil
-            S.farmStuckAt = 0
-            return
-        end
-
-        local targetPos = target.Position + Vector3.new(0, FARM_GROUND_OFFSET, 0)
-        local delta = targetPos - myPos
-        local horiz = Vector3.new(delta.X, 0, delta.Z)
-        local hDist = horiz.Magnitude
-
-        local baseSpeed = FARM_FLY_SPEED
-        local justCollected = (now - S.farmLastCollectSpeedAt) < FARM_COLLECT_SPEED_RESET_TIME
-        if not justCollected and distToTarget < FARM_SLOW_RADIUS then
-            baseSpeed = math.max(1, FARM_FLY_SPEED - FARM_SLOW_AMOUNT)
-        end
-
-        if hDist > 0.5 then
-            local speed = math.min(baseSpeed, hDist * 5)
-            S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+            local targetPos = target.Position + Vector3.new(0, FARM_GROUND_OFFSET, 0)
+            local delta = targetPos - myPos
+            S.farmWalkBV.Velocity = Vector3.new(delta.X, delta.Y, delta.Z) * 5
         else
-            S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+            local targetPos = target.Position + Vector3.new(0, FARM_GROUND_OFFSET, 0)
+            local delta = targetPos - myPos
+            local horiz = Vector3.new(delta.X, 0, delta.Z)
+            local hDist = horiz.Magnitude
+
+            local baseSpeed = FARM_FLY_SPEED
+            local justCollected = (now - S.farmLastCollectSpeedAt) < FARM_COLLECT_SPEED_RESET_TIME
+            if not justCollected and distToTarget < FARM_SLOW_RADIUS then
+                baseSpeed = math.max(1, FARM_FLY_SPEED - FARM_SLOW_AMOUNT)
+            end
+
+            if hDist > 0.5 then
+                local speed = math.min(baseSpeed, hDist * 5)
+                S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+            else
+                S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+            end
         end
 
         if not S.farmStuckPos then
@@ -2349,16 +2295,10 @@ local function startCoinCollector()
             S.farmStuckPos = myPos
             S.farmStuckAt = now
         elseif now - S.farmStuckAt > FARM_STUCK_TIME then
-            S.farmPathIndex = S.farmPathIndex + 1
+            S.farmTargetCoin = nil
             S.farmStuckPos = nil
             S.farmStuckAt = 0
-            S.farmConsecutiveSkips = S.farmConsecutiveSkips + 1
-            if S.farmConsecutiveSkips >= FARM_MAX_CONSECUTIVE_SKIPS then
-                S.farmLastFallbackAt = 0
-            end
-            if S.coinStatusSetter then
-                S.coinStatusSetter("Skip " .. S.farmConsecutiveSkips .. "/" .. FARM_MAX_CONSECUTIVE_SKIPS)
-            end
+            if S.coinStatusSetter then S.coinStatusSetter("Unsticking · finding new target") end
         end
 
         local timeSinceCollect = now - math.max(S.farmStartedAt, S.lastCollectTime)
@@ -2367,32 +2307,20 @@ local function startCoinCollector()
             and (not mHRP or distToMurderer > 25) then
             S.farmLastFallbackAt = now
             local tpCoin = nil
-            local tpIdx = S.farmPathIndex
+            local bestDist = math.huge
             
-            while tpIdx <= #S.farmPath do
-                local c = S.farmPath[tpIdx]
-                if isCoinValid(c) then
-                    tpCoin = c
-                    break
-                end
-                tpIdx = tpIdx + 1
-            end
-            
-            if not tpCoin then
-                local bestDist = math.huge
-                for _, c in ipairs(coins) do
-                    if isCoinValid(c) and (not mHRP or (c.Position - mHRP.Position).Magnitude > 25) then
-                        local d = (c.Position - hrp.Position).Magnitude
-                        if d < bestDist then
-                            bestDist = d
-                            tpCoin = c
-                        end
+            for _, c in ipairs(coins) do
+                if isCoinValid(c) and (not mHRP or (c.Position - mHRP.Position).Magnitude > 25) then
+                    local d = (c.Position - hrp.Position).Magnitude
+                    if d < bestDist then
+                        bestDist = d
+                        tpCoin = c
                     end
                 end
             end
             
             if tpCoin then
-                S.farmPathIndex = tpIdx
+                S.farmTargetCoin = tpCoin
                 local usedRemote = fireTeleportToPart(hrp, tpCoin)
                 if not usedRemote then
                     local d = (tpCoin.Position - hrp.Position).Magnitude
@@ -2402,13 +2330,12 @@ local function startCoinCollector()
                 end
                 S.farmStuckPos = nil
                 S.farmStuckAt = 0
-                S.farmConsecutiveSkips = 0
-                if S.coinStatusSetter then S.coinStatusSetter("Fallback → target " .. tpIdx) end
+                if S.coinStatusSetter then S.coinStatusSetter("Fallback TP") end
             end
         end
 
         if S.coinStatusSetter then
-            S.coinStatusSetter("Path " .. S.farmPathIndex .. "/" .. #S.farmPath)
+            S.coinStatusSetter("Moving to target · " .. #coins .. " coins")
         end
     end)
 end
@@ -3612,15 +3539,9 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.farmLastCollectAt = 0
     S.farmStartedAt = 0
     S.farmLastFallbackAt = 0
-    S.farmLastPos = nil
-    S.farmLastPosTime = 0
-    S.farmPath = {}
-    S.farmPathIndex = 1
-    S.farmPathValid = false
     S.farmStuckPos = nil
     S.farmStuckAt = 0
     S.farmLastCollectSpeedAt = 0
-    S.farmConsecutiveSkips = 0
     S.lastGyroUpdate = 0
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
@@ -3688,8 +3609,7 @@ if coinsStartedEvent then
             end
         end
         S.totalCoins = 0
-        S.farmPathValid = false
-        S.farmConsecutiveSkips = 0
+        S.farmTargetCoin = nil
         S.farmLastCollectSpeedAt = 0
         if S.coinCountSetter then S.coinCountSetter(0) end
         S.roundActive = true
@@ -3705,7 +3625,12 @@ if coinCollectedEvent then
         S.lastCollectTime = tick()
         S.farmLastCollectAt = tick()
         S.farmLastCollectSpeedAt = tick()
-        S.farmConsecutiveSkips = 0
+        
+        -- Only change target when a coin is collected
+        S.farmTargetCoin = nil
+        S.farmStuckPos = nil
+        S.farmStuckAt = 0
+
         if type(bagName) == "string" and type(currentCoins) == "number" then
             S.bagProgress[bagName] = currentCoins
         end
@@ -3723,8 +3648,7 @@ if roundStartEvent then
     roundStartEvent.OnClientEvent:Connect(function()
         S.bagProgress = {}
         S.totalCoins = 0
-        S.farmPathValid = false
-        S.farmConsecutiveSkips = 0
+        S.farmTargetCoin = nil
         S.farmLastCollectSpeedAt = 0
         S.roundActive = true
         if S.coinCountSetter then S.coinCountSetter(0) end
