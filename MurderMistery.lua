@@ -186,7 +186,7 @@ local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP
 local MiscSettings = {
     InfJump = false, AntiAFK = false, AutoTpGun = false,
     SilentAim = false, MusicCompanion = false, AntiVoid = false,
-    KnifeDodge = true,
+    KnifeDodge = true, AntiFocus = true,
     SelectedMusic = "Companion",
 }
 local MovementSettings = {
@@ -195,7 +195,7 @@ local MovementSettings = {
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
-local FarmSettings = { AutoFarm = false, CoinCooldown = 1.5, UltraOpt = true }
+local FarmSettings = { AutoFarm = false, CoinCooldown = 1.5, UltraOpt = true, AutoReroll = true }
 
 local BEAM_CLEAR = Color3.fromRGB(0, 255, 100)
 local BEAM_WALL  = Color3.fromRGB(255, 50, 50)
@@ -217,13 +217,19 @@ local FARM_FLY_SPEED = 21
 local FARM_DANGER_DIST = 20
 local FARM_GROUND_OFFSET = -1.5
 local FARM_TOUCH_COOLDOWN = 0.28
-local FARM_FALLBACK_TIMEOUT = 6
+local FARM_FALLBACK_TIMEOUT = 14
 local FARM_FALLBACK_COOLDOWN = 3.5
 local FARM_STUCK_TIME = 3.0
 local FARM_STUCK_DIST = 2.5
 local FARM_SLOW_RADIUS = 15
 local FARM_SLOW_AMOUNT = 3
 local FARM_COLLECT_SPEED_RESET_TIME = 0.5
+local FARM_BLACKLIST_TIME = 5
+local FARM_TARGET_TIMEOUT = 8
+
+local AUTO_KILL_COOLDOWN = 2
+local ANTI_FOCUS_RADIUS = 45
+local ANTI_FOCUS_DURATION = 5
 
 local KNIFE_DODGE_MIN_DIST = 12
 local KNIFE_DODGE_OFFSET = 20
@@ -271,6 +277,7 @@ local S = {
     savedFarmStates = nil,
     farmTargetCoin = nil,
     farmTouchedCoins = {},
+    farmBlacklist = {},
     farmWalkBV = nil,
     farmLastCollectAt = 0,
     farmStartedAt = 0,
@@ -278,8 +285,12 @@ local S = {
     farmStuckPos = nil,
     farmStuckAt = 0,
     farmLastCollectSpeedAt = 0,
+    farmTargetStartedAt = 0,
     lastGyroUpdate = 0,
     lastKnifeDodge = 0,
+    fadeReceivedAt = 0,
+    roundStartedAt = 0,
+    rerolling = false,
 }
 
 local UI = {}
@@ -293,10 +304,30 @@ local function getHumanoid()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
 
+local function markRoundStarted()
+    if S.roundStartedAt == 0 or (tick() - S.roundStartedAt) > 15 then
+        S.roundStartedAt = tick()
+    end
+end
+
 local function isCoinValid(coin)
     if not coin or not coin.Parent then return false end
     if coin:GetAttribute("Collected") then return false end
     return coin:FindFirstChildWhichIsA("TouchTransmitter") ~= nil
+end
+
+local function isCoinBlacklisted(coin)
+    local t = S.farmBlacklist[coin]
+    if not t then return false end
+    if tick() - t > FARM_BLACKLIST_TIME then
+        S.farmBlacklist[coin] = nil
+        return false
+    end
+    return true
+end
+
+local function blacklistCoin(coin)
+    if coin then S.farmBlacklist[coin] = tick() end
 end
 
 local function tryDodgeKnife(p1, p2)
@@ -1748,6 +1779,7 @@ local function hookFadeEvent()
     local ev = getFadeEvent()
     if not ev then return end
     S.fadeConn = ev.OnClientEvent:Connect(function(...)
+        S.fadeReceivedAt = tick()
         updateRoleCache(...)
     end)
 end
@@ -2135,12 +2167,14 @@ local function stopCoinCollector()
     disableUltraOptimization()
     S.farmTargetCoin = nil
     S.farmTouchedCoins = {}
+    S.farmBlacklist = {}
     S.farmLastCollectAt = 0
     S.farmStartedAt = 0
     S.farmLastFallbackAt = 0
     S.farmStuckPos = nil
     S.farmStuckAt = 0
     S.farmLastCollectSpeedAt = 0
+    S.farmTargetStartedAt = 0
     S.lastGyroUpdate = 0
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     stopMiniBoxAnimation()
@@ -2153,6 +2187,7 @@ end
 
 local function startCoinCollector()
     if S.coinCollecting then return end
+    if isLocalMurderer() then return end
     if S.totalCoins >= FARM_GOAL then return end
     if not getCoinContainer() then return end
     if not getHRP() then return end
@@ -2160,12 +2195,14 @@ local function startCoinCollector()
     S.coinCollecting = true
     S.farmTargetCoin = nil
     S.farmTouchedCoins = {}
+    S.farmBlacklist = {}
     S.farmStartedAt = tick()
     S.farmLastCollectAt = tick()
     S.farmLastFallbackAt = tick()
     S.farmStuckPos = nil
     S.farmStuckAt = 0
     S.farmLastCollectSpeedAt = 0
+    S.farmTargetStartedAt = 0
     if S.coinStatusSetter then S.coinStatusSetter("Searching target...") end
     playMiniBoxAnimation()
     ensureFarmHelpers()
@@ -2177,9 +2214,26 @@ local function startCoinCollector()
     S.coinConnection = RunService.Heartbeat:Connect(function()
         if not S.coinCollecting then return end
         if not S.roundActive then stopCoinCollector() return end
+        if isLocalMurderer() then
+            if S.farmWalkBV then S.farmWalkBV.Velocity = Vector3.zero end
+            if S.coinStatusSetter then S.coinStatusSetter("Murderer · not farming") end
+            return
+        end
         if S.totalCoins >= FARM_GOAL then
             if S.coinStatusSetter then S.coinStatusSetter("Goal reached") end
             stopCoinCollector()
+            if FarmSettings.AutoReroll and not S.rerolling then
+                if not isLocalMurderer() and not isLocalSheriffOrHero() then
+                    S.rerolling = true
+                    task.delay(0.5, function()
+                        local hum = getHumanoid()
+                        if hum and hum.Health > 0 then
+                            hum.Health = 0
+                        end
+                        task.delay(3, function() S.rerolling = false end)
+                    end)
+                end
+            end
             return
         end
 
@@ -2224,25 +2278,42 @@ local function startCoinCollector()
         for coin, t in pairs(S.farmTouchedCoins) do
             if now - t > 5 or not coin.Parent then S.farmTouchedCoins[coin] = nil end
         end
+        for coin, t in pairs(S.farmBlacklist) do
+            if now - t > FARM_BLACKLIST_TIME + 2 or not coin.Parent then
+                S.farmBlacklist[coin] = nil
+            end
+        end
 
         local murderer = getMurdererCached()
         local mHRP = murderer and murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
         local distToMurderer = mHRP and (myPos - mHRP.Position).Magnitude or math.huge
 
-        if mHRP and distToMurderer < FARM_DANGER_DIST then
+        local antiFocusActive = MiscSettings.AntiFocus and (now - S.fadeReceivedAt) < ANTI_FOCUS_DURATION
+        local effectiveDanger = antiFocusActive and ANTI_FOCUS_RADIUS or FARM_DANGER_DIST
+        if mHRP and distToMurderer < effectiveDanger then
             local awayDir = Vector3.new(myPos.X - mHRP.Position.X, 0, myPos.Z - mHRP.Position.Z)
             if awayDir.Magnitude < 0.1 then awayDir = Vector3.new(1, 0, 0) end
             awayDir = awayDir.Unit
-            S.farmWalkBV.Velocity = awayDir * FARM_FLY_SPEED * 2 + Vector3.new(0, 4, 0)
-            if S.coinStatusSetter then S.coinStatusSetter("DANGER · evading") end
+            local speedMul = antiFocusActive and 2.5 or 2
+            S.farmWalkBV.Velocity = awayDir * FARM_FLY_SPEED * speedMul + Vector3.new(0, 4, 0)
+            if S.coinStatusSetter then
+                S.coinStatusSetter(antiFocusActive and "ANTI-FOCUS · evading" or "DANGER · evading")
+            end
             return
+        end
+
+        if S.farmTargetCoin and (now - S.farmTargetStartedAt) > FARM_TARGET_TIMEOUT then
+            blacklistCoin(S.farmTargetCoin)
+            S.farmTargetCoin = nil
+            S.farmTargetStartedAt = 0
+            if S.coinStatusSetter then S.coinStatusSetter("Target timeout · new route") end
         end
 
         if not S.farmTargetCoin or not S.farmTargetCoin.Parent or not isCoinValid(S.farmTargetCoin) then
             S.farmTargetCoin = nil
             local bestCoin, bestDist = nil, math.huge
             for _, coin in ipairs(coins) do
-                if isCoinValid(coin) then
+                if isCoinValid(coin) and not isCoinBlacklisted(coin) then
                     local d = (coin.Position - myPos).Magnitude
                     if d < bestDist then
                         bestDist = d
@@ -2250,7 +2321,19 @@ local function startCoinCollector()
                     end
                 end
             end
+            if not bestCoin then
+                for _, coin in ipairs(coins) do
+                    if isCoinValid(coin) then
+                        local d = (coin.Position - myPos).Magnitude
+                        if d < bestDist then
+                            bestDist = d
+                            bestCoin = coin
+                        end
+                    end
+                end
+            end
             S.farmTargetCoin = bestCoin
+            S.farmTargetStartedAt = tick()
             S.farmStuckPos = nil
             S.farmStuckAt = 0
         end
@@ -2258,12 +2341,12 @@ local function startCoinCollector()
         local target = S.farmTargetCoin
         if not target then
             S.farmWalkBV.Velocity = Vector3.zero
-            if S.coinStatusSetter then S.coinStatusSetter("No valid coins") end
+            if S.coinStatusSetter then S.coinStatusSetter("No valid coins · waiting") end
             return
         end
 
         local distToTarget = (target.Position - myPos).Magnitude
-        
+
         if distToTarget < FARM_ARRIVE_DIST then
             local targetPos = target.Position + Vector3.new(0, FARM_GROUND_OFFSET, 0)
             local delta = targetPos - myPos
@@ -2295,9 +2378,11 @@ local function startCoinCollector()
             S.farmStuckPos = myPos
             S.farmStuckAt = now
         elseif now - S.farmStuckAt > FARM_STUCK_TIME then
+            blacklistCoin(S.farmTargetCoin)
             S.farmTargetCoin = nil
             S.farmStuckPos = nil
             S.farmStuckAt = 0
+            S.farmTargetStartedAt = 0
             if S.coinStatusSetter then S.coinStatusSetter("Unsticking · finding new target") end
         end
 
@@ -2308,7 +2393,7 @@ local function startCoinCollector()
             S.farmLastFallbackAt = now
             local tpCoin = nil
             local bestDist = math.huge
-            
+
             for _, c in ipairs(coins) do
                 if isCoinValid(c) and (not mHRP or (c.Position - mHRP.Position).Magnitude > 25) then
                     local d = (c.Position - hrp.Position).Magnitude
@@ -2318,9 +2403,10 @@ local function startCoinCollector()
                     end
                 end
             end
-            
+
             if tpCoin then
                 S.farmTargetCoin = tpCoin
+                S.farmTargetStartedAt = tick()
                 local usedRemote = fireTeleportToPart(hrp, tpCoin)
                 if not usedRemote then
                     local d = (tpCoin.Position - hrp.Position).Magnitude
@@ -2344,6 +2430,7 @@ local function shouldWaitForCoins()
     if not FarmSettings.AutoFarm then return false end
     if not S.roundActive then return false end
     if S.totalCoins >= FARM_GOAL then return false end
+    if isLocalMurderer() then return false end
     return true
 end
 
@@ -3295,6 +3382,7 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill", false, function(v)
             if not AimbotSettings.AutoKillMurderer then return end
             if not isLocalSheriffOrHero() then return end
             if shouldWaitForCoins() then return end
+            if tick() - S.roundStartedAt < AUTO_KILL_COOLDOWN then return end
             local murderer = getMurdererCached()
             if not isTargetSafe(murderer) then return end
             local now = tick()
@@ -3351,6 +3439,10 @@ end
 window:CreateButton(aimbotTab, "Kill Everyone", function()
     if not isLocalMurderer() then notify("You are not the Murderer") return end
     if S.killAllRunning then notify("Already running") return end
+    if tick() - S.roundStartedAt < AUTO_KILL_COOLDOWN then
+        notify("Wait " .. string.format("%.1f", AUTO_KILL_COOLDOWN - (tick() - S.roundStartedAt)) .. "s", 2)
+        return
+    end
     S.killAllRunning = true
     notify("Killing everyone")
 
@@ -3371,7 +3463,7 @@ UI.autoKillAllRef = window:CreateToggle(aimbotTab, "Auto Kill All", false, funct
         if S.killAllTask then return end
         S.killAllTask = task.spawn(function()
             while S.autoKillAll do
-                if isLocalMurderer() then
+                if S.roundActive and isLocalMurderer() and tick() - S.roundStartedAt >= AUTO_KILL_COOLDOWN then
                     if not shouldWaitForCoins() then
                         serverKillAllTick()
                     end
@@ -3532,9 +3624,10 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.spectateDefaultSubject = nil
     S.lastCollectTime = 0
     S.lastCamUpdate = 0
-    S.autoKillAll = false
+    S.autoKillAll = S.autoKillAll or false
     S.farmTargetCoin = nil
     S.farmTouchedCoins = {}
+    S.farmBlacklist = {}
     S.farmWalkBV = nil
     S.farmLastCollectAt = 0
     S.farmStartedAt = 0
@@ -3542,7 +3635,9 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.farmStuckPos = nil
     S.farmStuckAt = 0
     S.farmLastCollectSpeedAt = 0
+    S.farmTargetStartedAt = 0
     S.lastGyroUpdate = 0
+    S.rerolling = false
     if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
     if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
     if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
@@ -3578,7 +3673,12 @@ UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
 end)
 registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
 
-window:CreateParagraph(farmTab, "Linear path · slow near coin · auto-evades murderer · knife dodge · fallback TP")
+UI.autoRerollRef = window:CreateToggle(farmTab, "Auto Reroll", true, function(v)
+    FarmSettings.AutoReroll = v
+end)
+registerControl(FarmSettings, "AutoReroll", UI.autoRerollRef)
+
+window:CreateParagraph(farmTab, "Linear path · slow near coin · anti-focus on fade · blacklist when stuck · reroll if no weapon")
 
 window:CreateLabel(farmTab, "Stats")
 local coinCountFrame = window:CreateParagraph(farmTab, "0")
@@ -3602,6 +3702,7 @@ local roundStartEvent = gameplay and gameplay:FindFirstChild("RoundStart")
 
 if coinsStartedEvent then
     coinsStartedEvent.OnClientEvent:Connect(function(data)
+        markRoundStarted()
         S.bagProgress = {}
         if type(data) == "table" and data.Coin then
             if data.Coin.CollectionLimit then
@@ -3610,12 +3711,13 @@ if coinsStartedEvent then
         end
         S.totalCoins = 0
         S.farmTargetCoin = nil
+        S.farmBlacklist = {}
         S.farmLastCollectSpeedAt = 0
         if S.coinCountSetter then S.coinCountSetter(0) end
         S.roundActive = true
         if FarmSettings.AutoFarm then
             ensureFarmNoclip()
-            if not S.coinCollecting then startCoinCollector() end
+            if not S.coinCollecting and not isLocalMurderer() then startCoinCollector() end
         end
     end)
 end
@@ -3625,9 +3727,9 @@ if coinCollectedEvent then
         S.lastCollectTime = tick()
         S.farmLastCollectAt = tick()
         S.farmLastCollectSpeedAt = tick()
-        
-        -- Only change target when a coin is collected
+
         S.farmTargetCoin = nil
+        S.farmTargetStartedAt = 0
         S.farmStuckPos = nil
         S.farmStuckAt = 0
 
@@ -3646,10 +3748,13 @@ end
 
 if roundStartEvent then
     roundStartEvent.OnClientEvent:Connect(function()
+        markRoundStarted()
         S.bagProgress = {}
         S.totalCoins = 0
         S.farmTargetCoin = nil
+        S.farmBlacklist = {}
         S.farmLastCollectSpeedAt = 0
+        S.rerolling = false
         S.roundActive = true
         if S.coinCountSetter then S.coinCountSetter(0) end
         task.wait(0.1)
@@ -3661,7 +3766,7 @@ if roundStartEvent then
         if FarmSettings.AutoFarm then
             ensureFarmNoclip()
             task.wait(0.5)
-            if not S.coinCollecting then startCoinCollector() end
+            if not S.coinCollecting and not isLocalMurderer() then startCoinCollector() end
         end
         task.wait(0.3)
         reapplyActiveFeatures()
@@ -3671,7 +3776,10 @@ end
 if roundEndFadeEvent then
     roundEndFadeEvent.OnClientEvent:Connect(function()
         S.roundActive = false
+        S.roundStartedAt = 0
+        S.fadeReceivedAt = 0
         S.roleCache = {}
+        S.rerolling = false
         stopCoinCollector()
         onRoundEnd()
         if FarmSettings.AutoFarm then
@@ -3687,7 +3795,7 @@ end
 trackThread(task.spawn(function()
     while true do
         task.wait(0.5)
-        if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting and S.totalCoins < FARM_GOAL then
+        if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting and S.totalCoins < FARM_GOAL and not isLocalMurderer() then
             startCoinCollector()
         end
     end
@@ -3734,6 +3842,12 @@ UI.knifeDodgeRef = window:CreateToggle(miscTab, "Dodge Thrown Knives", true, fun
     end
 end)
 registerControl(MiscSettings, "KnifeDodge", UI.knifeDodgeRef)
+
+window:CreateLabel(miscTab, "Anti Focus")
+UI.antiFocusRef = window:CreateToggle(miscTab, "Anti Focus (fade)", true, function(v)
+    MiscSettings.AntiFocus = v
+end)
+registerControl(MiscSettings, "AntiFocus", UI.antiFocusRef)
 
 setupKnifeDodgeHook()
 
@@ -3966,6 +4080,7 @@ function snapshotSettings()
             SilentAim      = MiscSettings.SilentAim,
             MusicCompanion = MiscSettings.MusicCompanion,
             KnifeDodge     = MiscSettings.KnifeDodge,
+            AntiFocus      = MiscSettings.AntiFocus,
             SelectedMusic  = MiscSettings.SelectedMusic,
         },
         Movement = {
@@ -3987,7 +4102,8 @@ function snapshotSettings()
             AnimPack  = AvatarSettings.AnimPack,
         },
         Farm = {
-            AutoFarm = FarmSettings.AutoFarm,
+            AutoFarm   = FarmSettings.AutoFarm,
+            AutoReroll = FarmSettings.AutoReroll,
         },
         AntiVoid = {
             Threshold = AntiVoidSettings.Threshold,
@@ -4014,8 +4130,9 @@ function applyConfig(data)
     if data.Avatar then
         for k, v in pairs(data.Avatar) do AvatarSettings[k] = v end
     end
-    if data.Farm and data.Farm.AutoFarm ~= nil then
-        FarmSettings.AutoFarm = data.Farm.AutoFarm
+    if data.Farm then
+        if data.Farm.AutoFarm ~= nil then FarmSettings.AutoFarm = data.Farm.AutoFarm end
+        if data.Farm.AutoReroll ~= nil then FarmSettings.AutoReroll = data.Farm.AutoReroll end
     end
     if data.AntiVoid then
         for k, v in pairs(data.AntiVoid) do AntiVoidSettings[k] = v end
@@ -4038,7 +4155,7 @@ function applyConfig(data)
     if FarmSettings.AutoFarm then
         ensureFarmHelpers()
         ensureFarmNoclip()
-        if S.roundActive and not S.coinCollecting then startCoinCollector() end
+        if S.roundActive and not S.coinCollecting and not isLocalMurderer() then startCoinCollector() end
     else
         stopCoinCollector()
         restoreFarmNoclip()
