@@ -186,7 +186,7 @@ local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP
 local MiscSettings = {
     InfJump = false, AntiAFK = false, AutoTpGun = false,
     SilentAim = false, MusicCompanion = false, AntiVoid = false,
-    KnifeDodge = true, AntiFocus = true,
+    KnifeDodge = true,
     SelectedMusic = "Companion",
 }
 local MovementSettings = {
@@ -195,7 +195,7 @@ local MovementSettings = {
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
-local FarmSettings = { AutoFarm = false, CoinCooldown = 1.5, UltraOpt = true, AutoReroll = true }
+local FarmSettings = { AutoFarm = false, CoinCooldown = 1.5, UltraOpt = true }
 
 local BEAM_CLEAR = Color3.fromRGB(0, 255, 100)
 local BEAM_WALL  = Color3.fromRGB(255, 50, 50)
@@ -2222,7 +2222,7 @@ local function startCoinCollector()
         if S.totalCoins >= FARM_GOAL then
             if S.coinStatusSetter then S.coinStatusSetter("Goal reached") end
             stopCoinCollector()
-            if FarmSettings.AutoReroll and not S.rerolling then
+            if not S.rerolling then
                 if not isLocalMurderer() and not isLocalSheriffOrHero() then
                     S.rerolling = true
                     task.delay(0.5, function()
@@ -2288,7 +2288,7 @@ local function startCoinCollector()
         local mHRP = murderer and murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
         local distToMurderer = mHRP and (myPos - mHRP.Position).Magnitude or math.huge
 
-        local antiFocusActive = MiscSettings.AntiFocus and (now - S.fadeReceivedAt) < ANTI_FOCUS_DURATION
+        local antiFocusActive = (now - S.fadeReceivedAt) < ANTI_FOCUS_DURATION
         local effectiveDanger = antiFocusActive and ANTI_FOCUS_RADIUS or FARM_DANGER_DIST
         if mHRP and distToMurderer < effectiveDanger then
             local awayDir = Vector3.new(myPos.X - mHRP.Position.X, 0, myPos.Z - mHRP.Position.Z)
@@ -3673,12 +3673,7 @@ UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
 end)
 registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
 
-UI.autoRerollRef = window:CreateToggle(farmTab, "Auto Reroll", true, function(v)
-    FarmSettings.AutoReroll = v
-end)
-registerControl(FarmSettings, "AutoReroll", UI.autoRerollRef)
-
-window:CreateParagraph(farmTab, "Linear path · slow near coin · anti-focus on fade · blacklist when stuck · reroll if no weapon")
+window:CreateParagraph(farmTab, "Internal anti-focus on fade · blacklist when stuck · auto reroll if no weapon")
 
 window:CreateLabel(farmTab, "Stats")
 local coinCountFrame = window:CreateParagraph(farmTab, "0")
@@ -3842,12 +3837,6 @@ UI.knifeDodgeRef = window:CreateToggle(miscTab, "Dodge Thrown Knives", true, fun
     end
 end)
 registerControl(MiscSettings, "KnifeDodge", UI.knifeDodgeRef)
-
-window:CreateLabel(miscTab, "Anti Focus")
-UI.antiFocusRef = window:CreateToggle(miscTab, "Anti Focus (fade)", true, function(v)
-    MiscSettings.AntiFocus = v
-end)
-registerControl(MiscSettings, "AntiFocus", UI.antiFocusRef)
 
 setupKnifeDodgeHook()
 
@@ -4080,7 +4069,6 @@ function snapshotSettings()
             SilentAim      = MiscSettings.SilentAim,
             MusicCompanion = MiscSettings.MusicCompanion,
             KnifeDodge     = MiscSettings.KnifeDodge,
-            AntiFocus      = MiscSettings.AntiFocus,
             SelectedMusic  = MiscSettings.SelectedMusic,
         },
         Movement = {
@@ -4102,8 +4090,7 @@ function snapshotSettings()
             AnimPack  = AvatarSettings.AnimPack,
         },
         Farm = {
-            AutoFarm   = FarmSettings.AutoFarm,
-            AutoReroll = FarmSettings.AutoReroll,
+            AutoFarm = FarmSettings.AutoFarm,
         },
         AntiVoid = {
             Threshold = AntiVoidSettings.Threshold,
@@ -4130,9 +4117,8 @@ function applyConfig(data)
     if data.Avatar then
         for k, v in pairs(data.Avatar) do AvatarSettings[k] = v end
     end
-    if data.Farm then
-        if data.Farm.AutoFarm ~= nil then FarmSettings.AutoFarm = data.Farm.AutoFarm end
-        if data.Farm.AutoReroll ~= nil then FarmSettings.AutoReroll = data.Farm.AutoReroll end
+    if data.Farm and data.Farm.AutoFarm ~= nil then
+        FarmSettings.AutoFarm = data.Farm.AutoFarm
     end
     if data.AntiVoid then
         for k, v in pairs(data.AntiVoid) do AntiVoidSettings[k] = v end
