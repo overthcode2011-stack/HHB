@@ -2189,7 +2189,6 @@ end
 
 local function startCoinCollector()
     if S.coinCollecting then return end
-    if isLocalMurderer() then return end
     if S.totalCoins >= FARM_GOAL then return end
     if not getCoinContainer() then return end
     if not getHRP() then return end
@@ -2205,7 +2204,9 @@ local function startCoinCollector()
     S.farmStuckAt = 0
     S.farmLastCollectSpeedAt = 0
     S.farmTargetStartedAt = 0
-    if S.coinStatusSetter then S.coinStatusSetter("Searching target...") end
+    if S.coinStatusSetter then
+        S.coinStatusSetter(isLocalMurderer() and "Murderer · farming..." or "Searching target...")
+    end
     playMiniBoxAnimation()
     ensureFarmHelpers()
     ensureFarmNoclip()
@@ -2216,16 +2217,26 @@ local function startCoinCollector()
     S.coinConnection = RunService.Heartbeat:Connect(function()
         if not S.coinCollecting then return end
         if not S.roundActive then stopCoinCollector() return end
-        if isLocalMurderer() then
-            if S.farmWalkBV then S.farmWalkBV.Velocity = Vector3.zero end
-            if S.coinStatusSetter then S.coinStatusSetter("Murderer · not farming") end
-            return
-        end
         if S.totalCoins >= FARM_GOAL then
             if S.coinStatusSetter then S.coinStatusSetter("Goal reached") end
             stopCoinCollector()
-            if not S.rerolling then
-                if not isLocalMurderer() and not isLocalSheriffOrHero() then
+            if isLocalMurderer() then
+                -- Murderer: after farming, kill everyone
+                if not S.killAllRunning and tick() - S.roundStartedAt >= AUTO_KILL_COOLDOWN then
+                    S.killAllRunning = true
+                    if S.coinStatusSetter then S.coinStatusSetter("Murderer · killing...") end
+                    notify("Goal reached · killing everyone", 2)
+                    task.spawn(function()
+                        local startTime = tick()
+                        while S.killAllRunning and S.roundActive and tick() - startTime < 6 do
+                            serverKillAllTick()
+                            task.wait(0.03)
+                        end
+                        S.killAllRunning = false
+                    end)
+                end
+            elseif not S.rerolling then
+                if not isLocalSheriffOrHero() then
                     S.rerolling = true
                     task.delay(0.5, function()
                         local hum = getHumanoid()
@@ -2286,12 +2297,14 @@ local function startCoinCollector()
             end
         end
 
+        local localIsMurderer = isLocalMurderer()
         local murderer = getMurdererCached()
-        local mHRP = murderer and murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
+        local mHRP = (not localIsMurderer) and murderer and murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
         local distToMurderer = mHRP and (myPos - mHRP.Position).Magnitude or math.huge
 
         local antiFocusActive = (now - S.fadeReceivedAt) < ANTI_FOCUS_DURATION
         local effectiveDanger = antiFocusActive and ANTI_FOCUS_RADIUS or FARM_DANGER_DIST
+        -- Only evade if WE are not the murderer
         if mHRP and distToMurderer < effectiveDanger then
             local awayDir = Vector3.new(myPos.X - mHRP.Position.X, 0, myPos.Z - mHRP.Position.Z)
             if awayDir.Magnitude < 0.1 then awayDir = Vector3.new(1, 0, 0) end
@@ -2389,19 +2402,23 @@ local function startCoinCollector()
         end
 
         local timeSinceCollect = now - math.max(S.farmStartedAt, S.lastCollectTime)
+        -- Timeout: TP to a safe/good coin so farming can continue efficiently
         if timeSinceCollect > FARM_FALLBACK_TIMEOUT
             and now - S.farmLastFallbackAt > FARM_FALLBACK_COOLDOWN
-            and (not mHRP or distToMurderer > 25) then
+            and (localIsMurderer or not mHRP or distToMurderer > 25) then
             S.farmLastFallbackAt = now
             local tpCoin = nil
             local bestDist = math.huge
 
             for _, c in ipairs(coins) do
-                if isCoinValid(c) and (not mHRP or (c.Position - mHRP.Position).Magnitude > 25) then
-                    local d = (c.Position - hrp.Position).Magnitude
-                    if d < bestDist then
-                        bestDist = d
-                        tpCoin = c
+                if isCoinValid(c) then
+                    -- When innocent: prefer coins away from murderer. When murderer: any valid coin.
+                    if localIsMurderer or not mHRP or (c.Position - mHRP.Position).Magnitude > 25 then
+                        local d = (c.Position - hrp.Position).Magnitude
+                        if d < bestDist then
+                            bestDist = d
+                            tpCoin = c
+                        end
                     end
                 end
             end
@@ -2418,12 +2435,15 @@ local function startCoinCollector()
                 end
                 S.farmStuckPos = nil
                 S.farmStuckAt = 0
-                if S.coinStatusSetter then S.coinStatusSetter("Fallback TP") end
+                if S.coinStatusSetter then
+                    S.coinStatusSetter(localIsMurderer and "Murderer · safe coin TP" or "Fallback TP")
+                end
             end
         end
 
         if S.coinStatusSetter then
-            S.coinStatusSetter("Moving to target · " .. #coins .. " coins")
+            local prefix = localIsMurderer and "Murderer · " or ""
+            S.coinStatusSetter(prefix .. "Moving to target · " .. #coins .. " coins")
         end
     end)
 end
@@ -2432,7 +2452,7 @@ local function shouldWaitForCoins()
     if not FarmSettings.AutoFarm then return false end
     if not S.roundActive then return false end
     if S.totalCoins >= FARM_GOAL then return false end
-    if isLocalMurderer() then return false end
+    -- Murderer also farms first, then kills (goal reached stops waiting)
     return true
 end
 
@@ -3713,7 +3733,7 @@ if coinsStartedEvent then
         S.roundActive = true
         if FarmSettings.AutoFarm then
             ensureFarmNoclip()
-            if not S.coinCollecting and not isLocalMurderer() then startCoinCollector() end
+            if not S.coinCollecting then startCoinCollector() end
         end
     end)
 end
@@ -3762,7 +3782,7 @@ if roundStartEvent then
         if FarmSettings.AutoFarm then
             ensureFarmNoclip()
             task.wait(0.5)
-            if not S.coinCollecting and not isLocalMurderer() then startCoinCollector() end
+            if not S.coinCollecting then startCoinCollector() end
         end
         task.wait(0.3)
         reapplyActiveFeatures()
@@ -3791,7 +3811,7 @@ end
 trackThread(task.spawn(function()
     while true do
         task.wait(0.5)
-        if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting and S.totalCoins < FARM_GOAL and not isLocalMurderer() then
+        if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting and S.totalCoins < FARM_GOAL then
             startCoinCollector()
         end
     end
@@ -4142,7 +4162,7 @@ function applyConfig(data)
     if FarmSettings.AutoFarm then
         ensureFarmHelpers()
         ensureFarmNoclip()
-        if S.roundActive and not S.coinCollecting and not isLocalMurderer() then startCoinCollector() end
+        if S.roundActive and not S.coinCollecting then startCoinCollector() end
     else
         stopCoinCollector()
         restoreFarmNoclip()
@@ -4156,6 +4176,10 @@ end
 window:SetConfigSnapshot(snapshotSettings)
 window:SetConfigApply(applyConfig)
 window:BuildConfigPage()
+
+
+pcall(function() setTheme("Green") end)
+if window.UpdateThemeButtons then pcall(function() window:UpdateThemeButtons() end) end
 
 task.delay(2, function()
     if isMobile then
