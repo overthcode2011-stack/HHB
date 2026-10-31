@@ -2813,8 +2813,7 @@ end)
 registerControl(MiscSettings, "MusicCompanion", UI.musicToggleRef)
 
 window:CreateLabel(homeTab, "Creators")
-window:CreateParagraph(homeTab, "@OverthaneRBX · Developer · Hub Creator")
-window:CreateParagraph(homeTab, "@ReplicatedBacon_0 · Co-Owner · Test & Scripts")
+window:CreateParagraph(homeTab, "@replicatedman · Developer · Hub Creator")
 window:CreateParagraph(homeTab, "@odecode · Hexagonal Client · Farm Engine")
 
 window:CreateLabel(homeTab, "Features")
