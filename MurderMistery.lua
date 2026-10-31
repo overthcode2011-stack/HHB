@@ -999,7 +999,9 @@ local function yarhmInstakill(targetPlr)
     local theirHRP = targetPlr.Character:FindFirstChild("HumanoidRootPart")
     if not theirHRP then return false, "no target HRP" end
 
-    local originCF = CFrame.new(theirHRP.Position + Vector3.new(0, 1, 0))
+    -- Origin in front of the target (not above) so the shot/beam appears frontal
+    local look = theirHRP.CFrame.LookVector
+    local originCF = CFrame.new(theirHRP.Position - look * 3.5 + Vector3.new(0, 1.2, 0))
     local targetCF = CFrame.new(theirHRP.Position)
 
     local ok, err = pcall(function()
@@ -3320,7 +3322,7 @@ UI.triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function(v)
             if not targetPart then return end
             local myHRP = getHRP()
             if not myHRP then return end
-            if not getEquippedGun() then return end
+            if not findGunEquipped() and not findGunInBackpack() then return end
             local dist = (myHRP.Position - targetPart.Position).Magnitude
             if dist > AimbotSettings.TriggerRange then return end
             if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
@@ -3359,7 +3361,7 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
             if not targetPart then return end
             local myHRP = getHRP()
             if not myHRP then return end
-            if not getEquippedGun() then return end
+            if not findGunEquipped() and not findGunInBackpack() then return end
             if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
             local now = tick()
             if now - lastShot < 0.15 then return end
