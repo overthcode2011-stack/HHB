@@ -225,7 +225,7 @@ local MiscSettings = {
 }
 local MovementSettings = {
     Noclip = false, God = false, Fly = false, WalkSpeed = 16, JumpPower = 50,
-    FlySpeed = 23, AntiFling = false, Fling = false, TPAll = false,
+    FlySpeed = 20, AntiFling = false, Fling = false, TPAll = false,
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
@@ -247,7 +247,7 @@ local MURDERER_TTL = 0.4
 local FARM_GOAL = 50
 local FARM_TOUCH_RADIUS = 25
 local FARM_ARRIVE_DIST = 5
-local FARM_FLY_SPEED = 25
+local FARM_FLY_SPEED = 21
 local FARM_DANGER_DIST = 20
 local FARM_GROUND_OFFSET = -1.5
 local FARM_TOUCH_COOLDOWN = 0.28
@@ -2253,10 +2253,17 @@ local function stopFarmBodyMovers()
 end
 
 local function stopCoinCollector()
-    if not S.coinCollecting then return end
+    -- Always kill the farm Heartbeat, even if flag is already false (prevents stacked conns → 277)
     S.coinCollecting = false
-    if S.coinConnection then S.coinConnection:Disconnect(); S.coinConnection = nil end
-    if S.coinGyro then S.coinGyro:Destroy(); S.coinGyro = nil end
+    if S.coinConnection then
+        pcall(function() S.coinConnection:Disconnect() end)
+        S.coinConnection = nil
+    end
+    dropConn("farm")
+    if S.coinGyro then
+        pcall(function() S.coinGyro:Destroy() end)
+        S.coinGyro = nil
+    end
     stopFarmBodyMovers()
     disableUltraOptimization()
     S.farmTargetCoin = nil
@@ -2280,10 +2287,14 @@ local function stopCoinCollector()
 end
 
 local function startCoinCollector()
-    if S.coinCollecting then return end
     if S.totalCoins >= FARM_GOAL then return end
     if not getCoinContainer() then return end
     if not getHRP() then return end
+
+    -- Hard reset previous farm connection before creating a new one (round-start safe)
+    if S.coinConnection or S.coinCollecting then
+        stopCoinCollector()
+    end
 
     S.coinCollecting = true
     S.farmTargetCoin = nil
@@ -2306,7 +2317,7 @@ local function startCoinCollector()
     attachFarmGyro()
     ensureFarmBodyMovers()
 
-    S.coinConnection = RunService.Heartbeat:Connect(function()
+    S.coinConnection = trackConn("farm", RunService.Heartbeat:Connect(function()
         if not S.coinCollecting then return end
         if not S.roundActive then stopCoinCollector() return end
         if S.totalCoins >= FARM_GOAL then
@@ -2552,7 +2563,7 @@ local function startCoinCollector()
             local prefix = localIsMurderer and "Murderer · " or ""
             S.coinStatusSetter(prefix .. "Moving to target · " .. #coins .. " coins")
         end
-    end)
+    end))
 end
 
 local function shouldWaitForCoins()
@@ -3118,7 +3129,12 @@ UI.mm2ESPToggleRef = window:CreateToggle(espTab, "Roles", false, function(v)
     refreshAllESP()
     if v then
         if not ConnectionRegistry["rolesesp"] then
+            local lastEspTick = 0
             trackConn("rolesesp", RunService.Heartbeat:Connect(function()
+                -- Throttle: every 0.4s only (every-frame refresh causes 277 on long sessions)
+                local now = tick()
+                if now - lastEspTick < 0.4 then return end
+                lastEspTick = now
                 if ESP.active.MM2 or VisualSettings.GunESP then
                     if ESP.active.MM2 then refreshAllESP() end
                     if VisualSettings.GunESP then applyGunESP() end
@@ -3152,7 +3168,11 @@ UI.gunESPToggleRef = window:CreateToggle(espTab, "Gun", false, function(v)
     applyGunESP()
     if v then
         if not ConnectionRegistry["gunesp"] then
+            local lastGunEsp = 0
             trackConn("gunesp", RunService.Heartbeat:Connect(function()
+                local now = tick()
+                if now - lastGunEsp < 0.5 then return end
+                lastGunEsp = now
                 if VisualSettings.GunESP then applyGunESP() end
             end))
         end
@@ -3828,6 +3848,7 @@ local roundStartEvent = gameplay and gameplay:FindFirstChild("RoundStart")
 if coinsStartedEvent then
     coinsStartedEvent.OnClientEvent:Connect(function(data)
         markRoundStarted()
+        stopCoinCollector() -- clean previous farm Heartbeat before new round
         S.bagProgress = {}
         if type(data) == "table" and data.Coin then
             if data.Coin.CollectionLimit then
@@ -3837,12 +3858,13 @@ if coinsStartedEvent then
         S.totalCoins = 0
         S.farmTargetCoin = nil
         S.farmBlacklist = {}
+        S.farmTouchedCoins = {}
         S.farmLastCollectSpeedAt = 0
         if S.coinCountSetter then S.coinCountSetter(0) end
         S.roundActive = true
         if FarmSettings.AutoFarm then
             ensureFarmNoclip()
-            if not S.coinCollecting then startCoinCollector() end
+            startCoinCollector()
         end
     end)
 end
@@ -3874,14 +3896,23 @@ end
 if roundStartEvent then
     roundStartEvent.OnClientEvent:Connect(function()
         markRoundStarted()
+        -- Force-clean farm connection from previous round (prevents stacked Heartbeats → 277)
+        stopCoinCollector()
         S.bagProgress = {}
         S.totalCoins = 0
         S.farmTargetCoin = nil
         S.farmBlacklist = {}
+        S.farmTouchedCoins = {}
         S.farmLastCollectSpeedAt = 0
         S.rerolling = false
+        S.killAllRunning = false
         S.roundActive = true
         if S.coinCountSetter then S.coinCountSetter(0) end
+        -- Light cache clear only (do NOT drop feature connections: aimbot/fly/etc)
+        pcall(function()
+            for k in pairs(TargetVisibility) do TargetVisibility[k] = nil end
+            for k in pairs(VisCache) do VisCache[k] = nil end
+        end)
         task.wait(0.1)
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character then applyESP(plr) end
@@ -3891,7 +3922,7 @@ if roundStartEvent then
         if FarmSettings.AutoFarm then
             ensureFarmNoclip()
             task.wait(0.5)
-            if not S.coinCollecting then startCoinCollector() end
+            startCoinCollector()
         end
         task.wait(0.3)
         reapplyActiveFeatures()
@@ -4309,7 +4340,7 @@ window:SetConfigSnapshot(snapshotSettings)
 window:SetConfigApply(applyConfig)
 window:BuildConfigPage()
 
-
+-- Default theme: Green
 pcall(function() setTheme("Green") end)
 if window.UpdateThemeButtons then pcall(function() window:UpdateThemeButtons() end) end
 
