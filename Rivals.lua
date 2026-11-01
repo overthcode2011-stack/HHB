@@ -1,5 +1,5 @@
 local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API"))()
-API.Config.SupportedGames = { 17625359962, 117398147513099 } --i finally added queue ID place lol
+API.Config.SupportedGames = { 17625359962, 117398147513099 } ---queue added xddddd finally dude
 API.Config.KeySystem.Enabled = false
 
 local Players = game:GetService("Players")
@@ -19,7 +19,7 @@ local AimbotSettings = {
     TeamCheck = false, TriggerBot = false, TriggerRange = 150,
 }
 local VisualSettings = { RivalsESP = false, NameTags = false, Tracers = false, Skeleton = true, HealthBar = true, Distance = true, MaxRenderDistance = 500 }
-local MiscSettings = { InfJump = false, AntiAFK = false, FullOptimized = false, ShowStats = true }
+local MiscSettings = { InfJump = false, AntiAFK = false, FullOptimized = false, ShowStats = true, SpeedEnabled = false, SpeedValue = 100 }
 local MovementSettings = { Noclip = false, God = false, Fly = false, FlySpeed = 60 }
 
 local ESP_RATE = 1 / 20
@@ -1070,6 +1070,11 @@ RunService.RenderStepped:Connect(function(dt)
         end
     end
 
+    if MiscSettings.SpeedEnabled then
+        local hum = getHumanoid()
+        if hum then hum.WalkSpeed = MiscSettings.SpeedValue end
+    end
+
     aimAcc = aimAcc + dt
     if aimAcc >= AIM_RATE and AimbotSettings.Enabled and not AimbotSettings.SilentAim then
         aimAcc = 0
@@ -1126,7 +1131,7 @@ local aimbotTab     = win:CreateTab("Aimbot",     API.Icons.Combat or "rbxasseti
 local visualsTab    = win:CreateTab("Visuals",    "rbxassetid://13321848320")
 local miscTab       = win:CreateTab("Misc",       API.Icons.Misc   or "rbxassetid://109962716823639")
 
-local aimbotToggleRef, espToggleRef
+local aimbotToggleRef, espToggleRef, speedToggleRef
 
 win:CreateImageCard(homeTab, {
     Image = "rbxthumb://type=Asset&id=" .. game.PlaceId .. "&w=420&h=420",
@@ -1215,6 +1220,18 @@ win:CreateSlider(visualsTab, "Max Render Distance", 50, 2000, VisualSettings.Max
 end)
 
 win:CreateLabel(miscTab, "Movement")
+
+speedToggleRef = win:CreateToggle(miscTab, "Speedhack", MiscSettings.SpeedEnabled, function(v)
+    MiscSettings.SpeedEnabled = v
+    local hum = getHumanoid()
+    if not v and hum then hum.WalkSpeed = 16 end
+end)
+
+win:CreateSlider(miscTab, "Speed", 16, 500, MiscSettings.SpeedValue, function(v)
+    MiscSettings.SpeedValue = v
+    local hum = getHumanoid()
+    if MiscSettings.SpeedEnabled and hum then hum.WalkSpeed = v end
+end)
 
 win:CreateToggle(miscTab, "Fly", MovementSettings.Fly, function(v)
     MovementSettings.Fly = v
@@ -1342,6 +1359,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     if hum and AimbotSettings.Enabled then hum.AutoRotate = false end
     task.wait(0.1)
     rebuildRayFilter()
+    if hum and MiscSettings.SpeedEnabled then hum.WalkSpeed = MiscSettings.SpeedValue end
 end)
 
 LocalPlayer.CharacterRemoving:Connect(function()
