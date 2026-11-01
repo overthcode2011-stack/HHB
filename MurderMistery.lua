@@ -225,7 +225,7 @@ local MiscSettings = {
 }
 local MovementSettings = {
     Noclip = false, God = false, Fly = false, WalkSpeed = 16, JumpPower = 50,
-    FlySpeed = 20, AntiFling = false, Fling = false, TPAll = false,
+    FlySpeed = 23, AntiFling = false, Fling = false, TPAll = false,
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
@@ -247,7 +247,7 @@ local MURDERER_TTL = 0.4
 local FARM_GOAL = 50
 local FARM_TOUCH_RADIUS = 25
 local FARM_ARRIVE_DIST = 5
-local FARM_FLY_SPEED = 21
+local FARM_FLY_SPEED = 25
 local FARM_DANGER_DIST = 20
 local FARM_GROUND_OFFSET = -1.5
 local FARM_TOUCH_COOLDOWN = 0.28
