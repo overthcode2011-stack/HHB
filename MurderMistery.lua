@@ -34,7 +34,24 @@ local function trackConn(key, conn)
         end
         ConnectionRegistry[key] = conn
     end
-    table.insert(getgenv().__HH_STATE.connections, conn)
+    -- Avoid unbounded growth: only keep live connections
+    local list = getgenv().__HH_STATE.connections
+    local n = #list
+    if n > 80 then
+        local alive = {}
+        for i = 1, n do
+            local c = list[i]
+            if c then
+                local ok, connected = pcall(function() return c.Connected end)
+                if ok and connected then
+                    alive[#alive + 1] = c
+                end
+            end
+        end
+        getgenv().__HH_STATE.connections = alive
+        list = alive
+    end
+    table.insert(list, conn)
     return conn
 end
 
@@ -47,7 +64,22 @@ end
 
 local function trackThread(t)
     if t then
-        table.insert(getgenv().__HH_STATE.threads, t)
+        local list = getgenv().__HH_STATE.threads
+        if #list > 40 then
+            local alive = {}
+            for i = 1, #list do
+                local th = list[i]
+                if th then
+                    local ok, status = pcall(function() return coroutine.status(th) end)
+                    if ok and status ~= "dead" then
+                        alive[#alive + 1] = th
+                    end
+                end
+            end
+            getgenv().__HH_STATE.threads = alive
+            list = alive
+        end
+        table.insert(list, t)
     end
     return t
 end
@@ -58,6 +90,8 @@ local function trackGui(g)
     end
     return g
 end
+
+local purgeMemoryCaches -- forward decl (defined after ESP/beam)
 
 local API
 do
@@ -1462,6 +1496,61 @@ local function clearGunESP()
     S.gunESP.trackedGun = nil
 end
 
+-- Aggressive cache purge to prevent kick 277 (memory)
+purgeMemoryCaches = function(full)
+    pcall(function()
+        for k in pairs(TargetVisibility) do TargetVisibility[k] = nil end
+        for k in pairs(VisCache) do VisCache[k] = nil end
+        if full then
+            MurdererCache.plr = nil
+            MurdererCache.time = 0
+            for k in pairs(S.roleCache) do S.roleCache[k] = nil end
+            for k in pairs(S.bagProgress) do S.bagProgress[k] = nil end
+        end
+        if S.farmTouchedCoins then
+            for coin in pairs(S.farmTouchedCoins) do
+                if not coin or not coin.Parent then S.farmTouchedCoins[coin] = nil end
+            end
+        end
+        if S.farmBlacklist then
+            for coin in pairs(S.farmBlacklist) do
+                if not coin or not coin.Parent then S.farmBlacklist[coin] = nil end
+            end
+        end
+        if ESP and ESP.highlights then
+            for plr in pairs(ESP.highlights.MM2) do
+                if not plr or not plr.Parent then
+                    pcall(function() if ESP.highlights.MM2[plr] then ESP.highlights.MM2[plr]:Destroy() end end)
+                    ESP.highlights.MM2[plr] = nil
+                end
+            end
+            for plr in pairs(ESP.highlights.OG) do
+                if not plr or not plr.Parent then
+                    pcall(function() if ESP.highlights.OG[plr] then ESP.highlights.OG[plr]:Destroy() end end)
+                    ESP.highlights.OG[plr] = nil
+                end
+            end
+        end
+        if ESP and ESP.nameTags then
+            for plr in pairs(ESP.nameTags) do
+                if not plr or not plr.Parent then
+                    pcall(function()
+                        if ESP.nameTags[plr] and ESP.nameTags[plr].bb then ESP.nameTags[plr].bb:Destroy() end
+                    end)
+                    ESP.nameTags[plr] = nil
+                end
+            end
+        end
+        if not VisualSettings.Beam and S.beamData and #S.beamData.segments > 0 then
+            clearBeamPool(S.beamData)
+        end
+        if full then
+            clearGunESP()
+            if S.beamData then clearBeamPool(S.beamData) end
+        end
+    end)
+end
+
 local function applyGunESP()
     if not VisualSettings.GunESP then
         clearGunESP()
@@ -1813,6 +1902,9 @@ Players.PlayerRemoving:Connect(function(plr)
     S.roleCache[plr.Name] = nil
     TargetVisibility[plr] = nil
     VisCache[plr] = nil
+    if S.gunESP and S.gunESP.highlights then
+        -- no player-keyed gun esp, but safe
+    end
 end)
 
 local function applyKorblox()
@@ -2288,13 +2380,28 @@ local function startCoinCollector()
                 end
             end
         end
+        local touchCount = 0
         for coin, t in pairs(S.farmTouchedCoins) do
-            if now - t > 5 or not coin.Parent then S.farmTouchedCoins[coin] = nil end
-        end
-        for coin, t in pairs(S.farmBlacklist) do
-            if now - t > FARM_BLACKLIST_TIME + 2 or not coin.Parent then
-                S.farmBlacklist[coin] = nil
+            if now - t > 5 or not coin or not coin.Parent then
+                S.farmTouchedCoins[coin] = nil
+            else
+                touchCount = touchCount + 1
             end
+        end
+        -- Hard cap to prevent instance-key table growth (kick 277)
+        if touchCount > 40 then
+            S.farmTouchedCoins = {}
+        end
+        local blCount = 0
+        for coin, t in pairs(S.farmBlacklist) do
+            if now - t > FARM_BLACKLIST_TIME + 2 or not coin or not coin.Parent then
+                S.farmBlacklist[coin] = nil
+            else
+                blCount = blCount + 1
+            end
+        end
+        if blCount > 30 then
+            S.farmBlacklist = {}
         end
 
         local localIsMurderer = isLocalMurderer()
@@ -3647,6 +3754,8 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.lastCamUpdate = 0
     S.autoKillAll = S.autoKillAll or false
     S.farmTargetCoin = nil
+    -- Light memory purge on respawn
+    pcall(purgeMemoryCaches, false)
     S.farmTouchedCoins = {}
     S.farmBlacklist = {}
     S.farmWalkBV = nil
@@ -3805,6 +3914,8 @@ if roundEndFadeEvent then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer then clearHighlights(plr) end
         end
+        -- Memory: full purge between rounds (prevents kick 277 on long sessions)
+        purgeMemoryCaches(true)
     end)
 end
 
@@ -3813,6 +3924,27 @@ trackThread(task.spawn(function()
         task.wait(0.5)
         if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting and S.totalCoins < FARM_GOAL then
             startCoinCollector()
+        end
+    end
+end))
+
+-- Periodic memory maintenance (kick 277 prevention on long farm sessions)
+trackThread(task.spawn(function()
+    while true do
+        task.wait(45)
+        pcall(purgeMemoryCaches, false)
+        -- Prune connection list
+        local list = getgenv().__HH_STATE and getgenv().__HH_STATE.connections
+        if list and #list > 60 then
+            local alive = {}
+            for i = 1, #list do
+                local c = list[i]
+                if c then
+                    local ok, connected = pcall(function() return c.Connected end)
+                    if ok and connected then alive[#alive + 1] = c end
+                end
+            end
+            getgenv().__HH_STATE.connections = alive
         end
     end
 end))
