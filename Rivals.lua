@@ -1,5 +1,5 @@
 local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API"))()
-API.Config.SupportedGames = { 17625359962 }
+API.Config.SupportedGames = { 17625359962, 117398147513099 } --i finally added queue ID place lol
 API.Config.KeySystem.Enabled = false
 
 local Players = game:GetService("Players")
