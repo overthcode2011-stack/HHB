@@ -34,7 +34,6 @@ local function trackConn(key, conn)
         end
         ConnectionRegistry[key] = conn
     end
-    -- Avoid unbounded growth: only keep live connections
     local list = getgenv().__HH_STATE.connections
     local n = #list
     if n > 80 then
@@ -91,7 +90,7 @@ local function trackGui(g)
     return g
 end
 
-local purgeMemoryCaches -- forward decl (defined after ESP/beam)
+local purgeMemoryCaches
 
 local API
 do
@@ -509,8 +508,19 @@ local function ensureGunReady()
     return nil, "equip timeout"
 end
 
+local UNC = {
+    hookmetamethod = type(hookmetamethod) == "function",
+    getnamecallmethod = type(getnamecallmethod) == "function",
+    getconnections = type(getconnections) == "function",
+    hookfunction = type(hookfunction) == "function",
+    firetouchinterest = type(firetouchinterest) == "function",
+}
+
 local function isGunRelatedRemote(remote)
-    if not remote or not remote:IsA("RemoteEvent") then return false end
+    if not remote then return false end
+    if not (remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") or remote:IsA("BindableEvent")) then
+        return false
+    end
     local parent = remote.Parent
     if not parent then return false end
     if parent:IsA("Tool") and isGunTool(parent) then return true end
@@ -519,9 +529,74 @@ local function isGunRelatedRemote(remote)
 end
 
 local function isGunShootRemote(remote)
-    if not remote or not remote:IsA("RemoteEvent") then return false end
-    if remote.Name:lower():find("shoot", 1, true) then return true end
+    if not remote then return false end
+    if not (remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") or remote:IsA("BindableEvent")) then
+        return false
+    end
+    local n = remote.Name:lower()
+    if n:find("shoot", 1, true) or n:find("fire", 1, true) then return true end
     return isGunRelatedRemote(remote)
+end
+
+local function collectShootChannels(gun)
+    local channels = {}
+    if not gun then return channels end
+    local function push(obj, kind)
+        if obj then table.insert(channels, { obj = obj, kind = kind }) end
+    end
+    for _, child in ipairs(gun:GetChildren()) do
+        local n = child.Name:lower()
+        if n == "shoot" or n == "fire" or n == "gunshoot" then
+            if child:IsA("RemoteEvent") then push(child, "RemoteEvent")
+            elseif child:IsA("BindableEvent") then push(child, "BindableEvent")
+            elseif child:IsA("RemoteFunction") then push(child, "RemoteFunction") end
+        end
+    end
+    for _, desc in ipairs(gun:GetDescendants()) do
+        if desc ~= gun then
+            local n = desc.Name:lower()
+            local parentName = desc.Parent and desc.Parent.Name:lower() or ""
+            if n:find("shoot", 1, true) or (n == "fire" and parentName:find("event")) then
+                if desc:IsA("RemoteEvent") then push(desc, "RemoteEvent")
+                elseif desc:IsA("BindableEvent") then push(desc, "BindableEvent")
+                elseif desc:IsA("RemoteFunction") then push(desc, "RemoteFunction") end
+            end
+        end
+    end
+    local seen, unique = {}, {}
+    for _, ch in ipairs(channels) do
+        if not seen[ch.obj] then
+            seen[ch.obj] = true
+            unique[#unique + 1] = ch
+        end
+    end
+    return unique
+end
+
+local function fireGunChannels(gun, originCF, targetCF)
+    if not gun or not originCF or not targetCF then return false, "bad args" end
+    local channels = collectShootChannels(gun)
+    if #channels == 0 then return false, "no shoot channel" end
+    local any, lastErr = false, nil
+    for _, ch in ipairs(channels) do
+        local obj, kind = ch.obj, ch.kind
+        if kind == "RemoteEvent" then
+            local ok, err = pcall(function() obj:FireServer(originCF, targetCF) end)
+            if ok then any = true else lastErr = err end
+            pcall(function() obj:FireServer(targetCF, originCF) end)
+            pcall(function() obj:FireServer(targetCF) end)
+        elseif kind == "BindableEvent" then
+            local ok, err = pcall(function() obj:Fire(originCF, targetCF) end)
+            if ok then any = true else lastErr = err end
+            pcall(function() obj:Fire(targetCF) end)
+        elseif kind == "RemoteFunction" then
+            local ok, err = pcall(function() obj:InvokeServer(originCF, targetCF) end)
+            if ok then any = true else lastErr = err end
+            pcall(function() obj:InvokeServer(targetCF) end)
+        end
+    end
+    if any then return true, "multi-path" end
+    return false, tostring(lastErr or "all channels failed")
 end
 
 local function spectatePlayer(plr)
@@ -996,26 +1071,39 @@ local function yarhmFireAt(targetPlr, targetPart)
     if not gun then return false, "gun: " .. tostring(gunHow) end
     if gun.Parent ~= char then return false, "gun not in rig" end
 
-    local shootEv = gun:FindFirstChild("Shoot")
-    if not shootEv then return false, "no Shoot child" end
-
-    local hand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
-    if not hand then return false, "no hand" end
-    local originCF = CFrame.new(hand.Position)
-
-    local targetPos = getPredictedPosition(targetPlr, YARHM_SHOOT_OFFSET)
-    if not targetPos then return false, "no predicted pos" end
-    local targetCF = CFrame.new(targetPos)
-    if targetPart then
-        local predCF = predictAim(targetPart)
-        if predCF then targetCF = predCF end
+    local hand = char:FindFirstChild("RightHand")
+        or char:FindFirstChild("Right Arm")
+        or char:FindFirstChild("HumanoidRootPart")
+    local cam = workspace.CurrentCamera
+    local originCF
+    if hand then
+        originCF = CFrame.new(hand.Position)
+    elseif cam then
+        originCF = cam.CFrame
+    else
+        return false, "no origin"
     end
 
-    local ok, err = pcall(function()
-        shootEv:FireServer(originCF, targetCF)
-    end)
-    if not ok then return false, "FireServer: " .. tostring(err) end
-    return true, "shot via " .. gun.Name .. ".Shoot"
+    local targetPos = getPredictedPosition(targetPlr, YARHM_SHOOT_OFFSET)
+    local targetCF
+    if targetPart then
+        local predCF = predictAim(targetPart)
+        if predCF then
+            targetCF = predCF
+        elseif targetPos then
+            targetCF = CFrame.new(targetPos)
+        else
+            targetCF = CFrame.new(targetPart.Position)
+        end
+    elseif targetPos then
+        targetCF = CFrame.new(targetPos)
+    else
+        local hrp = targetPlr.Character:FindFirstChild("HumanoidRootPart")
+        if not hrp then return false, "no target pos" end
+        targetCF = CFrame.new(hrp.Position)
+    end
+
+    return fireGunChannels(gun, originCF, targetCF)
 end
 
 local function yarhmInstakill(targetPlr)
@@ -1027,22 +1115,14 @@ local function yarhmInstakill(targetPlr)
     if not gun then return false, "gun: " .. tostring(gunHow) end
     if gun.Parent ~= char then return false, "gun not in rig" end
 
-    local shootEv = gun:FindFirstChild("Shoot")
-    if not shootEv then return false, "no Shoot child" end
-
     local theirHRP = targetPlr.Character:FindFirstChild("HumanoidRootPart")
     if not theirHRP then return false, "no target HRP" end
 
-    -- Origin in front of the target (not above) so the shot/beam appears frontal
     local look = theirHRP.CFrame.LookVector
     local originCF = CFrame.new(theirHRP.Position - look * 3.5 + Vector3.new(0, 1.2, 0))
     local targetCF = CFrame.new(theirHRP.Position)
 
-    local ok, err = pcall(function()
-        shootEv:FireServer(originCF, targetCF)
-    end)
-    if not ok then return false, "FireServer: " .. tostring(err) end
-    return true, "instakill via " .. gun.Name .. ".Shoot"
+    return fireGunChannels(gun, originCF, targetCF)
 end
 
 local function mobileForceShoot()
@@ -1309,19 +1389,16 @@ local function stopMusic()
     end
 end
 
-pcall(function()
-    S.hookNamecall = hookmetamethod
-    S.getNamecall  = getnamecallmethod
-end)
-
-if type(S.hookNamecall) == "function" and type(S.getNamecall) == "function" then
-    local ok = pcall(function()
+if UNC.hookmetamethod and UNC.getnamecallmethod then
+    pcall(function()
+        S.hookNamecall = hookmetamethod
+        S.getNamecall  = getnamecallmethod
         local oldNamecall
         oldNamecall = S.hookNamecall(game, "__namecall", function(self, ...)
-            if S.getNamecall() == "FireServer" and self:IsA("RemoteEvent") then
-                local args = table.pack(...)
-
+            local method = S.getNamecall()
+            if method == "FireServer" and typeof(self) == "Instance" and self:IsA("RemoteEvent") then
                 if MiscSettings.SilentAim and isGunShootRemote(self) then
+                    local args = table.pack(...)
                     local murderer = getMurdererCached()
                     if isTargetSafe(murderer) then
                         local targetPart = getMM2TargetPart(murderer.Character)
@@ -1332,7 +1409,7 @@ if type(S.hookNamecall) == "function" and type(S.getNamecall) == "function" then
                             if isVisibleForShot(origin, targetPart.Position, murderer.Character, murderer) then
                                 local newTarget = predictAim(targetPart)
                                 if newTarget then
-                                    for i = 2, math.min(5, args.n) do
+                                    for i = 2, math.min(6, args.n) do
                                         if typeof(args[i]) == "CFrame" then
                                             args[i] = newTarget
                                             break
@@ -1347,8 +1424,8 @@ if type(S.hookNamecall) == "function" and type(S.getNamecall) == "function" then
             end
             return oldNamecall(self, ...)
         end)
+        S.silentAimHookInstalled = true
     end)
-    S.silentAimHookInstalled = ok
 end
 
 if not isMobile then
@@ -1496,7 +1573,6 @@ local function clearGunESP()
     S.gunESP.trackedGun = nil
 end
 
--- Aggressive cache purge to prevent kick 277 (memory)
 purgeMemoryCaches = function(full)
     pcall(function()
         for k in pairs(TargetVisibility) do TargetVisibility[k] = nil end
@@ -1903,7 +1979,6 @@ Players.PlayerRemoving:Connect(function(plr)
     TargetVisibility[plr] = nil
     VisCache[plr] = nil
     if S.gunESP and S.gunESP.highlights then
-        -- no player-keyed gun esp, but safe
     end
 end)
 
@@ -2253,7 +2328,6 @@ local function stopFarmBodyMovers()
 end
 
 local function stopCoinCollector()
-    -- Always kill the farm Heartbeat, even if flag is already false (prevents stacked conns → 277)
     S.coinCollecting = false
     if S.coinConnection then
         pcall(function() S.coinConnection:Disconnect() end)
@@ -2291,7 +2365,6 @@ local function startCoinCollector()
     if not getCoinContainer() then return end
     if not getHRP() then return end
 
-    -- Hard reset previous farm connection before creating a new one (round-start safe)
     if S.coinConnection or S.coinCollecting then
         stopCoinCollector()
     end
@@ -2324,7 +2397,6 @@ local function startCoinCollector()
             if S.coinStatusSetter then S.coinStatusSetter("Goal reached") end
             stopCoinCollector()
             if isLocalMurderer() then
-                -- Murderer: after farming, kill everyone
                 if not S.killAllRunning and tick() - S.roundStartedAt >= AUTO_KILL_COOLDOWN then
                     S.killAllRunning = true
                     if S.coinStatusSetter then S.coinStatusSetter("Murderer · killing...") end
@@ -2399,7 +2471,6 @@ local function startCoinCollector()
                 touchCount = touchCount + 1
             end
         end
-        -- Hard cap to prevent instance-key table growth (kick 277)
         if touchCount > 40 then
             S.farmTouchedCoins = {}
         end
@@ -2422,7 +2493,6 @@ local function startCoinCollector()
 
         local antiFocusActive = (now - S.fadeReceivedAt) < ANTI_FOCUS_DURATION
         local effectiveDanger = antiFocusActive and ANTI_FOCUS_RADIUS or FARM_DANGER_DIST
-        -- Only evade if WE are not the murderer
         if mHRP and distToMurderer < effectiveDanger then
             local awayDir = Vector3.new(myPos.X - mHRP.Position.X, 0, myPos.Z - mHRP.Position.Z)
             if awayDir.Magnitude < 0.1 then awayDir = Vector3.new(1, 0, 0) end
@@ -2520,7 +2590,6 @@ local function startCoinCollector()
         end
 
         local timeSinceCollect = now - math.max(S.farmStartedAt, S.lastCollectTime)
-        -- Timeout: TP to a safe/good coin so farming can continue efficiently
         if timeSinceCollect > FARM_FALLBACK_TIMEOUT
             and now - S.farmLastFallbackAt > FARM_FALLBACK_COOLDOWN
             and (localIsMurderer or not mHRP or distToMurderer > 25) then
@@ -2530,7 +2599,6 @@ local function startCoinCollector()
 
             for _, c in ipairs(coins) do
                 if isCoinValid(c) then
-                    -- When innocent: prefer coins away from murderer. When murderer: any valid coin.
                     if localIsMurderer or not mHRP or (c.Position - mHRP.Position).Magnitude > 25 then
                         local d = (c.Position - hrp.Position).Magnitude
                         if d < bestDist then
@@ -2570,7 +2638,6 @@ local function shouldWaitForCoins()
     if not FarmSettings.AutoFarm then return false end
     if not S.roundActive then return false end
     if S.totalCoins >= FARM_GOAL then return false end
-    -- Murderer also farms first, then kills (goal reached stops waiting)
     return true
 end
 
@@ -3131,7 +3198,6 @@ UI.mm2ESPToggleRef = window:CreateToggle(espTab, "Roles", false, function(v)
         if not ConnectionRegistry["rolesesp"] then
             local lastEspTick = 0
             trackConn("rolesesp", RunService.Heartbeat:Connect(function()
-                -- Throttle: every 0.4s only (every-frame refresh causes 277 on long sessions)
                 local now = tick()
                 if now - lastEspTick < 0.4 then return end
                 lastEspTick = now
@@ -3494,6 +3560,24 @@ registerControl(AimbotSettings, "TriggerBot", UI.triggerRef)
 UI.triggerRangeRef = window:CreateSlider(aimbotTab, "Trigger Range", 20, 400, 150, function(v) AimbotSettings.TriggerRange = v end)
 registerControl(AimbotSettings, "TriggerRange", UI.triggerRangeRef)
 
+window:CreateLabel(aimbotTab, "Manual Shot")
+window:CreateButton(aimbotTab, "Force Shoot Murderer", function()
+    mobileForceShoot()
+end)
+window:CreateButton(aimbotTab, "Force Instakill Murderer", function()
+    local murderer = getMurdererCached()
+    if not isTargetSafe(murderer) then
+        notify("No murderer", 2)
+        return
+    end
+    local ok, info = yarhmInstakill(murderer)
+    if ok then
+        notify("Instakill → " .. murderer.DisplayName, 1.5)
+    else
+        notify("Failed: " .. tostring(info), 3)
+    end
+end)
+
 window:CreateLabel(aimbotTab, "AutoShoot")
 UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
     AimbotSettings.AutoFire = v
@@ -3774,7 +3858,6 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.lastCamUpdate = 0
     S.autoKillAll = S.autoKillAll or false
     S.farmTargetCoin = nil
-    -- Light memory purge on respawn
     pcall(purgeMemoryCaches, false)
     S.farmTouchedCoins = {}
     S.farmBlacklist = {}
@@ -3848,7 +3931,7 @@ local roundStartEvent = gameplay and gameplay:FindFirstChild("RoundStart")
 if coinsStartedEvent then
     coinsStartedEvent.OnClientEvent:Connect(function(data)
         markRoundStarted()
-        stopCoinCollector() -- clean previous farm Heartbeat before new round
+        stopCoinCollector()
         S.bagProgress = {}
         if type(data) == "table" and data.Coin then
             if data.Coin.CollectionLimit then
@@ -3896,7 +3979,6 @@ end
 if roundStartEvent then
     roundStartEvent.OnClientEvent:Connect(function()
         markRoundStarted()
-        -- Force-clean farm connection from previous round (prevents stacked Heartbeats → 277)
         stopCoinCollector()
         S.bagProgress = {}
         S.totalCoins = 0
@@ -3908,7 +3990,6 @@ if roundStartEvent then
         S.killAllRunning = false
         S.roundActive = true
         if S.coinCountSetter then S.coinCountSetter(0) end
-        -- Light cache clear only (do NOT drop feature connections: aimbot/fly/etc)
         pcall(function()
             for k in pairs(TargetVisibility) do TargetVisibility[k] = nil end
             for k in pairs(VisCache) do VisCache[k] = nil end
@@ -3945,7 +4026,6 @@ if roundEndFadeEvent then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer then clearHighlights(plr) end
         end
-        -- Memory: full purge between rounds (prevents kick 277 on long sessions)
         purgeMemoryCaches(true)
     end)
 end
@@ -3959,12 +4039,10 @@ trackThread(task.spawn(function()
     end
 end))
 
--- Periodic memory maintenance (kick 277 prevention on long farm sessions)
 trackThread(task.spawn(function()
     while true do
         task.wait(45)
         pcall(purgeMemoryCaches, false)
-        -- Prune connection list
         local list = getgenv().__HH_STATE and getgenv().__HH_STATE.connections
         if list and #list > 60 then
             local alive = {}
@@ -4008,6 +4086,9 @@ registerControl(MiscSettings, "AutoTpGun", UI.autoTpGunRef)
 window:CreateLabel(miscTab, "Silent Aim")
 UI.silentRef = window:CreateToggle(miscTab, "Silent Aim", false, function(v)
     MiscSettings.SilentAim = v
+    if v and not S.silentAimHookInstalled then
+        notify("Silent Aim unavailable", 2)
+    end
 end)
 registerControl(MiscSettings, "SilentAim", UI.silentRef)
 
@@ -4340,7 +4421,6 @@ window:SetConfigSnapshot(snapshotSettings)
 window:SetConfigApply(applyConfig)
 window:BuildConfigPage()
 
--- Default theme: Green
 pcall(function() setTheme("Green") end)
 if window.UpdateThemeButtons then pcall(function() window:UpdateThemeButtons() end) end
 
