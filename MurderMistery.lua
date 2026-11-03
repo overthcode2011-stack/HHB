@@ -225,7 +225,7 @@ local MiscSettings = {
 }
 local MovementSettings = {
     Noclip = false, God = false, Fly = false, WalkSpeed = 16, JumpPower = 50,
-    FlySpeed = 20, AntiFling = false, Fling = false, TPAll = false,
+    FlySpeed = 25, AntiFling = false, Fling = false, TPAll = false,
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
