@@ -576,8 +576,21 @@ end
 local function fireGunChannels(gun, originCF, targetCF)
     if not gun or not originCF or not targetCF then return false, "bad args" end
     local channels = collectShootChannels(gun)
+    local deep = gun:FindFirstChild("Shoot", true)
+    if deep then
+        local already = false
+        for _, ch in ipairs(channels) do
+            if ch.obj == deep then already = true break end
+        end
+        if not already then
+            if deep:IsA("RemoteEvent") then table.insert(channels, 1, { obj = deep, kind = "RemoteEvent" })
+            elseif deep:IsA("BindableEvent") then table.insert(channels, 1, { obj = deep, kind = "BindableEvent" })
+            elseif deep:IsA("RemoteFunction") then table.insert(channels, 1, { obj = deep, kind = "RemoteFunction" }) end
+        end
+    end
     if #channels == 0 then return false, "no shoot channel" end
     local any, lastErr = false, nil
+    pcall(function() gun:Activate() end)
     for _, ch in ipairs(channels) do
         local obj, kind = ch.obj, ch.kind
         if kind == "RemoteEvent" then
@@ -585,10 +598,12 @@ local function fireGunChannels(gun, originCF, targetCF)
             if ok then any = true else lastErr = err end
             pcall(function() obj:FireServer(targetCF, originCF) end)
             pcall(function() obj:FireServer(targetCF) end)
+            pcall(function() obj:FireServer(originCF.Position, targetCF.Position) end)
         elseif kind == "BindableEvent" then
             local ok, err = pcall(function() obj:Fire(originCF, targetCF) end)
             if ok then any = true else lastErr = err end
             pcall(function() obj:Fire(targetCF) end)
+            pcall(function() obj:Fire(originCF, targetCF, true) end)
         elseif kind == "RemoteFunction" then
             local ok, err = pcall(function() obj:InvokeServer(originCF, targetCF) end)
             if ok then any = true else lastErr = err end
@@ -3560,24 +3575,6 @@ registerControl(AimbotSettings, "TriggerBot", UI.triggerRef)
 UI.triggerRangeRef = window:CreateSlider(aimbotTab, "Trigger Range", 20, 400, 150, function(v) AimbotSettings.TriggerRange = v end)
 registerControl(AimbotSettings, "TriggerRange", UI.triggerRangeRef)
 
-window:CreateLabel(aimbotTab, "Manual Shot")
-window:CreateButton(aimbotTab, "Force Shoot Murderer", function()
-    mobileForceShoot()
-end)
-window:CreateButton(aimbotTab, "Force Instakill Murderer", function()
-    local murderer = getMurdererCached()
-    if not isTargetSafe(murderer) then
-        notify("No murderer", 2)
-        return
-    end
-    local ok, info = yarhmInstakill(murderer)
-    if ok then
-        notify("Instakill → " .. murderer.DisplayName, 1.5)
-    else
-        notify("Failed: " .. tostring(info), 3)
-    end
-end)
-
 window:CreateLabel(aimbotTab, "AutoShoot")
 UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
     AimbotSettings.AutoFire = v
@@ -3642,26 +3639,56 @@ local function findKnifeRemotes()
         task.wait(0.15)
         knife = getLocalKnife()
     end
-    if not knife then return nil, nil, nil end
+    if not knife then return nil, nil, nil, nil end
     local events = knife:FindFirstChild("Events")
-    if not events then return knife, nil, nil end
-    return knife, events:FindFirstChild("KnifeStabbed"), events:FindFirstChild("HandleTouched")
+    local handle = knife:FindFirstChild("Handle")
+    if not events then return knife, nil, nil, handle end
+    return knife, events:FindFirstChild("KnifeStabbed"), events:FindFirstChild("HandleTouched"), handle
 end
 
 local function serverKillAllTick()
-    local knife, stabEv, touchEv = findKnifeRemotes()
-    if not knife or not stabEv or not touchEv then return false end
+    local knife, stabEv, touchEv, handle = findKnifeRemotes()
+    if not knife then return false end
 
-    pcall(function() stabEv:FireServer() end)
+    if knife.Parent ~= LocalPlayer.Character then
+        local hum = getHumanoid()
+        if hum then pcall(function() hum:EquipTool(knife) end) end
+        task.wait(0.05)
+        knife = getLocalKnife() or knife
+        handle = knife and knife:FindFirstChild("Handle") or handle
+        local events = knife and knife:FindFirstChild("Events")
+        if events then
+            stabEv = events:FindFirstChild("KnifeStabbed")
+            touchEv = events:FindFirstChild("HandleTouched")
+        end
+    end
 
+    pcall(function() knife:Activate() end)
+    if stabEv then pcall(function() stabEv:FireServer() end) end
+
+    local canTouch = type(firetouchinterest) == "function"
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and plr.Character then
             local hum = plr.Character:FindFirstChildOfClass("Humanoid")
             if hum and hum.Health > 0 then
                 local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
                 local head = plr.Character:FindFirstChild("Head")
-                if hrp then pcall(function() touchEv:FireServer(hrp) end) end
-                if head then pcall(function() touchEv:FireServer(head) end) end
+                if touchEv then
+                    if hrp then pcall(function() touchEv:FireServer(hrp) end) end
+                    if head then pcall(function() touchEv:FireServer(head) end) end
+                end
+                if canTouch and handle then
+                    if hrp then
+                        pcall(firetouchinterest, hrp, handle, 0)
+                        pcall(firetouchinterest, hrp, handle, 1)
+                        pcall(firetouchinterest, handle, hrp, 0)
+                        pcall(firetouchinterest, handle, hrp, 1)
+                    end
+                    if head then
+                        pcall(firetouchinterest, head, handle, 0)
+                        pcall(firetouchinterest, head, handle, 1)
+                    end
+                end
             end
         end
     end
@@ -3669,9 +3696,18 @@ local function serverKillAllTick()
 end
 
 window:CreateButton(aimbotTab, "Kill Everyone", function()
-    if not isLocalMurderer() then notify("You are not the Murderer") return end
+    local hasKnife = getLocalKnife() ~= nil
+    if not hasKnife then
+        equipKnife()
+        task.wait(0.2)
+        hasKnife = getLocalKnife() ~= nil
+    end
+    if not isLocalMurderer() and not hasKnife then
+        notify("You are not the Murderer")
+        return
+    end
     if S.killAllRunning then notify("Already running") return end
-    if tick() - S.roundStartedAt < AUTO_KILL_COOLDOWN then
+    if tick() - S.roundStartedAt < AUTO_KILL_COOLDOWN and S.roundStartedAt > 0 then
         notify("Wait " .. string.format("%.1f", AUTO_KILL_COOLDOWN - (tick() - S.roundStartedAt)) .. "s", 2)
         return
     end
@@ -3680,9 +3716,9 @@ window:CreateButton(aimbotTab, "Kill Everyone", function()
 
     task.spawn(function()
         local startTime = tick()
-        while S.killAllRunning and tick() - startTime < 5 do
+        while S.killAllRunning and tick() - startTime < 6 do
             serverKillAllTick()
-            task.wait(0.03)
+            task.wait(0.04)
         end
         S.killAllRunning = false
         notify("Done")
