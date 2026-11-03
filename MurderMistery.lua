@@ -1,3 +1,5 @@
+local STARTUP_THEME = "Orange"
+
 do
     local oldState = getgenv and getgenv().__HH_STATE
     if oldState then
@@ -119,6 +121,8 @@ local HAS = {
     CreateImageCard   = type(API.CreateImageCard) == "function",
 }
 
+if HAS.SetTheme then pcall(function() API:SetTheme(STARTUP_THEME) end) end
+
 local LocalControlRegistry = {}
 
 local function registerControl(tbl, key, ctrl)
@@ -160,7 +164,7 @@ local function getCurrentTheme()
         local ok, t = pcall(function() return API:GetTheme() end)
         if ok and t then return t end
     end
-    return "Green"
+    return STARTUP_THEME
 end
 
 local function setTheme(name)
@@ -577,41 +581,50 @@ local function fireGunChannels(gun, originCF, targetCF)
     if not gun or not originCF or not targetCF then return false, "bad args" end
     local channels = collectShootChannels(gun)
     local deep = gun:FindFirstChild("Shoot", true)
-    if deep then
+    if deep and deep:IsA("RemoteEvent") then
         local already = false
         for _, ch in ipairs(channels) do
             if ch.obj == deep then already = true break end
         end
         if not already then
-            if deep:IsA("RemoteEvent") then table.insert(channels, 1, { obj = deep, kind = "RemoteEvent" })
-            elseif deep:IsA("BindableEvent") then table.insert(channels, 1, { obj = deep, kind = "BindableEvent" })
-            elseif deep:IsA("RemoteFunction") then table.insert(channels, 1, { obj = deep, kind = "RemoteFunction" }) end
+            table.insert(channels, 1, { obj = deep, kind = "RemoteEvent" })
         end
     end
     if #channels == 0 then return false, "no shoot channel" end
-    local any, lastErr = false, nil
+
+    local targetPos = targetCF.Position
+    local originPos = originCF.Position
+    local delta = targetPos - originPos
+    local aimDir = delta.Magnitude > 0.01 and delta.Unit or Vector3.new(0, 0, -1)
+
+    local any = false
     pcall(function() gun:Activate() end)
+
     for _, ch in ipairs(channels) do
         local obj, kind = ch.obj, ch.kind
         if kind == "RemoteEvent" then
-            local ok, err = pcall(function() obj:FireServer(originCF, targetCF) end)
-            if ok then any = true else lastErr = err end
-            pcall(function() obj:FireServer(targetCF, originCF) end)
+            pcall(function() obj:FireServer(targetPos) end)
             pcall(function() obj:FireServer(targetCF) end)
-            pcall(function() obj:FireServer(originCF.Position, targetCF.Position) end)
+            pcall(function() obj:FireServer(originPos, targetPos) end)
+            pcall(function() obj:FireServer(originCF, targetCF) end)
+            pcall(function() obj:FireServer(originPos, aimDir) end)
+            pcall(function() obj:FireServer(targetPos, aimDir) end)
+            any = true
         elseif kind == "BindableEvent" then
-            local ok, err = pcall(function() obj:Fire(originCF, targetCF) end)
-            if ok then any = true else lastErr = err end
+            pcall(function() obj:Fire(targetPos) end)
             pcall(function() obj:Fire(targetCF) end)
-            pcall(function() obj:Fire(originCF, targetCF, true) end)
+            pcall(function() obj:Fire(originCF, targetCF) end)
+            pcall(function() obj:Fire(originPos, targetPos) end)
+            any = true
         elseif kind == "RemoteFunction" then
-            local ok, err = pcall(function() obj:InvokeServer(originCF, targetCF) end)
-            if ok then any = true else lastErr = err end
-            pcall(function() obj:InvokeServer(targetCF) end)
+            pcall(function() obj:InvokeServer(targetPos) end)
+            pcall(function() obj:InvokeServer(originCF, targetCF) end)
+            pcall(function() obj:InvokeServer(originPos, targetPos) end)
+            any = true
         end
     end
     if any then return true, "multi-path" end
-    return false, tostring(lastErr or "all channels failed")
+    return false, "all channels failed"
 end
 
 local function spectatePlayer(plr)
@@ -1138,6 +1151,66 @@ local function yarhmInstakill(targetPlr)
     local targetCF = CFrame.new(theirHRP.Position)
 
     return fireGunChannels(gun, originCF, targetCF)
+end
+
+local function hitboxCheck(targetPlr)
+    if not targetPlr or not targetPlr.Character then return false end
+    local hrp = targetPlr.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    local size = hrp.Size
+    if size.X < 2 or size.Y < 5 or size.Z < 1 then return true end
+    return false
+end
+
+local function yarhmAutokill(targetPlr)
+    if not targetPlr or not targetPlr.Character then return false, "no target" end
+    local char = LocalPlayer.Character
+    if not char then return false, "no character" end
+    local gun, gunHow = ensureGunReady()
+    if not gun then return false, "gun: " .. tostring(gunHow) end
+    if gun.Parent ~= char then return false, "gun not in rig" end
+    local theirHRP = targetPlr.Character:FindFirstChild("HumanoidRootPart")
+    if not theirHRP then return false, "no target HRP" end
+    local theirHum = targetPlr.Character:FindFirstChildOfClass("Humanoid")
+    if not theirHum then return false, "no target hum" end
+
+    if gunHow == "equipped from backpack" then
+        task.wait(0.15)
+    end
+
+    local targetPos = theirHRP.Position
+    local startHealth = theirHum.Health
+    local smallAvatar = hitboxCheck(targetPlr)
+    local origSize = theirHRP.Size
+    if smallAvatar then
+        pcall(function() theirHRP.Size = Vector3.new(8, 8, 8) end)
+    end
+
+    local frontOrigin = CFrame.new(targetPos + Vector3.new(0, 1.5, 0))
+    local frontTarget = CFrame.new(targetPos)
+    fireGunChannels(gun, frontOrigin, frontTarget)
+    task.wait(0.08)
+    if theirHum.Health < startHealth then
+        if smallAvatar and theirHRP.Parent then pcall(function() theirHRP.Size = origSize end) end
+        return true, "front"
+    end
+
+    local backOrigin = CFrame.new(targetPos - Vector3.new(0, 1.5, 0) + Vector3.new(0, 0, -6))
+    local backTarget = CFrame.new(targetPos + Vector3.new(0, 0, 6))
+    fireGunChannels(gun, backOrigin, backTarget)
+    task.wait(0.08)
+    if theirHum.Health < startHealth then
+        if smallAvatar and theirHRP.Parent then pcall(function() theirHRP.Size = origSize end) end
+        return true, "reverse"
+    end
+
+    local topOrigin = CFrame.new(targetPos + Vector3.new(0, 18, 0))
+    local topTarget = CFrame.new(targetPos)
+    fireGunChannels(gun, topOrigin, topTarget)
+    task.wait(0.1)
+    if smallAvatar and theirHRP.Parent then pcall(function() theirHRP.Size = origSize end) end
+    if theirHum.Health < startHealth then return true, "top" end
+    return false, "all missed"
 end
 
 local function mobileForceShoot()
@@ -1993,8 +2066,6 @@ Players.PlayerRemoving:Connect(function(plr)
     S.roleCache[plr.Name] = nil
     TargetVisibility[plr] = nil
     VisCache[plr] = nil
-    if S.gunESP and S.gunESP.highlights then
-    end
 end)
 
 local function applyKorblox()
@@ -4457,7 +4528,7 @@ window:SetConfigSnapshot(snapshotSettings)
 window:SetConfigApply(applyConfig)
 window:BuildConfigPage()
 
-pcall(function() setTheme("Green") end)
+pcall(function() setTheme(STARTUP_THEME) end)
 if window.UpdateThemeButtons then pcall(function() window:UpdateThemeButtons() end) end
 
 task.delay(2, function()
