@@ -1108,6 +1108,30 @@ local function getGunRaycastOrigin()
     return hrp.CFrame
 end
 
+local function getWallbangOrigin(targetChar, targetPart)
+    local aimPart = targetPart
+        or (targetChar and (targetChar:FindFirstChild("Head")
+            or targetChar:FindFirstChild("HumanoidRootPart")))
+    if not aimPart then return nil end
+    local pos = aimPart.Position
+    local myHRP = getHRP()
+    local from = myHRP and myHRP.Position or pos
+    local dir = (pos - from)
+    if dir.Magnitude < 0.1 then
+        dir = Vector3.new(0, 0, -1)
+    else
+        dir = dir.Unit
+    end
+    return CFrame.new(pos - dir * 2.2 + Vector3.new(0, 0.35, 0))
+end
+
+local function pathBlockedTo(targetChar, targetPart)
+    local origin = getGunRaycastOrigin()
+    if not origin or not targetPart then return false end
+    local hitType = classifyPathHit(origin.Position, targetPart.Position, targetChar)
+    return hitType == "wall" or hitType == "innocent"
+end
+
 local function fireGunShootRemote(gun, originCF, targetCF)
     if not gun or not originCF or not targetCF then return false, "bad args" end
     local shoot = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
@@ -1148,55 +1172,52 @@ local function buildTargetCF(targetPlr, targetPart)
     return nil
 end
 
-local function yarhmFireAt(targetPlr, targetPart)
-    if not targetPlr or not targetPlr.Character then return false, "no target" end
+local function prepareGun()
     local char = LocalPlayer.Character
-    if not char then return false, "no character" end
-
-    local gun, gunHow = ensureGunReady()
-    if not gun then return false, "gun: " .. tostring(gunHow) end
+    if not char then return nil, "no character" end
+    local gun, how = ensureGunReady()
+    if not gun then return nil, "gun: " .. tostring(how) end
     if gun.Parent ~= char then
         pcall(function() gun.Parent = char end)
-        task.wait(0.1)
-        if gun.Parent ~= char then return false, "gun not in rig" end
+        task.wait(0.08)
+        if gun.Parent ~= char then return nil, "gun not in rig" end
     end
+    return gun, how
+end
 
-    local originCF = getGunRaycastOrigin()
-    if not originCF then return false, "no origin" end
+local function shootAt(targetPlr, targetPart, wallbang)
+    if not targetPlr or not targetPlr.Character then return false, "no target" end
+    local gun, how = prepareGun()
+    if not gun then return false, how end
 
     local targetCF = buildTargetCF(targetPlr, targetPart)
     if not targetCF then return false, "no target pos" end
+
+    local originCF
+    if wallbang or pathBlockedTo(targetPlr.Character, targetPart or targetPlr.Character:FindFirstChild("HumanoidRootPart")) then
+        originCF = getWallbangOrigin(targetPlr.Character, targetPart)
+    end
+    if not originCF then
+        originCF = getGunRaycastOrigin()
+    end
+    if not originCF then return false, "no origin" end
 
     local ok, info = fireGunShootRemote(gun, originCF, targetCF)
     if ok then return true, info end
     return fireGunChannels(gun, originCF, targetCF)
 end
 
+local function yarhmFireAt(targetPlr, targetPart)
+    local forceBang = not AimbotSettings.WallCheck
+    return shootAt(targetPlr, targetPart, forceBang)
+end
+
 local function yarhmInstakill(targetPlr)
-    if not targetPlr or not targetPlr.Character then return false, "no target" end
-    local char = LocalPlayer.Character
-    if not char then return false, "no character" end
-
-    local gun, gunHow = ensureGunReady()
-    if not gun then return false, "gun: " .. tostring(gunHow) end
-    if gun.Parent ~= char then
-        pcall(function() gun.Parent = char end)
-        task.wait(0.1)
-        if gun.Parent ~= char then return false, "gun not in rig" end
-    end
-
-    local theirHRP = targetPlr.Character:FindFirstChild("HumanoidRootPart")
-    if not theirHRP then return false, "no target HRP" end
-
-    local originCF = getGunRaycastOrigin()
-    if not originCF then
-        originCF = CFrame.new(theirHRP.Position - theirHRP.CFrame.LookVector * 3.5 + Vector3.new(0, 1.2, 0))
-    end
-    local targetCF = CFrame.new(theirHRP.Position)
-
-    local ok, info = fireGunShootRemote(gun, originCF, targetCF)
-    if ok then return true, info end
-    return fireGunChannels(gun, originCF, targetCF)
+    local part = targetPlr and targetPlr.Character and (
+        targetPlr.Character:FindFirstChild("Head")
+        or targetPlr.Character:FindFirstChild("HumanoidRootPart")
+    )
+    return shootAt(targetPlr, part, true)
 end
 
 local function mobileForceShoot()
@@ -1206,11 +1227,7 @@ local function mobileForceShoot()
         return false
     end
     local targetPart = getMM2TargetPart(murderer.Character)
-    local ok, info = yarhmFireAt(murderer, targetPart)
-    if not ok then
-        task.wait(0.15)
-        ok, info = yarhmInstakill(murderer)
-    end
+    local ok, info = shootAt(murderer, targetPart, true)
     if ok then
         notify("Shot " .. murderer.DisplayName, 1.5)
         return true
@@ -3649,14 +3666,11 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
             if not isTargetSafe(murderer) then return end
             local targetPart = getMM2TargetPart(murderer.Character)
             if not targetPart then return end
-            local myHRP = getHRP()
-            if not myHRP then return end
             if not findGunEquipped() and not findGunInBackpack() then return end
-            if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
             local now = tick()
-            if now - lastShot < 0.15 then return end
+            if now - lastShot < 0.12 then return end
             lastShot = now
-            yarhmFireAt(murderer, targetPart)
+            shootAt(murderer, targetPart, true)
         end))
     else
         dropConn("autofire")
@@ -3676,10 +3690,12 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill", false, function(v)
             if tick() - S.roundStartedAt < AUTO_KILL_COOLDOWN then return end
             local murderer = getMurdererCached()
             if not isTargetSafe(murderer) then return end
+            local targetPart = getMM2TargetPart(murderer.Character)
+            if not targetPart then return end
             local now = tick()
-            if now - lastShot < 0.15 then return end
+            if now - lastShot < 0.12 then return end
             lastShot = now
-            yarhmInstakill(murderer)
+            shootAt(murderer, targetPart, true)
         end))
     else
         dropConn("autokill")
