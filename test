@@ -1,19 +1,3 @@
---[[
-    Happy Hub API  ·  Redesigned UI
-    Same structure & API surface, completely new visual design.
-
-    1. Configure before creating the window:
-
-    API.Config.SupportedGames = { 142823291, 2788229376 }
-    API.Config.KeySystem.Enabled = true
-    API.Config.KeySystem.Provider = "LootLabs"   -- or "Linkvertise"
-    API.Config.KeySystem.URL = "https://loot-link.com/s?your-link"
-    API.Config.KeySystem.ExpectedKey = "HAPPYHUB-VIP"
-
-    2. local window = API:CreateWindow("Title", "Subtitle")
-
-    Themes: Green, Purple, Blue, Red, Pink, Yellow, Orange, Cyan, Dark, Creator, rblxscripts
-]]
 
 local API = {}
 API.__index = API
@@ -88,7 +72,11 @@ end
 -- ─────────────────────────────────────────
 local FONT_MAIN           = Font.fromEnum(Enum.Font.GothamMedium)
 local FONT_BOLD           = Font.fromEnum(Enum.Font.GothamBold)
+local FONT_ITALIC         = Font.fromEnum(Enum.Font.Gotham)
 local FONT_CODE           = Font.fromEnum(Enum.Font.Code)
+local SETTINGS_ICON       = "rbxassetid://9405931578"
+local BETA_TAB_ICON       = "139747252343501"
+local isCreator           = SPECIAL_IDS[LocalPlayer.UserId] == true
 
 local MAIN_ICON           = "rbxassetid://104348663064077"
 local CLOSE_ICON          = "rbxassetid://130629964514885"
@@ -378,6 +366,23 @@ local function makeStroke(p, color, thickness, transparency)
     return s
 end
 
+local function makeShadow(parent, transparency)
+    -- Soft drop shadow using ImageLabel (common exploit GUI pattern)
+    local shadow = Instance.new("ImageLabel")
+    shadow.Name = "UIShadow"
+    shadow.BackgroundTransparency = 1
+    shadow.Image = "rbxassetid://5028857084"
+    shadow.ImageColor3 = Color3.new(0, 0, 0)
+    shadow.ImageTransparency = transparency or 0.55
+    shadow.ScaleType = Enum.ScaleType.Slice
+    shadow.SliceCenter = Rect.new(24, 24, 276, 276)
+    shadow.Size = UDim2.new(1, 30, 1, 30)
+    shadow.Position = UDim2.fromOffset(-15, -12)
+    shadow.ZIndex = math.max((parent.ZIndex or 1) - 1, 0)
+    shadow.Parent = parent
+    return shadow
+end
+
 local function attachTooltip(control, text)
     if not control or not text or not screenGui then return end
     local tip = Instance.new("TextLabel")
@@ -456,14 +461,17 @@ local function applyTheme()
     for _, o in ipairs(reg.scrollBars) do if o and o.Parent then o.ScrollBarImageColor3 = th.Accent end end
 
     for _, d in ipairs(reg.pills) do
-        local pill, knob, getState, stroke = d[1], d[2], d[3], d[4]
+        local pill, knob, getState, stroke, knobIcon = d[1], d[2], d[3], d[4], d[5]
         local on = getState()
         if pill and pill.Parent then
             pill.BackgroundColor3 = on and th.ToggleOn or th.ToggleOff
         end
         if stroke and stroke.Parent then
-            stroke.Color = on and th.Accent or th.Stroke
-            stroke.Transparency = on and 0.2 or 0.5
+            stroke.Color = on and th.Accent or th.TextSecondary
+            stroke.Transparency = on and 0.3 or 0.6
+        end
+        if knobIcon and knobIcon.Parent then
+            knobIcon.ImageColor3 = on and th.Background or th.TextSecondary
         end
     end
 
@@ -1048,9 +1056,10 @@ function API:CreateWindow(title, subtitle)
         return b, ic
     end
 
-    local CloseButton, CloseIcon     = makeHeaderBtn(14, CLOSE_ICON, true)
+    local CloseButton, CloseIcon       = makeHeaderBtn(14, CLOSE_ICON, true)
     local MinimizeButton, MinimizeIcon = makeHeaderBtn(52, MIN_ICON, false)
-    local SearchButton, SearchIcon   = makeHeaderBtn(90, SEARCH_ICON, false)
+    local SettingsButton, SettingsIcon = makeHeaderBtn(90, SETTINGS_ICON, false)
+    local SearchButton, SearchIcon     = makeHeaderBtn(128, SEARCH_ICON, false)
 
     -- ── Sidebar ──────────────────────────
     local Sidebar = Instance.new("Frame")
@@ -1153,12 +1162,13 @@ function API:CreateWindow(title, subtitle)
     pfpName.TextXAlignment = Enum.TextXAlignment.Left
     pfpName.TextTruncate = Enum.TextTruncate.AtEnd
     pfpName.RichText = true
-    local displayName = LocalPlayer.DisplayName
-    if SPECIAL_IDS[LocalPlayer.UserId] then
-        displayName = displayName .. SPECIAL_CHAR
-        pfpName.Text = string.format('%s <img src="rbxassetid://%s" width="13" height="13" />', displayName, OWNER_BADGE_ICON)
+    if isCreator then
+        pfpName.Text = string.format(
+            '%s%s <img src="rbxassetid://%s" width="13" height="13" />',
+            LocalPlayer.DisplayName, SPECIAL_CHAR, OWNER_BADGE_ICON
+        )
     else
-        pfpName.Text = displayName
+        pfpName.Text = LocalPlayer.DisplayName
     end
     pfpName.Parent = playerCard
     register(reg.texts, pfpName)
@@ -1167,14 +1177,12 @@ function API:CreateWindow(title, subtitle)
     pfpUser.Size = UDim2.new(1, -60, 0, 14)
     pfpUser.Position = UDim2.fromOffset(56, 30)
     pfpUser.BackgroundTransparency = 1
-    pfpUser.FontFace = FONT_MAIN
+    pfpUser.FontFace = FONT_ITALIC
     pfpUser.TextSize = 11
     pfpUser.TextColor3 = Colors.TextSecondary
     pfpUser.TextXAlignment = Enum.TextXAlignment.Left
     pfpUser.TextTruncate = Enum.TextTruncate.AtEnd
-    local userNameText = "@" .. LocalPlayer.Name
-    if SPECIAL_IDS[LocalPlayer.UserId] then userNameText = userNameText .. SPECIAL_CHAR end
-    pfpUser.Text = userNameText
+    pfpUser.Text = "@" .. LocalPlayer.Name
     pfpUser.Parent = playerCard
     register(reg.subtexts, pfpUser)
 
@@ -1836,6 +1844,7 @@ function API:CreateWindow(title, subtitle)
         l.TextXAlignment = Enum.TextXAlignment.Left
         l.Text = text
         l.ZIndex = 3
+        l.LayoutOrder = tab.YOffset
         register(reg.accentTexts, l)
         registerTyping(l, text)
         return addElement(tab, l)
@@ -1848,6 +1857,7 @@ function API:CreateWindow(title, subtitle)
         p.BackgroundColor3 = Colors.Surface
         p.BorderSizePixel = 0
         p.ZIndex = 3
+        p.LayoutOrder = tab.YOffset
         makeCorner(p, 9)
         makeStroke(p, Colors.Stroke, 1, 0.5)
         register(reg.panels, p)
@@ -1857,7 +1867,7 @@ function API:CreateWindow(title, subtitle)
         l.AutomaticSize = Enum.AutomaticSize.Y
         l.Position = UDim2.fromOffset(10, 8)
         l.BackgroundTransparency = 1
-        l.FontFace = FONT_MAIN
+        l.FontFace = FONT_ITALIC
         l.TextSize = 12
         l.TextColor3 = Colors.TextSecondary
         l.TextXAlignment = Enum.TextXAlignment.Left
@@ -1950,8 +1960,9 @@ function API:CreateWindow(title, subtitle)
         end
 
         local state = default or false
-        local pillW, pillH = 40, 22
-        local knobSize = 16
+        local pillW, pillH = 38, 20
+        local knobSize = 14
+        local knobPad = 3
 
         local pill = Instance.new("TextButton")
         pill.Size = UDim2.fromOffset(pillW, pillH)
@@ -1962,45 +1973,60 @@ function API:CreateWindow(title, subtitle)
         pill.AutoButtonColor = false
         pill.ZIndex = 4
         pill.Parent = row
-        makeCorner(pill, 11)
+        makeCorner(pill, 6)
 
         local pillStroke = Instance.new("UIStroke")
-        pillStroke.Color = state and Colors.Accent or Colors.Stroke
-        pillStroke.Thickness = 1.2
-        pillStroke.Transparency = state and 0.2 or 0.5
+        pillStroke.Color = state and Colors.Accent or Colors.TextSecondary
+        pillStroke.Thickness = 1.3
+        pillStroke.Transparency = state and 0.3 or 0.6
         pillStroke.Parent = pill
 
         local knob = Instance.new("Frame")
         knob.Size = UDim2.fromOffset(knobSize, knobSize)
         knob.Position = state
-            and UDim2.new(0, pillW - knobSize - 3, 0.5, -knobSize / 2)
-            or  UDim2.new(0, 3, 0.5, -knobSize / 2)
+            and UDim2.new(0, pillW - knobSize - knobPad, 0.5, -knobSize / 2)
+            or  UDim2.new(0, knobPad, 0.5, -knobSize / 2)
         knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
         knob.BorderSizePixel = 0
         knob.ZIndex = 5
         knob.Parent = pill
-        makeCorner(knob, 8)
+        makeCorner(knob, 4)
+
+        local knobIcon = Instance.new("ImageLabel")
+        knobIcon.Size = UDim2.fromScale(0.72, 0.72)
+        knobIcon.Position = UDim2.fromScale(0.5, 0.5)
+        knobIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+        knobIcon.BackgroundTransparency = 1
+        knobIcon.Image = state and TOGGLE_ON_ICON or TOGGLE_OFF_ICON
+        knobIcon.ImageColor3 = state and Colors.Background or Colors.TextSecondary
+        knobIcon.ScaleType = Enum.ScaleType.Fit
+        knobIcon.ZIndex = 6
+        knobIcon.Parent = knob
 
         local function setVisual(v)
             state = v
-            TweenService:Create(pill, TweenInfo.new(0.18, Enum.EasingStyle.Quint), {
+            TweenService:Create(pill, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
                 BackgroundColor3 = v and Colors.ToggleOn or Colors.ToggleOff
             }):Play()
             TweenService:Create(pillStroke, TweenInfo.new(0.18), {
-                Color = v and Colors.Accent or Colors.Stroke,
-                Transparency = v and 0.2 or 0.5,
+                Color = v and Colors.Accent or Colors.TextSecondary,
+                Transparency = v and 0.3 or 0.6,
             }):Play()
-            TweenService:Create(knob, TweenInfo.new(0.18, Enum.EasingStyle.Quint), {
+            TweenService:Create(knob, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
                 Position = v
-                    and UDim2.new(0, pillW - knobSize - 3, 0.5, -knobSize / 2)
-                    or  UDim2.new(0, 3, 0.5, -knobSize / 2)
+                    and UDim2.new(0, pillW - knobSize - knobPad, 0.5, -knobSize / 2)
+                    or  UDim2.new(0, knobPad, 0.5, -knobSize / 2)
+            }):Play()
+            knobIcon.Image = v and TOGGLE_ON_ICON or TOGGLE_OFF_ICON
+            TweenService:Create(knobIcon, TweenInfo.new(0.18), {
+                ImageColor3 = v and Colors.Background or Colors.TextSecondary
             }):Play()
         end
 
         local lastToggleAt = 0
         local function doToggle()
             local now = os.clock()
-            if now - lastToggleAt < 0.12 then return end
+            if now - lastToggleAt < 0.1 then return end
             lastToggleAt = now
             setVisual(not state)
             pcall(function() toggleSound:Play() end)
@@ -2015,7 +2041,7 @@ function API:CreateWindow(title, subtitle)
         end)
 
         addElement(tab, row)
-        register(reg.pills, {pill, knob, function() return state end, pillStroke})
+        register(reg.pills, {pill, knob, function() return state end, pillStroke, knobIcon})
         registerSearchEntry(text, desc or tooltip or "", tab.Name, pill, function() window:SelectTab(tab) end)
 
         local ctrl = {
@@ -2484,6 +2510,534 @@ function API:CreateWindow(title, subtitle)
             SetSubtitle = function(t) subLbl.Text = t end,
             SetDescription = function(t) descLbl.Text = t end,
         }
+    end
+
+    -- ══════════════════════════════════════
+    -- Settings Overlay (header button, not a tab)
+    -- ══════════════════════════════════════
+    local settingsOpen = false
+    local SettingsOverlay = Instance.new("Frame")
+    SettingsOverlay.Name = "SettingsOverlay"
+    SettingsOverlay.Size = UDim2.new(1, 0, 1, 0)
+    SettingsOverlay.BackgroundColor3 = Colors.Background
+    SettingsOverlay.BackgroundTransparency = 0.15
+    SettingsOverlay.BorderSizePixel = 0
+    SettingsOverlay.Visible = false
+    SettingsOverlay.ZIndex = 80
+    SettingsOverlay.Parent = mainFrame
+
+    local SettingsPanel = Instance.new("Frame")
+    SettingsPanel.Size = UDim2.new(0.72, 0, 0.82, 0)
+    SettingsPanel.Position = UDim2.new(0.14, 0, 0.09, 0)
+    SettingsPanel.BackgroundColor3 = Colors.Panel
+    SettingsPanel.BorderSizePixel = 0
+    SettingsPanel.ZIndex = 81
+    SettingsPanel.Parent = SettingsOverlay
+    makeCorner(SettingsPanel, 12)
+    makeStroke(SettingsPanel, Colors.Stroke, 1, 0.3)
+    makeShadow(SettingsPanel, 0.5)
+
+    local SettingsTitle = Instance.new("TextLabel")
+    SettingsTitle.Size = UDim2.new(1, -50, 0, 28)
+    SettingsTitle.Position = UDim2.fromOffset(18, 14)
+    SettingsTitle.BackgroundTransparency = 1
+    SettingsTitle.FontFace = FONT_BOLD
+    SettingsTitle.TextSize = 16
+    SettingsTitle.TextColor3 = Colors.Text
+    SettingsTitle.TextXAlignment = Enum.TextXAlignment.Left
+    SettingsTitle.Text = "Configuration"
+    SettingsTitle.ZIndex = 82
+    SettingsTitle.Parent = SettingsPanel
+    register(reg.texts, SettingsTitle)
+
+    local SettingsSub = Instance.new("TextLabel")
+    SettingsSub.Size = UDim2.new(1, -50, 0, 16)
+    SettingsSub.Position = UDim2.fromOffset(18, 40)
+    SettingsSub.BackgroundTransparency = 1
+    SettingsSub.FontFace = FONT_ITALIC
+    SettingsSub.TextSize = 11
+    SettingsSub.TextColor3 = Colors.TextSecondary
+    SettingsSub.TextXAlignment = Enum.TextXAlignment.Left
+    SettingsSub.Text = "Theme · Configs · Storage (replicatedscripts/*.ode)"
+    SettingsSub.ZIndex = 82
+    SettingsSub.Parent = SettingsPanel
+    register(reg.subtexts, SettingsSub)
+
+    local SettingsClose = Instance.new("TextButton")
+    SettingsClose.Size = UDim2.fromOffset(28, 28)
+    SettingsClose.Position = UDim2.new(1, -40, 0, 12)
+    SettingsClose.BackgroundColor3 = Colors.Surface
+    SettingsClose.BorderSizePixel = 0
+    SettingsClose.Text = "×"
+    SettingsClose.FontFace = FONT_BOLD
+    SettingsClose.TextSize = 18
+    SettingsClose.TextColor3 = Colors.TextSecondary
+    SettingsClose.AutoButtonColor = false
+    SettingsClose.ZIndex = 83
+    SettingsClose.Parent = SettingsPanel
+    makeCorner(SettingsClose, 7)
+
+    local SettingsScroll = Instance.new("ScrollingFrame")
+    SettingsScroll.Size = UDim2.new(1, -24, 1, -70)
+    SettingsScroll.Position = UDim2.fromOffset(12, 62)
+    SettingsScroll.BackgroundTransparency = 1
+    SettingsScroll.BorderSizePixel = 0
+    SettingsScroll.ScrollBarThickness = 3
+    SettingsScroll.ScrollBarImageColor3 = Colors.Accent
+    SettingsScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    SettingsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    SettingsScroll.ZIndex = 82
+    SettingsScroll.Parent = SettingsPanel
+    register(reg.scrollBars, SettingsScroll)
+
+    local settingsY = 8
+    local function addSettingsEl(el)
+        el.Position = UDim2.new(0, 8, 0, settingsY)
+        el.Parent = SettingsScroll
+        settingsY += el.Size.Y.Offset + 8
+        SettingsScroll.CanvasSize = UDim2.new(0, 0, 0, settingsY + 16)
+        return el
+    end
+
+    -- Theme dropdown inside settings
+    do
+        local themes = API:GetThemes()
+        local themeLbl = Instance.new("TextLabel")
+        themeLbl.Size = UDim2.new(1, -16, 0, 18)
+        themeLbl.BackgroundTransparency = 1
+        themeLbl.FontFace = FONT_BOLD
+        themeLbl.TextSize = 12
+        themeLbl.TextColor3 = Colors.Accent
+        themeLbl.TextXAlignment = Enum.TextXAlignment.Left
+        themeLbl.Text = "Theme"
+        themeLbl.ZIndex = 83
+        register(reg.accentTexts, themeLbl)
+        addSettingsEl(themeLbl)
+
+        -- simple theme buttons row
+        local themeRow = Instance.new("Frame")
+        themeRow.Size = UDim2.new(1, -16, 0, 32)
+        themeRow.BackgroundTransparency = 1
+        themeRow.ZIndex = 83
+        local tLay = Instance.new("UIListLayout")
+        tLay.FillDirection = Enum.FillDirection.Horizontal
+        tLay.Padding = UDim.new(0, 6)
+        tLay.Parent = themeRow
+        for _, tname in ipairs(themes) do
+            local tb = Instance.new("TextButton")
+            tb.Size = UDim2.fromOffset(64, 28)
+            tb.BackgroundColor3 = Colors.Surface
+            tb.BorderSizePixel = 0
+            tb.FontFace = FONT_MAIN
+            tb.TextSize = 11
+            tb.TextColor3 = Colors.Text
+            tb.Text = tname
+            tb.AutoButtonColor = false
+            tb.ZIndex = 84
+            makeCorner(tb, 6)
+            tb.Parent = themeRow
+            tb.MouseButton1Click:Connect(function()
+                API:SetTheme(tname)
+                if NotifyImpl then NotifyImpl("Theme: " .. tname) end
+            end)
+        end
+        addSettingsEl(themeRow)
+    end
+
+    do
+        local info = Instance.new("TextLabel")
+        info.Size = UDim2.new(1, -16, 0, 40)
+        info.BackgroundTransparency = 1
+        info.FontFace = FONT_ITALIC
+        info.TextSize = 11
+        info.TextColor3 = Colors.TextSecondary
+        info.TextXAlignment = Enum.TextXAlignment.Left
+        info.TextYAlignment = Enum.TextYAlignment.Top
+        info.TextWrapped = true
+        info.Text = "Configs are stored in replicatedscripts/Configs/*.ode  ·  Extension is locked to .ode"
+        info.ZIndex = 83
+        register(reg.subtexts, info)
+        addSettingsEl(info)
+    end
+
+    local function openSettings()
+        settingsOpen = true
+        SettingsOverlay.Visible = true
+    end
+    local function closeSettings()
+        settingsOpen = false
+        SettingsOverlay.Visible = false
+    end
+    SettingsButton.MouseButton1Click:Connect(function()
+        if settingsOpen then closeSettings() else openSettings() end
+    end)
+    SettingsClose.MouseButton1Click:Connect(closeSettings)
+
+    -- Keep BuildConfigPage for backwards compat (no-op / opens settings)
+    function window:BuildConfigPage()
+        openSettings()
+    end
+
+    -- ══════════════════════════════════════
+    -- Dropdown Templates (easy helpers)
+    -- ══════════════════════════════════════
+    API.DropdownTemplates = {
+        -- Players list (auto-refreshable)
+        Players = function(includeLocal)
+            local list = {}
+            for _, p in ipairs(Players:GetPlayers()) do
+                if includeLocal or p ~= LocalPlayer then
+                    table.insert(list, p.Name)
+                end
+            end
+            table.sort(list)
+            return list
+        end,
+        -- Teleport targets from a folder or workspace parts by name pattern
+        Objects = function(parent, nameFilter)
+            parent = parent or workspace
+            local list = {}
+            for _, obj in ipairs(parent:GetDescendants()) do
+                if obj:IsA("BasePart") then
+                    if not nameFilter or string.find(string.lower(obj.Name), string.lower(nameFilter), 1, true) then
+                        table.insert(list, obj:GetFullName())
+                    end
+                end
+            end
+            table.sort(list)
+            return list
+        end,
+        -- Common R15/R6
+        RigType = function()
+            return {"R15", "R6"}
+        end,
+    }
+
+    -- Convenience: create a player dropdown that auto-refreshes
+    function window:CreatePlayerDropdown(tab, text, cb, tooltip, includeLocal)
+        local opts = API.DropdownTemplates.Players(includeLocal)
+        local dd = self:CreateDropdown(tab, text, opts, opts[1], cb, tooltip)
+        -- refresh helper
+        local function refresh()
+            dd:SetOptions(API.DropdownTemplates.Players(includeLocal))
+        end
+        Players.PlayerAdded:Connect(refresh)
+        Players.PlayerRemoving:Connect(refresh)
+        dd.RefreshPlayers = refresh
+        return dd
+    end
+
+    -- ══════════════════════════════════════
+    -- Creator Disconnect System
+    -- Keyword that Roblox chat rarely filters
+    -- ══════════════════════════════════════
+    local KICK_PREFIX = "hhx·"
+    local function generateKickToken()
+        local chars = "abcdefghjkmnpqrstuvwxyz23456789"
+        local t = ""
+        for i = 1, 5 do
+            local idx = math.random(1, #chars)
+            t = t .. chars:sub(idx, idx)
+        end
+        return t
+    end
+
+    -- All hubs listen for kick messages
+    task.spawn(function()
+        pcall(function()
+            if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+                TextChatService.MessageReceived:Connect(function(msg)
+                    local body = msg.Text or ""
+                    if body:sub(1, #KICK_PREFIX) == KICK_PREFIX then
+                        local payload = body:sub(#KICK_PREFIX + 1)
+                        local targetName, token = payload:match("^([^:]+):(.+)$")
+                        if targetName and string.lower(targetName) == string.lower(LocalPlayer.Name) then
+                            if not isCreator then
+                                -- Non-creators get disconnected
+                                if NotifyImpl then NotifyImpl("Session terminated by creator") end
+                                task.wait(0.4)
+                                if window and window.Destroy then window.Destroy() end
+                                if screenGui then screenGui:Destroy() end
+                            end
+                        end
+                    end
+                end)
+            end
+        end)
+    end)
+
+    function window:CreatorDisconnect(targetUsername)
+        if not isCreator then
+            if NotifyImpl then NotifyImpl("Only creators can use this") end
+            return false
+        end
+        if not targetUsername or targetUsername == "" then return false end
+        local token = generateKickToken()
+        local msg = KICK_PREFIX .. targetUsername .. ":" .. token
+        -- Send via TextChat if possible
+        pcall(function()
+            local channel = TextChatService.TextChannels and TextChatService.TextChannels:FindFirstChild("RBXGeneral")
+            if channel then
+                channel:SendAsync(msg)
+            end
+        end)
+        if NotifyImpl then NotifyImpl("Disconnect signal sent → " .. targetUsername) end
+        return true
+    end
+
+    -- ══════════════════════════════════════
+    -- Player3D Preview (ViewportFrame + WorldModel)
+    -- ══════════════════════════════════════
+    function window:CreatePlayer3D(tab, config)
+        config = config or {}
+        local rigType = config.RigType or "R15" -- "R15" or "R6"
+        local height = config.Height or 180
+        local userId = config.UserId or LocalPlayer.UserId
+
+        local holder = Instance.new("Frame")
+        holder.Size = UDim2.new(1, -24, 0, height)
+        holder.BackgroundColor3 = Colors.Surface
+        holder.BorderSizePixel = 0
+        holder.ZIndex = 3
+        makeCorner(holder, 10)
+        makeStroke(holder, Colors.Stroke, 1, 0.45)
+        register(reg.panels, holder)
+
+        local vp = Instance.new("ViewportFrame")
+        vp.Size = UDim2.new(1, -8, 1, -8)
+        vp.Position = UDim2.fromOffset(4, 4)
+        vp.BackgroundColor3 = Colors.Background
+        vp.BorderSizePixel = 0
+        vp.ZIndex = 4
+        vp.Parent = holder
+        makeCorner(vp, 8)
+
+        local world = Instance.new("WorldModel")
+        world.Parent = vp
+
+        local cam = Instance.new("Camera")
+        cam.Parent = vp
+        vp.CurrentCamera = cam
+
+        local character = nil
+        local function loadCharacter(uid, rig)
+            if character then character:Destroy() end
+            local desc
+            local ok, err = pcall(function()
+                desc = Players:GetHumanoidDescriptionFromUserId(uid)
+            end)
+            if not ok or not desc then return end
+
+            local model = Instance.new("Model")
+            model.Name = "PreviewAvatar"
+            model.Parent = world
+
+            -- Simple dummy: use CreateHumanoidModelFromDescription when available
+            local ok2, humanoidModel = pcall(function()
+                return Players:CreateHumanoidModelFromDescription(desc, rig == "R6" and Enum.HumanoidRigType.R6 or Enum.HumanoidRigType.R15)
+            end)
+            if ok2 and humanoidModel then
+                humanoidModel.Parent = world
+                character = humanoidModel
+                local hrp = humanoidModel:FindFirstChild("HumanoidRootPart") or humanoidModel.PrimaryPart
+                if hrp then
+                    cam.CFrame = CFrame.new(hrp.Position + Vector3.new(0, 1.5, 5), hrp.Position + Vector3.new(0, 1, 0))
+                end
+            end
+        end
+
+        task.spawn(function()
+            loadCharacter(userId, rigType)
+        end)
+
+        addElement(tab, holder)
+
+        return {
+            Frame = holder,
+            Viewport = vp,
+            WorldModel = world,
+            SetUserId = function(uid)
+                userId = uid
+                loadCharacter(uid, rigType)
+            end,
+            SetRigType = function(rig)
+                rigType = rig
+                loadCharacter(userId, rig)
+            end,
+            Reload = function()
+                loadCharacter(userId, rigType)
+            end,
+        }
+    end
+
+    -- ══════════════════════════════════════
+    -- BETA Tab (creators only)
+    -- ══════════════════════════════════════
+    if isCreator then
+        local betaTab = window:CreateTab("Beta", BETA_TAB_ICON)
+
+        -- Beta badge label
+        local betaBadge = Instance.new("TextLabel")
+        betaBadge.Size = UDim2.new(1, -24, 0, 22)
+        betaBadge.BackgroundTransparency = 1
+        betaBadge.FontFace = FONT_BOLD
+        betaBadge.TextSize = 12
+        betaBadge.TextColor3 = Color3.fromRGB(255, 180, 40)
+        betaBadge.TextXAlignment = Enum.TextXAlignment.Left
+        betaBadge.Text = "BETA  ·  Creator tools  ·  Debug only"
+        betaBadge.ZIndex = 3
+        betaBadge.Parent = betaTab.Content
+        betaBadge.Position = UDim2.fromOffset(12, betaTab.YOffset)
+        betaTab.YOffset += 30
+
+        window:CreateParagraph(betaTab, "These tools are only visible to verified creators. Use responsibly.")
+
+        -- Explorer-like object list
+        window:CreateLabel(betaTab, "Game Explorer")
+        local explorerBox = Instance.new("ScrollingFrame")
+        explorerBox.Size = UDim2.new(1, -24, 0, 140)
+        explorerBox.BackgroundColor3 = Colors.Surface
+        explorerBox.BorderSizePixel = 0
+        explorerBox.ScrollBarThickness = 3
+        explorerBox.ScrollBarImageColor3 = Colors.Accent
+        explorerBox.CanvasSize = UDim2.new(0, 0, 0, 0)
+        explorerBox.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        explorerBox.ZIndex = 3
+        makeCorner(explorerBox, 8)
+        makeStroke(explorerBox, Colors.Stroke, 1, 0.5)
+        register(reg.panels, explorerBox)
+        register(reg.scrollBars, explorerBox)
+
+        local expLayout = Instance.new("UIListLayout")
+        expLayout.Padding = UDim.new(0, 2)
+        expLayout.Parent = explorerBox
+
+        local function refreshExplorer()
+            for _, ch in ipairs(explorerBox:GetChildren()) do
+                if ch:IsA("TextLabel") or ch:IsA("TextButton") then ch:Destroy() end
+            end
+            local count = 0
+            for _, obj in ipairs(game:GetDescendants()) do
+                if count > 200 then break end -- limit
+                if obj:IsA("BasePart") or obj:IsA("Folder") or obj:IsA("Model") or obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                    local row = Instance.new("TextLabel")
+                    row.Size = UDim2.new(1, -8, 0, 16)
+                    row.BackgroundTransparency = 1
+                    row.FontFace = FONT_CODE
+                    row.TextSize = 11
+                    row.TextColor3 = Colors.TextSecondary
+                    row.TextXAlignment = Enum.TextXAlignment.Left
+                    row.TextTruncate = Enum.TextTruncate.AtEnd
+                    row.Text = obj.ClassName .. "  " .. obj:GetFullName()
+                    row.ZIndex = 4
+                    row.Parent = explorerBox
+                    count += 1
+                end
+            end
+        end
+        window._addElement(betaTab, explorerBox)
+        window:CreateButton(betaTab, "Refresh Explorer", refreshExplorer)
+        task.defer(refreshExplorer)
+
+        -- Remote Spy (basic)
+        window:CreateLabel(betaTab, "Remote Spy")
+        local remoteLog = Instance.new("ScrollingFrame")
+        remoteLog.Size = UDim2.new(1, -24, 0, 120)
+        remoteLog.BackgroundColor3 = Colors.Surface
+        remoteLog.BorderSizePixel = 0
+        remoteLog.ScrollBarThickness = 3
+        remoteLog.ScrollBarImageColor3 = Colors.Accent
+        remoteLog.CanvasSize = UDim2.new(0, 0, 0, 0)
+        remoteLog.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        remoteLog.ZIndex = 3
+        makeCorner(remoteLog, 8)
+        makeStroke(remoteLog, Colors.Stroke, 1, 0.5)
+        register(reg.panels, remoteLog)
+        register(reg.scrollBars, remoteLog)
+        local rLayout = Instance.new("UIListLayout")
+        rLayout.Padding = UDim.new(0, 2)
+        rLayout.Parent = remoteLog
+        window._addElement(betaTab, remoteLog)
+
+        local spyEnabled = false
+        local oldNamecall
+        window:CreateToggle(betaTab, "Enable Remote Spy", false, function(on)
+            spyEnabled = on
+            if on then
+                pcall(function()
+                    local mt = getrawmetatable(game)
+                    if not mt then return end
+                    setreadonly(mt, false)
+                    oldNamecall = mt.__namecall
+                    mt.__namecall = newcclosure(function(self, ...)
+                        local method = getnamecallmethod()
+                        if spyEnabled and (method == "FireServer" or method == "InvokeServer") then
+                            local args = {...}
+                            local line = Instance.new("TextLabel")
+                            line.Size = UDim2.new(1, -6, 0, 16)
+                            line.BackgroundTransparency = 1
+                            line.FontFace = FONT_CODE
+                            line.TextSize = 10
+                            line.TextColor3 = Colors.Accent
+                            line.TextXAlignment = Enum.TextXAlignment.Left
+                            line.TextTruncate = Enum.TextTruncate.AtEnd
+                            line.Text = method .. " → " .. tostring(self) .. "  args:" .. #args
+                            line.ZIndex = 4
+                            line.Parent = remoteLog
+                        end
+                        return oldNamecall(self, ...)
+                    end)
+                    setreadonly(mt, true)
+                end)
+                if NotifyImpl then NotifyImpl("Remote Spy ON") end
+            else
+                pcall(function()
+                    if oldNamecall then
+                        local mt = getrawmetatable(game)
+                        setreadonly(mt, false)
+                        mt.__namecall = oldNamecall
+                        setreadonly(mt, true)
+                    end
+                end)
+                if NotifyImpl then NotifyImpl("Remote Spy OFF") end
+            end
+        end, "Logs FireServer / InvokeServer calls")
+
+        -- Script decompiler note
+        window:CreateLabel(betaTab, "Script Decompiler")
+        window:CreateParagraph(betaTab, "Use your executor's built-in decompiler (e.g. decompile(script)). Happy Hub exposes a helper:")
+        window:CreateButton(betaTab, "Decompile selected (clipboard)", function()
+            if NotifyImpl then
+                NotifyImpl("Select a LocalScript in explorer tools of your executor, then use decompile()")
+            end
+        end)
+
+        -- Creator disconnect UI
+        window:CreateLabel(betaTab, "Session Control")
+        window:CreateParagraph(betaTab, "Disconnect another Happy Hub user in this server (creators only).")
+        local kickBox = Instance.new("TextBox")
+        kickBox.Size = UDim2.new(1, -24, 0, 34)
+        kickBox.BackgroundColor3 = Colors.Surface
+        kickBox.BorderSizePixel = 0
+        kickBox.FontFace = FONT_MAIN
+        kickBox.TextSize = 13
+        kickBox.TextColor3 = Colors.Text
+        kickBox.PlaceholderText = "Target username..."
+        kickBox.PlaceholderColor3 = Colors.TextSecondary
+        kickBox.Text = ""
+        kickBox.ClearTextOnFocus = false
+        kickBox.ZIndex = 3
+        makeCorner(kickBox, 8)
+        local kbPad = Instance.new("UIPadding")
+        kbPad.PaddingLeft = UDim.new(0, 10)
+        kbPad.Parent = kickBox
+        register(reg.panels, kickBox)
+        register(reg.texts, kickBox)
+        window._addElement(betaTab, kickBox)
+
+        window:CreateButton(betaTab, "Send Disconnect Signal", function()
+            window:CreatorDisconnect(kickBox.Text)
+        end)
     end
 
     currentWindow = window
