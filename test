@@ -1,4 +1,19 @@
+--[[
+    Happy Hub API  ·  Redesigned UI
+    Same structure & API surface, completely new visual design.
 
+    1. Configure before creating the window:
+
+    API.Config.SupportedGames = { 142823291, 2788229376 }
+    API.Config.KeySystem.Enabled = true
+    API.Config.KeySystem.Provider = "LootLabs"   -- or "Linkvertise"
+    API.Config.KeySystem.URL = "https://loot-link.com/s?your-link"
+    API.Config.KeySystem.ExpectedKey = "HAPPYHUB-VIP"
+
+    2. local window = API:CreateWindow("Title", "Subtitle")
+
+    Themes: Green, Purple, Blue, Red, Pink, Yellow, Orange, Cyan, Dark, Creator, rblxscripts
+]]
 
 local API = {}
 API.__index = API
