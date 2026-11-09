@@ -1,3 +1,19 @@
+--[[
+    Happy Hub API  ·  Redesigned UI
+    Same structure & API surface, completely new visual design.
+
+    1. Configure before creating the window:
+
+    API.Config.SupportedGames = { 142823291, 2788229376 }
+    API.Config.KeySystem.Enabled = true
+    API.Config.KeySystem.Provider = "LootLabs"   -- or "Linkvertise"
+    API.Config.KeySystem.URL = "https://loot-link.com/s?your-link"
+    API.Config.KeySystem.ExpectedKey = "HAPPYHUB-VIP"
+
+    2. local window = API:CreateWindow("Title", "Subtitle")
+
+    Themes: Green, Purple, Blue, Red, Pink, Yellow, Orange, Cyan, Dark, Creator, rblxscripts
+]]
 
 local API = {}
 API.__index = API
@@ -75,7 +91,6 @@ local FONT_BOLD           = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_ITALIC         = Font.fromEnum(Enum.Font.Gotham)
 local FONT_CODE           = Font.fromEnum(Enum.Font.Code)
 local SETTINGS_ICON       = "rbxassetid://9405931578"
-local BETA_TAB_ICON       = "139747252343501"
 local isCreator           = SPECIAL_IDS[LocalPlayer.UserId] == true
 
 local MAIN_ICON           = "rbxassetid://104348663064077"
@@ -2660,6 +2675,74 @@ function API:CreateWindow(title, subtitle)
         addSettingsEl(info)
     end
 
+    if isCreator then
+        local cLbl = Instance.new("TextLabel")
+        cLbl.Size = UDim2.new(1, -16, 0, 18)
+        cLbl.BackgroundTransparency = 1
+        cLbl.FontFace = FONT_BOLD
+        cLbl.TextSize = 12
+        cLbl.TextColor3 = Colors.Accent
+        cLbl.TextXAlignment = Enum.TextXAlignment.Left
+        cLbl.Text = "Session Control (Creator)"
+        cLbl.ZIndex = 83
+        register(reg.accentTexts, cLbl)
+        addSettingsEl(cLbl)
+
+        local cInfo = Instance.new("TextLabel")
+        cInfo.Size = UDim2.new(1, -16, 0, 28)
+        cInfo.BackgroundTransparency = 1
+        cInfo.FontFace = FONT_ITALIC
+        cInfo.TextSize = 11
+        cInfo.TextColor3 = Colors.TextSecondary
+        cInfo.TextXAlignment = Enum.TextXAlignment.Left
+        cInfo.TextWrapped = true
+        cInfo.Text = "Disconnect another Happy Hub user in this server."
+        cInfo.ZIndex = 83
+        register(reg.subtexts, cInfo)
+        addSettingsEl(cInfo)
+
+        local kickBox = Instance.new("TextBox")
+        kickBox.Size = UDim2.new(1, -16, 0, 34)
+        kickBox.BackgroundColor3 = Colors.Surface
+        kickBox.BorderSizePixel = 0
+        kickBox.FontFace = FONT_MAIN
+        kickBox.TextSize = 13
+        kickBox.TextColor3 = Colors.Text
+        kickBox.PlaceholderText = "Target username..."
+        kickBox.PlaceholderColor3 = Colors.TextSecondary
+        kickBox.Text = ""
+        kickBox.ClearTextOnFocus = false
+        kickBox.ZIndex = 83
+        makeCorner(kickBox, 8)
+        local kbPad = Instance.new("UIPadding")
+        kbPad.PaddingLeft = UDim.new(0, 10)
+        kbPad.Parent = kickBox
+        register(reg.panels, kickBox)
+        register(reg.texts, kickBox)
+        addSettingsEl(kickBox)
+
+        local kickBtn = Instance.new("TextButton")
+        kickBtn.Size = UDim2.new(1, -16, 0, 34)
+        kickBtn.BackgroundColor3 = Colors.Surface
+        kickBtn.BorderSizePixel = 0
+        kickBtn.FontFace = FONT_BOLD
+        kickBtn.TextSize = 13
+        kickBtn.TextColor3 = Colors.Text
+        kickBtn.Text = "Send Disconnect Signal"
+        kickBtn.AutoButtonColor = false
+        kickBtn.ZIndex = 83
+        makeCorner(kickBtn, 8)
+        makeStroke(kickBtn, Colors.Stroke, 1, 0.4)
+        register(reg.panels, kickBtn)
+        register(reg.texts, kickBtn)
+        kickBtn.MouseButton1Click:Connect(function()
+            if window.CreatorDisconnect then
+                window:CreatorDisconnect(kickBox.Text)
+            end
+        end)
+        addSettingsEl(kickBtn)
+    end
+
     local function openSettings()
         settingsOpen = true
         SettingsOverlay.Visible = true
@@ -2673,7 +2756,6 @@ function API:CreateWindow(title, subtitle)
     end)
     SettingsClose.MouseButton1Click:Connect(closeSettings)
 
-    -- Keep BuildConfigPage for backwards compat (no-op / opens settings)
     function window:BuildConfigPage()
         openSettings()
     end
@@ -2868,176 +2950,6 @@ function API:CreateWindow(title, subtitle)
                 loadCharacter(userId, rigType)
             end,
         }
-    end
-
-    -- ══════════════════════════════════════
-    -- BETA Tab (creators only)
-    -- ══════════════════════════════════════
-    if isCreator then
-        local betaTab = window:CreateTab("Beta", BETA_TAB_ICON)
-
-        -- Beta badge label
-        local betaBadge = Instance.new("TextLabel")
-        betaBadge.Size = UDim2.new(1, -24, 0, 22)
-        betaBadge.BackgroundTransparency = 1
-        betaBadge.FontFace = FONT_BOLD
-        betaBadge.TextSize = 12
-        betaBadge.TextColor3 = Color3.fromRGB(255, 180, 40)
-        betaBadge.TextXAlignment = Enum.TextXAlignment.Left
-        betaBadge.Text = "BETA  ·  Creator tools  ·  Debug only"
-        betaBadge.ZIndex = 3
-        betaBadge.Parent = betaTab.Content
-        betaBadge.Position = UDim2.fromOffset(12, betaTab.YOffset)
-        betaTab.YOffset += 30
-
-        window:CreateParagraph(betaTab, "These tools are only visible to verified creators. Use responsibly.")
-
-        -- Explorer-like object list
-        window:CreateLabel(betaTab, "Game Explorer")
-        local explorerBox = Instance.new("ScrollingFrame")
-        explorerBox.Size = UDim2.new(1, -24, 0, 140)
-        explorerBox.BackgroundColor3 = Colors.Surface
-        explorerBox.BorderSizePixel = 0
-        explorerBox.ScrollBarThickness = 3
-        explorerBox.ScrollBarImageColor3 = Colors.Accent
-        explorerBox.CanvasSize = UDim2.new(0, 0, 0, 0)
-        explorerBox.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        explorerBox.ZIndex = 3
-        makeCorner(explorerBox, 8)
-        makeStroke(explorerBox, Colors.Stroke, 1, 0.5)
-        register(reg.panels, explorerBox)
-        register(reg.scrollBars, explorerBox)
-
-        local expLayout = Instance.new("UIListLayout")
-        expLayout.Padding = UDim.new(0, 2)
-        expLayout.Parent = explorerBox
-
-        local function refreshExplorer()
-            for _, ch in ipairs(explorerBox:GetChildren()) do
-                if ch:IsA("TextLabel") or ch:IsA("TextButton") then ch:Destroy() end
-            end
-            local count = 0
-            for _, obj in ipairs(game:GetDescendants()) do
-                if count > 200 then break end -- limit
-                if obj:IsA("BasePart") or obj:IsA("Folder") or obj:IsA("Model") or obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-                    local row = Instance.new("TextLabel")
-                    row.Size = UDim2.new(1, -8, 0, 16)
-                    row.BackgroundTransparency = 1
-                    row.FontFace = FONT_CODE
-                    row.TextSize = 11
-                    row.TextColor3 = Colors.TextSecondary
-                    row.TextXAlignment = Enum.TextXAlignment.Left
-                    row.TextTruncate = Enum.TextTruncate.AtEnd
-                    row.Text = obj.ClassName .. "  " .. obj:GetFullName()
-                    row.ZIndex = 4
-                    row.Parent = explorerBox
-                    count += 1
-                end
-            end
-        end
-        window._addElement(betaTab, explorerBox)
-        window:CreateButton(betaTab, "Refresh Explorer", refreshExplorer)
-        task.defer(refreshExplorer)
-
-        -- Remote Spy (basic)
-        window:CreateLabel(betaTab, "Remote Spy")
-        local remoteLog = Instance.new("ScrollingFrame")
-        remoteLog.Size = UDim2.new(1, -24, 0, 120)
-        remoteLog.BackgroundColor3 = Colors.Surface
-        remoteLog.BorderSizePixel = 0
-        remoteLog.ScrollBarThickness = 3
-        remoteLog.ScrollBarImageColor3 = Colors.Accent
-        remoteLog.CanvasSize = UDim2.new(0, 0, 0, 0)
-        remoteLog.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        remoteLog.ZIndex = 3
-        makeCorner(remoteLog, 8)
-        makeStroke(remoteLog, Colors.Stroke, 1, 0.5)
-        register(reg.panels, remoteLog)
-        register(reg.scrollBars, remoteLog)
-        local rLayout = Instance.new("UIListLayout")
-        rLayout.Padding = UDim.new(0, 2)
-        rLayout.Parent = remoteLog
-        window._addElement(betaTab, remoteLog)
-
-        local spyEnabled = false
-        local oldNamecall
-        window:CreateToggle(betaTab, "Enable Remote Spy", false, function(on)
-            spyEnabled = on
-            if on then
-                pcall(function()
-                    local mt = getrawmetatable(game)
-                    if not mt then return end
-                    setreadonly(mt, false)
-                    oldNamecall = mt.__namecall
-                    mt.__namecall = newcclosure(function(self, ...)
-                        local method = getnamecallmethod()
-                        if spyEnabled and (method == "FireServer" or method == "InvokeServer") then
-                            local args = {...}
-                            local line = Instance.new("TextLabel")
-                            line.Size = UDim2.new(1, -6, 0, 16)
-                            line.BackgroundTransparency = 1
-                            line.FontFace = FONT_CODE
-                            line.TextSize = 10
-                            line.TextColor3 = Colors.Accent
-                            line.TextXAlignment = Enum.TextXAlignment.Left
-                            line.TextTruncate = Enum.TextTruncate.AtEnd
-                            line.Text = method .. " → " .. tostring(self) .. "  args:" .. #args
-                            line.ZIndex = 4
-                            line.Parent = remoteLog
-                        end
-                        return oldNamecall(self, ...)
-                    end)
-                    setreadonly(mt, true)
-                end)
-                if NotifyImpl then NotifyImpl("Remote Spy ON") end
-            else
-                pcall(function()
-                    if oldNamecall then
-                        local mt = getrawmetatable(game)
-                        setreadonly(mt, false)
-                        mt.__namecall = oldNamecall
-                        setreadonly(mt, true)
-                    end
-                end)
-                if NotifyImpl then NotifyImpl("Remote Spy OFF") end
-            end
-        end, "Logs FireServer / InvokeServer calls")
-
-        -- Script decompiler note
-        window:CreateLabel(betaTab, "Script Decompiler")
-        window:CreateParagraph(betaTab, "Use your executor's built-in decompiler (e.g. decompile(script)). Happy Hub exposes a helper:")
-        window:CreateButton(betaTab, "Decompile selected (clipboard)", function()
-            if NotifyImpl then
-                NotifyImpl("Select a LocalScript in explorer tools of your executor, then use decompile()")
-            end
-        end)
-
-        -- Creator disconnect UI
-        window:CreateLabel(betaTab, "Session Control")
-        window:CreateParagraph(betaTab, "Disconnect another Happy Hub user in this server (creators only).")
-        local kickBox = Instance.new("TextBox")
-        kickBox.Size = UDim2.new(1, -24, 0, 34)
-        kickBox.BackgroundColor3 = Colors.Surface
-        kickBox.BorderSizePixel = 0
-        kickBox.FontFace = FONT_MAIN
-        kickBox.TextSize = 13
-        kickBox.TextColor3 = Colors.Text
-        kickBox.PlaceholderText = "Target username..."
-        kickBox.PlaceholderColor3 = Colors.TextSecondary
-        kickBox.Text = ""
-        kickBox.ClearTextOnFocus = false
-        kickBox.ZIndex = 3
-        makeCorner(kickBox, 8)
-        local kbPad = Instance.new("UIPadding")
-        kbPad.PaddingLeft = UDim.new(0, 10)
-        kbPad.Parent = kickBox
-        register(reg.panels, kickBox)
-        register(reg.texts, kickBox)
-        window._addElement(betaTab, kickBox)
-
-        window:CreateButton(betaTab, "Send Disconnect Signal", function()
-            window:CreatorDisconnect(kickBox.Text)
-        end)
     end
 
     currentWindow = window
