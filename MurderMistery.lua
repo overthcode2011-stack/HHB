@@ -244,22 +244,22 @@ local VIS_TTL = 0.05
 local MURDERER_TTL = 0.4
 
 local FARM_GOAL = 50
-local FARM_TOUCH_RADIUS = 30
+local FARM_TOUCH_RADIUS = 28
 local FARM_ARRIVE_DIST = 6
 local FARM_DANGER_DIST = 20
 local FARM_GROUND_OFFSET = -1.2
 local FARM_TOUCH_COOLDOWN = 0.22
 local FARM_FALLBACK_TIMEOUT = 10
 local FARM_FALLBACK_COOLDOWN = 2.5
-local FARM_STUCK_TIME = 0.5
+local FARM_STUCK_TIME = 1.8
 local FARM_STUCK_DIST = 1.8
 local FARM_NEAR_RADIUS = 20
 local FARM_COLLECT_SPEED_RESET_TIME = 0.4
-local FARM_FLY_SPEED = 20
-local FARM_NEAR_BOOST = 1.4
+local FARM_FLY_SPEED = 22
+local FARM_NEAR_BOOST = 1
 local FARM_BLACKLIST_TIME = 4
 local FARM_TARGET_TIMEOUT = 6
-local FARM_UNSTICK_MAX = 1
+local FARM_UNSTICK_MAX = 4.5
 
 local function getFarmSpeed()
     return FARM_FLY_SPEED
@@ -449,7 +449,7 @@ local function isGunTool(t)
     if t:FindFirstChild("Shoot") then return true end
     if t:FindFirstChild("Shoot", true) then return true end
     local name = t.Name:lower()
-    return name:find("Gun", 1, true) ~= nil
+    return name:find("gun", 1, true) ~= nil
         or name:find("pistol", 1, true) ~= nil
         or name:find("revolver", 1, true) ~= nil
         or name:find("sheriff", 1, true) ~= nil
@@ -561,7 +561,7 @@ local function isGunShootRemote(remote)
         return false
     end
     local n = remote.Name:lower()
-    if n:find("Shoot", 1, true) or n:find("Fire", 1, true) then return true end
+    if n:find("shoot", 1, true) or n:find("fire", 1, true) then return true end
     return isGunRelatedRemote(remote)
 end
 
@@ -573,7 +573,7 @@ local function collectShootChannels(gun)
     end
     for _, child in ipairs(gun:GetChildren()) do
         local n = child.Name:lower()
-        if n == "Shoot" or n == "Fire" or n == "GunShoot" then
+        if n == "shoot" or n == "fire" or n == "gunshoot" then
             if child:IsA("RemoteEvent") then push(child, "RemoteEvent")
             elseif child:IsA("BindableEvent") then push(child, "BindableEvent")
             elseif child:IsA("RemoteFunction") then push(child, "RemoteFunction") end
@@ -3202,87 +3202,146 @@ window:CreateButton(playersTab, "Teleport", function()
 end)
 
 window:CreateLabel(playersTab, "Player")
-_G.__HH_FlingTarget = nil
+_G.__HH_FlingTarget = "Murderer"
+
+local ROLE_OPTIONS = { "Murderer", "Sheriff", "Hero" }
 
 local function getFlingList()
-    local names = { "Murderer", "Sheriff" }
+    local names = { "Murderer", "Sheriff", "Hero" }
+    local seen = { Murderer = true, Sheriff = true, Hero = true }
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
-            table.insert(names, plr.Name)
+            local n = plr.Name
+            if n and n ~= "" and not seen[n] then
+                seen[n] = true
+                table.insert(names, n)
+            end
         end
+    end
+    if #names == 0 then
+        return { "Murderer", "Sheriff", "Hero" }
     end
     return names
 end
 
-flingDropdownRef = window:CreateDropdown(playersTab, "Player", getFlingList(), "", function(v)
-    _G.__HH_FlingTarget = v
+local function applyDropdownOptions(ref, names)
+    if not ref then return false end
+    names = names or ROLE_OPTIONS
+    if type(names) ~= "table" or #names == 0 then
+        names = ROLE_OPTIONS
+    end
+
+    pcall(function()
+        if type(ref.Clear) == "function" then ref:Clear() end
+    end)
+    pcall(function()
+        if type(ref.ClearOptions) == "function" then ref:ClearOptions() end
+    end)
+    pcall(function()
+        if type(ref.SetOptions) == "function" then
+            ref:SetOptions({})
+        end
+    end)
+
+    local ok = false
+    if type(ref.SetOptions) == "function" then
+        ok = pcall(function() ref:SetOptions(names) end)
+    end
+    if not ok and type(ref.Refresh) == "function" then
+        ok = pcall(function() ref:Refresh(names) end)
+    end
+    if not ok and type(ref.UpdateOptions) == "function" then
+        ok = pcall(function() ref:UpdateOptions(names) end)
+    end
+    if not ok and type(ref.SetValues) == "function" then
+        ok = pcall(function() ref:SetValues(names) end)
+    end
+    if type(ref.Set) == "function" and _G.__HH_FlingTarget then
+        pcall(function() ref:Set(_G.__HH_FlingTarget) end)
+    elseif type(ref.SetValue) == "function" and _G.__HH_FlingTarget then
+        pcall(function() ref:SetValue(_G.__HH_FlingTarget) end)
+    end
+    return ok
+end
+
+flingDropdownRef = window:CreateDropdown(playersTab, "Player", getFlingList(), "Murderer", function(v)
+    if v and v ~= "" then
+        _G.__HH_FlingTarget = v
+    end
 end)
 
-lastFlingSignature = table.concat(getFlingList(), "|")
+lastFlingSignature = ""
 
 local function refreshFlingDropdown(force)
     local names = getFlingList()
     local signature = table.concat(names, "|")
     if not force and signature == lastFlingSignature then return end
     lastFlingSignature = signature
-    if flingDropdownRef then
-        local refreshed = false
-        if type(flingDropdownRef.Refresh) == "function" then
-            refreshed = pcall(function() flingDropdownRef:Refresh(names) end)
-        end
-        if not refreshed and type(flingDropdownRef.SetOptions) == "function" then
-            refreshed = pcall(function() flingDropdownRef:SetOptions(names) end)
-        end
-        if not refreshed and type(flingDropdownRef.UpdateOptions) == "function" then
-            pcall(function() flingDropdownRef:UpdateOptions(names) end)
-        end
-    end
-    if _G.__HH_FlingTarget then
+    applyDropdownOptions(flingDropdownRef, names)
+
+    if _G.__HH_FlingTarget and _G.__HH_FlingTarget ~= "" then
         local stillHere = false
         for _, n in ipairs(names) do
             if n == _G.__HH_FlingTarget then stillHere = true; break end
         end
-        if not stillHere then _G.__HH_FlingTarget = nil end
+        if not stillHere then
+            _G.__HH_FlingTarget = "Murderer"
+        end
+    else
+        _G.__HH_FlingTarget = "Murderer"
     end
 end
 
 local function resolveSelectedPlayer()
     local sel = _G.__HH_FlingTarget
-    if not sel or sel == "" then return nil end
+    if not sel or sel == "" then sel = "Murderer" end
     if sel == "Murderer" then return getMurderer() end
     if sel == "Sheriff" then return getSheriff() end
+    if sel == "Hero" then return getHero() end
     return getFlingTargetByName(sel)
 end
 
+task.defer(function()
+    task.wait(0.35)
+    refreshFlingDropdown(true)
+end)
+
 trackThread(task.spawn(function()
     while true do
-        task.wait(1)
+        task.wait(1.25)
         refreshFlingDropdown(false)
     end
 end))
 
 Players.PlayerAdded:Connect(function(plr)
-    task.wait(0.3)
+    task.wait(0.25)
     refreshFlingDropdown(true)
-    plr.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        refreshFlingDropdown(true)
-    end)
+    if plr then
+        plr.CharacterAdded:Connect(function()
+            task.wait(0.4)
+            refreshFlingDropdown(true)
+        end)
+    end
 end)
 Players.PlayerRemoving:Connect(function()
-    task.wait(0.3)
+    task.wait(0.25)
     refreshFlingDropdown(true)
+end)
+
+window:CreateButton(playersTab, "Refresh", function()
+    refreshFlingDropdown(true)
+    notify("Players refreshed", 1.5)
 end)
 
 window:CreateButton(playersTab, "Fling", function()
     local plr = resolveSelectedPlayer()
-    if not plr then notify("Select a player") return end
+    if not plr then notify("Target not found") return end
     startFlingTarget(plr)
 end)
 
 window:CreateButton(playersTab, "Spectate", function()
     local plr = resolveSelectedPlayer()
-    if not plr then notify("Select a player") return end
+    if not plr then notify("Target not found") return end
     spectatePlayer(plr)
     notify("Spectating " .. plr.DisplayName, 2)
 end)
