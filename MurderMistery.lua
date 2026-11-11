@@ -228,7 +228,7 @@ local MovementSettings = {
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
-local FarmSettings = { AutoFarm = false, CoinCooldown = 1.5, UltraOpt = true }
+local FarmSettings = { AutoFarm = false, CoinCooldown = 1.5, UltraOpt = true, FarmSpeed = 32, NearBoost = 1.55 }
 
 local BEAM_CLEAR = Color3.fromRGB(0, 255, 100)
 local BEAM_WALL  = Color3.fromRGB(255, 50, 50)
@@ -246,7 +246,6 @@ local MURDERER_TTL = 0.4
 local FARM_GOAL = 50
 local FARM_TOUCH_RADIUS = 25
 local FARM_ARRIVE_DIST = 5
-local FARM_FLY_SPEED = 21
 local FARM_DANGER_DIST = 20
 local FARM_GROUND_OFFSET = -1.5
 local FARM_TOUCH_COOLDOWN = 0.28
@@ -254,9 +253,20 @@ local FARM_FALLBACK_TIMEOUT = 14
 local FARM_FALLBACK_COOLDOWN = 3.5
 local FARM_STUCK_TIME = 3.0
 local FARM_STUCK_DIST = 2.5
-local FARM_SLOW_RADIUS = 15
-local FARM_SLOW_AMOUNT = 3
+local FARM_NEAR_RADIUS = 18
 local FARM_COLLECT_SPEED_RESET_TIME = 0.5
+
+local function getFarmSpeed()
+    local s = FarmSettings.FarmSpeed
+    if type(s) ~= "number" or s < 5 then return 32 end
+    return math.clamp(s, 5, 120)
+end
+
+local function getNearBoost()
+    local b = FarmSettings.NearBoost
+    if type(b) ~= "number" or b < 1 then return 1.55 end
+    return math.clamp(b, 1, 3)
+end
 local FARM_BLACKLIST_TIME = 5
 local FARM_TARGET_TIMEOUT = 8
 
@@ -2592,7 +2602,7 @@ local function startCoinCollector()
             if awayDir.Magnitude < 0.1 then awayDir = Vector3.new(1, 0, 0) end
             awayDir = awayDir.Unit
             local speedMul = antiFocusActive and 2.5 or 2
-            S.farmWalkBV.Velocity = awayDir * FARM_FLY_SPEED * speedMul + Vector3.new(0, 4, 0)
+            S.farmWalkBV.Velocity = awayDir * getFarmSpeed() * speedMul + Vector3.new(0, 4, 0)
             if S.coinStatusSetter then
                 S.coinStatusSetter(antiFocusActive and "ANTI-FOCUS · evading" or "DANGER · evading")
             end
@@ -2654,17 +2664,17 @@ local function startCoinCollector()
             local horiz = Vector3.new(delta.X, 0, delta.Z)
             local hDist = horiz.Magnitude
 
-            local baseSpeed = FARM_FLY_SPEED
+            local baseSpeed = getFarmSpeed()
             local justCollected = (now - S.farmLastCollectSpeedAt) < FARM_COLLECT_SPEED_RESET_TIME
-            if not justCollected and distToTarget < FARM_SLOW_RADIUS then
-                baseSpeed = math.max(1, FARM_FLY_SPEED - FARM_SLOW_AMOUNT)
+            if not justCollected and distToTarget < FARM_NEAR_RADIUS then
+                baseSpeed = baseSpeed * getNearBoost()
             end
 
             if hDist > 0.5 then
-                local speed = math.min(baseSpeed, hDist * 5)
-                S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+                local speed = math.min(baseSpeed, math.max(hDist * 6, baseSpeed * 0.85))
+                S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2.4, -10, 10), 0)
             else
-                S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+                S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2.4, -10, 10), 0)
             end
         end
 
@@ -3163,17 +3173,16 @@ window:CreateButton(playersTab, "Teleport", function()
     end
 end)
 
-window:CreateLabel(playersTab, "Fling")
+window:CreateLabel(playersTab, "Player")
 _G.__HH_FlingTarget = nil
 
 local function getFlingList()
-    local names = {}
+    local names = { "Murderer", "Sheriff" }
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             table.insert(names, plr.Name)
         end
     end
-    table.sort(names)
     return names
 end
 
@@ -3209,9 +3218,17 @@ local function refreshFlingDropdown(force)
     end
 end
 
+local function resolveSelectedPlayer()
+    local sel = _G.__HH_FlingTarget
+    if not sel or sel == "" then return nil end
+    if sel == "Murderer" then return getMurderer() end
+    if sel == "Sheriff" then return getSheriff() end
+    return getFlingTargetByName(sel)
+end
+
 trackThread(task.spawn(function()
     while true do
-        task.wait(0.5)
+        task.wait(1)
         refreshFlingDropdown(false)
     end
 end))
@@ -3229,36 +3246,27 @@ Players.PlayerRemoving:Connect(function()
     refreshFlingDropdown(true)
 end)
 
-for _, plr in ipairs(Players:GetPlayers()) do
-    if plr ~= LocalPlayer then
-        plr.CharacterAdded:Connect(function()
-            task.wait(0.5)
-            refreshFlingDropdown(true)
-        end)
-    end
-end
-
-window:CreateButton(playersTab, "Refresh List", function()
-    refreshFlingDropdown(true)
-    notify("Player list refreshed", 2)
-end)
-
-window:CreateButton(playersTab, "Fling Target", function()
-    local plr = getFlingTargetByName(_G.__HH_FlingTarget)
+window:CreateButton(playersTab, "Fling", function()
+    local plr = resolveSelectedPlayer()
     if not plr then notify("Select a player") return end
     startFlingTarget(plr)
 end)
 
-window:CreateButton(playersTab, "Fling Murderer", function()
-    local plr = getMurderer()
-    if not plr then notify("No Murderer found") return end
-    startFlingTarget(plr)
+window:CreateButton(playersTab, "Spectate", function()
+    local plr = resolveSelectedPlayer()
+    if not plr then notify("Select a player") return end
+    spectatePlayer(plr)
+    notify("Spectating " .. plr.DisplayName, 2)
 end)
 
-window:CreateButton(playersTab, "Fling Sheriff", function()
-    local plr = getSheriff()
-    if not plr then notify("No Sheriff/Hero found") return end
-    startFlingTarget(plr)
+window:CreateButton(playersTab, "Stop", function()
+    stopSpectating()
+    S.flingTargetRunning = false
+    if S.flingTargetThread then
+        pcall(task.cancel, S.flingTargetThread)
+        S.flingTargetThread = nil
+    end
+    notify("Stopped", 1.5)
 end)
 
 window:CreateLabel(playersTab, "Server")
@@ -3352,31 +3360,7 @@ end)
 registerControl(VisualSettings, "Beam", UI.beamToggleRef)
 
 window:CreateLabel(espTab, "Spectate")
-window:CreateButton(espTab, "Spectate Murderer", function()
-    local m = getMurderer()
-    if not m then notify("No murderer") return end
-    spectatePlayer(m)
-    notify("Spectating " .. m.DisplayName)
-end)
-
-window:CreateButton(espTab, "Spectate Sheriff", function()
-    local s = getSheriff()
-    if not s then notify("No sheriff") return end
-    spectatePlayer(s)
-    notify("Spectating " .. s.DisplayName)
-end)
-
-window:CreateButton(espTab, "Spectate Hero", function()
-    local h = getHero()
-    if not h then notify("No hero") return end
-    spectatePlayer(h)
-    notify("Spectating " .. h.DisplayName)
-end)
-
-window:CreateButton(espTab, "Stop Spectating", function()
-    stopSpectating()
-    notify("Stopped spectating")
-end)
+window:CreateParagraph(espTab, "Players tab → select target → Spectate / Stop")
 
 window:CreateLabel(movementTab, "Fly")
 UI.flyToggleRef = window:CreateToggle(movementTab, "Fly", false, function(v)
@@ -3655,6 +3639,7 @@ UI.triggerRangeRef = window:CreateSlider(aimbotTab, "Trigger Range", 20, 400, 15
 registerControl(AimbotSettings, "TriggerRange", UI.triggerRangeRef)
 
 window:CreateLabel(aimbotTab, "AutoShoot")
+window:CreateParagraph(aimbotTab, "PC keybinds · T lock · O ESP · B auto fire · V shoot murderer")
 UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
     AimbotSettings.AutoFire = v
     if v then
@@ -3741,30 +3726,46 @@ local function serverKillAllTick()
         end
     end
 
-    pcall(function() knife:Activate() end)
     if stabEv then pcall(function() stabEv:FireServer() end) end
 
-    local canTouch = type(firetouchinterest) == "function"
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and plr.Character then
-            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-                local head = plr.Character:FindFirstChild("Head")
-                if touchEv then
-                    if hrp then pcall(function() touchEv:FireServer(hrp) end) end
-                    if head then pcall(function() touchEv:FireServer(head) end) end
-                end
-                if canTouch and handle then
-                    if hrp then
-                        pcall(firetouchinterest, hrp, handle, 0)
-                        pcall(firetouchinterest, hrp, handle, 1)
-                        pcall(firetouchinterest, handle, hrp, 0)
-                        pcall(firetouchinterest, handle, hrp, 1)
+    if isMobile then
+        pcall(function() knife:Activate() end)
+        local canTouch = type(firetouchinterest) == "function"
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                    local head = plr.Character:FindFirstChild("Head")
+                    if touchEv then
+                        if hrp then pcall(function() touchEv:FireServer(hrp) end) end
+                        if head then pcall(function() touchEv:FireServer(head) end) end
                     end
-                    if head then
-                        pcall(firetouchinterest, head, handle, 0)
-                        pcall(firetouchinterest, head, handle, 1)
+                    if canTouch and handle then
+                        if hrp then
+                            pcall(firetouchinterest, hrp, handle, 0)
+                            pcall(firetouchinterest, hrp, handle, 1)
+                            pcall(firetouchinterest, handle, hrp, 0)
+                            pcall(firetouchinterest, handle, hrp, 1)
+                        end
+                        if head then
+                            pcall(firetouchinterest, head, handle, 0)
+                            pcall(firetouchinterest, head, handle, 1)
+                        end
+                    end
+                end
+            end
+        end
+    else
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                    local head = plr.Character:FindFirstChild("Head")
+                    if touchEv then
+                        if hrp then pcall(function() touchEv:FireServer(hrp) end) end
+                        if head then pcall(function() touchEv:FireServer(head) end) end
                     end
                 end
             end
@@ -4020,7 +4021,17 @@ UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
 end)
 registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
 
-window:CreateParagraph(farmTab, "Internal anti-focus on fade · blacklist when stuck · auto reroll if no weapon")
+UI.farmSpeedRef = window:CreateSlider(farmTab, "Farm Speed", 10, 100, 32, function(v)
+    FarmSettings.FarmSpeed = v
+end)
+registerControl(FarmSettings, "FarmSpeed", UI.farmSpeedRef)
+
+UI.nearBoostRef = window:CreateSlider(farmTab, "Near Coin Boost", 100, 250, 155, function(v)
+    FarmSettings.NearBoost = v / 100
+end)
+registerControl(FarmSettings, "NearBoost", UI.nearBoostRef)
+
+window:CreateParagraph(farmTab, "Farm speed is separate from Fly · boost kicks in near coins")
 
 window:CreateLabel(farmTab, "Stats")
 local coinCountFrame = window:CreateParagraph(farmTab, "0")
@@ -4415,6 +4426,8 @@ trackConn("hotkeys", UserInputService.InputBegan:Connect(function(input, gp)
         if UI.mm2ESPToggleRef then UI.mm2ESPToggleRef.SetState(not UI.mm2ESPToggleRef.GetState()) end
     elseif input.KeyCode == Enum.KeyCode.B then
         if UI.autoFireRef then UI.autoFireRef.SetState(not UI.autoFireRef.GetState()) end
+    elseif input.KeyCode == Enum.KeyCode.V then
+        task.spawn(mobileForceShoot)
     end
 end))
 
@@ -4470,6 +4483,8 @@ function snapshotSettings()
         },
         Farm = {
             AutoFarm = FarmSettings.AutoFarm,
+            FarmSpeed = FarmSettings.FarmSpeed,
+            NearBoost = FarmSettings.NearBoost,
         },
         AntiVoid = {
             Threshold = AntiVoidSettings.Threshold,
@@ -4496,8 +4511,10 @@ function applyConfig(data)
     if data.Avatar then
         for k, v in pairs(data.Avatar) do AvatarSettings[k] = v end
     end
-    if data.Farm and data.Farm.AutoFarm ~= nil then
-        FarmSettings.AutoFarm = data.Farm.AutoFarm
+    if data.Farm then
+        if data.Farm.AutoFarm ~= nil then FarmSettings.AutoFarm = data.Farm.AutoFarm end
+        if data.Farm.FarmSpeed ~= nil then FarmSettings.FarmSpeed = data.Farm.FarmSpeed end
+        if data.Farm.NearBoost ~= nil then FarmSettings.NearBoost = data.Farm.NearBoost end
     end
     if data.AntiVoid then
         for k, v in pairs(data.AntiVoid) do AntiVoidSettings[k] = v end
