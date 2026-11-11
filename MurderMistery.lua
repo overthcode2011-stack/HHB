@@ -259,7 +259,7 @@ local FARM_FLY_SPEED = 20
 local FARM_NEAR_BOOST = 1.4
 local FARM_BLACKLIST_TIME = 4
 local FARM_TARGET_TIMEOUT = 6
-local FARM_UNSTICK_MAX = 3
+local FARM_UNSTICK_MAX = 1
 
 local function getFarmSpeed()
     return FARM_FLY_SPEED
