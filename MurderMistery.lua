@@ -228,7 +228,7 @@ local MovementSettings = {
     FlingTarget = false, FlingDuration = 3, FlingDistance = 500,
 }
 local AvatarSettings = { Korblox = false, AnimPack = false }
-local FarmSettings = { AutoFarm = false, CoinCooldown = 1.5, UltraOpt = true, FarmSpeed = 32, NearBoost = 1.55 }
+local FarmSettings = { AutoFarm = false, CoinCooldown = 1.5, UltraOpt = true }
 
 local BEAM_CLEAR = Color3.fromRGB(0, 255, 100)
 local BEAM_WALL  = Color3.fromRGB(255, 50, 50)
@@ -244,31 +244,30 @@ local VIS_TTL = 0.05
 local MURDERER_TTL = 0.4
 
 local FARM_GOAL = 50
-local FARM_TOUCH_RADIUS = 25
-local FARM_ARRIVE_DIST = 5
+local FARM_TOUCH_RADIUS = 28
+local FARM_ARRIVE_DIST = 6
 local FARM_DANGER_DIST = 20
-local FARM_GROUND_OFFSET = -1.5
-local FARM_TOUCH_COOLDOWN = 0.28
-local FARM_FALLBACK_TIMEOUT = 14
-local FARM_FALLBACK_COOLDOWN = 3.5
-local FARM_STUCK_TIME = 3.0
-local FARM_STUCK_DIST = 2.5
-local FARM_NEAR_RADIUS = 18
-local FARM_COLLECT_SPEED_RESET_TIME = 0.5
+local FARM_GROUND_OFFSET = -1.2
+local FARM_TOUCH_COOLDOWN = 0.22
+local FARM_FALLBACK_TIMEOUT = 10
+local FARM_FALLBACK_COOLDOWN = 2.5
+local FARM_STUCK_TIME = 1.8
+local FARM_STUCK_DIST = 1.8
+local FARM_NEAR_RADIUS = 20
+local FARM_COLLECT_SPEED_RESET_TIME = 0.4
+local FARM_FLY_SPEED = 36
+local FARM_NEAR_BOOST = 1.7
+local FARM_BLACKLIST_TIME = 4
+local FARM_TARGET_TIMEOUT = 6
+local FARM_UNSTICK_MAX = 2
 
 local function getFarmSpeed()
-    local s = FarmSettings.FarmSpeed
-    if type(s) ~= "number" or s < 5 then return 32 end
-    return math.clamp(s, 5, 120)
+    return FARM_FLY_SPEED
 end
 
 local function getNearBoost()
-    local b = FarmSettings.NearBoost
-    if type(b) ~= "number" or b < 1 then return 1.55 end
-    return math.clamp(b, 1, 3)
+    return FARM_NEAR_BOOST
 end
-local FARM_BLACKLIST_TIME = 5
-local FARM_TARGET_TIMEOUT = 8
 
 local AUTO_KILL_COOLDOWN = 2
 local ANTI_FOCUS_RADIUS = 45
@@ -327,6 +326,7 @@ local S = {
     farmLastFallbackAt = 0,
     farmStuckPos = nil,
     farmStuckAt = 0,
+    farmUnstickAttempts = 0,
     farmLastCollectSpeedAt = 0,
     farmTargetStartedAt = 0,
     lastGyroUpdate = 0,
@@ -2452,6 +2452,7 @@ local function stopCoinCollector()
     S.farmLastFallbackAt = 0
     S.farmStuckPos = nil
     S.farmStuckAt = 0
+    S.farmUnstickAttempts = 0
     S.farmLastCollectSpeedAt = 0
     S.farmTargetStartedAt = 0
     S.lastGyroUpdate = 0
@@ -2482,6 +2483,7 @@ local function startCoinCollector()
     S.farmLastFallbackAt = tick()
     S.farmStuckPos = nil
     S.farmStuckAt = 0
+    S.farmUnstickAttempts = 0
     S.farmLastCollectSpeedAt = 0
     S.farmTargetStartedAt = 0
     if S.coinStatusSetter then
@@ -2613,22 +2615,22 @@ local function startCoinCollector()
             blacklistCoin(S.farmTargetCoin)
             S.farmTargetCoin = nil
             S.farmTargetStartedAt = 0
+            S.farmUnstickAttempts = 0
             if S.coinStatusSetter then S.coinStatusSetter("Target timeout · new route") end
         end
 
         if not S.farmTargetCoin or not S.farmTargetCoin.Parent or not isCoinValid(S.farmTargetCoin) then
             S.farmTargetCoin = nil
-            local bestCoin, bestDist = nil, math.huge
+            local candidates = {}
             for _, coin in ipairs(coins) do
                 if isCoinValid(coin) and not isCoinBlacklisted(coin) then
-                    local d = (coin.Position - myPos).Magnitude
-                    if d < bestDist then
-                        bestDist = d
-                        bestCoin = coin
-                    end
+                    table.insert(candidates, { coin = coin, dist = (coin.Position - myPos).Magnitude })
                 end
             end
+            table.sort(candidates, function(a, b) return a.dist < b.dist end)
+            local bestCoin = candidates[1] and candidates[1].coin or nil
             if not bestCoin then
+                local bestDist = math.huge
                 for _, coin in ipairs(coins) do
                     if isCoinValid(coin) then
                         local d = (coin.Position - myPos).Magnitude
@@ -2638,11 +2640,14 @@ local function startCoinCollector()
                         end
                     end
                 end
+            elseif candidates[2] and candidates[1].dist < 4 and candidates[2].dist < 18 then
+                bestCoin = candidates[2].coin
             end
             S.farmTargetCoin = bestCoin
             S.farmTargetStartedAt = tick()
             S.farmStuckPos = nil
             S.farmStuckAt = 0
+            S.farmUnstickAttempts = 0
         end
 
         local target = S.farmTargetCoin
@@ -2653,44 +2658,67 @@ local function startCoinCollector()
         end
 
         local distToTarget = (target.Position - myPos).Magnitude
+        local targetPos = target.Position + Vector3.new(0, FARM_GROUND_OFFSET, 0)
+        local delta = targetPos - myPos
+        local horiz = Vector3.new(delta.X, 0, delta.Z)
+        local hDist = horiz.Magnitude
 
         if distToTarget < FARM_ARRIVE_DIST then
-            local targetPos = target.Position + Vector3.new(0, FARM_GROUND_OFFSET, 0)
-            local delta = targetPos - myPos
-            S.farmWalkBV.Velocity = Vector3.new(delta.X, delta.Y, delta.Z) * 5
+            S.farmWalkBV.Velocity = delta * 8
+            pcall(function()
+                hrp.CFrame = CFrame.new(targetPos)
+            end)
+            S.farmStuckPos = myPos
+            S.farmStuckAt = now
         else
-            local targetPos = target.Position + Vector3.new(0, FARM_GROUND_OFFSET, 0)
-            local delta = targetPos - myPos
-            local horiz = Vector3.new(delta.X, 0, delta.Z)
-            local hDist = horiz.Magnitude
-
             local baseSpeed = getFarmSpeed()
             local justCollected = (now - S.farmLastCollectSpeedAt) < FARM_COLLECT_SPEED_RESET_TIME
             if not justCollected and distToTarget < FARM_NEAR_RADIUS then
                 baseSpeed = baseSpeed * getNearBoost()
             end
 
-            if hDist > 0.5 then
-                local speed = math.min(baseSpeed, math.max(hDist * 6, baseSpeed * 0.85))
-                S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2.4, -10, 10), 0)
+            if hDist > 0.4 then
+                local speed = math.min(baseSpeed, math.max(hDist * 7, baseSpeed * 0.9))
+                S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 3, -14, 14), 0)
             else
-                S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2.4, -10, 10), 0)
+                S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 4, -16, 16), 0)
             end
         end
 
-        if not S.farmStuckPos then
+        if distToTarget < FARM_TOUCH_RADIUS then
+            S.farmStuckPos = myPos
+            S.farmStuckAt = now
+        elseif not S.farmStuckPos then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
         elseif (myPos - S.farmStuckPos).Magnitude > FARM_STUCK_DIST then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
+            S.farmUnstickAttempts = 0
         elseif now - S.farmStuckAt > FARM_STUCK_TIME then
-            blacklistCoin(S.farmTargetCoin)
-            S.farmTargetCoin = nil
-            S.farmStuckPos = nil
-            S.farmStuckAt = 0
-            S.farmTargetStartedAt = 0
-            if S.coinStatusSetter then S.coinStatusSetter("Unsticking · finding new target") end
+            S.farmUnstickAttempts = (S.farmUnstickAttempts or 0) + 1
+            local angle = math.rad((S.farmUnstickAttempts * 90) % 360)
+            local side = Vector3.new(math.cos(angle), 0, math.sin(angle)) * 10
+            local unstickPos = myPos + side + Vector3.new(0, 6 + S.farmUnstickAttempts * 2, 0)
+            pcall(function()
+                hrp.CFrame = CFrame.new(unstickPos)
+                hrp.Velocity = Vector3.zero
+                hrp.RotVelocity = Vector3.zero
+            end)
+            if S.farmWalkBV then
+                S.farmWalkBV.Velocity = side.Unit * getFarmSpeed() * 1.4 + Vector3.new(0, 10, 0)
+            end
+            S.farmStuckPos = unstickPos
+            S.farmStuckAt = now
+            if S.farmUnstickAttempts >= FARM_UNSTICK_MAX then
+                blacklistCoin(S.farmTargetCoin)
+                S.farmTargetCoin = nil
+                S.farmUnstickAttempts = 0
+                S.farmTargetStartedAt = 0
+                if S.coinStatusSetter then S.coinStatusSetter("Stuck · next coin") end
+            else
+                if S.coinStatusSetter then S.coinStatusSetter("Unsticking...") end
+            end
         end
 
         local timeSinceCollect = now - math.max(S.farmStartedAt, S.lastCollectTime)
@@ -4021,17 +4049,7 @@ UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
 end)
 registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
 
-UI.farmSpeedRef = window:CreateSlider(farmTab, "Farm Speed", 10, 100, 32, function(v)
-    FarmSettings.FarmSpeed = v
-end)
-registerControl(FarmSettings, "FarmSpeed", UI.farmSpeedRef)
-
-UI.nearBoostRef = window:CreateSlider(farmTab, "Near Coin Boost", 100, 250, 155, function(v)
-    FarmSettings.NearBoost = v / 100
-end)
-registerControl(FarmSettings, "NearBoost", UI.nearBoostRef)
-
-window:CreateParagraph(farmTab, "Farm speed is separate from Fly · boost kicks in near coins")
+window:CreateParagraph(farmTab, "Internal farm pathing · auto-unstick · near-coin boost")
 
 window:CreateLabel(farmTab, "Stats")
 local coinCountFrame = window:CreateParagraph(farmTab, "0")
@@ -4483,8 +4501,6 @@ function snapshotSettings()
         },
         Farm = {
             AutoFarm = FarmSettings.AutoFarm,
-            FarmSpeed = FarmSettings.FarmSpeed,
-            NearBoost = FarmSettings.NearBoost,
         },
         AntiVoid = {
             Threshold = AntiVoidSettings.Threshold,
@@ -4513,8 +4529,6 @@ function applyConfig(data)
     end
     if data.Farm then
         if data.Farm.AutoFarm ~= nil then FarmSettings.AutoFarm = data.Farm.AutoFarm end
-        if data.Farm.FarmSpeed ~= nil then FarmSettings.FarmSpeed = data.Farm.FarmSpeed end
-        if data.Farm.NearBoost ~= nil then FarmSettings.NearBoost = data.Farm.NearBoost end
     end
     if data.AntiVoid then
         for k, v in pairs(data.AntiVoid) do AntiVoidSettings[k] = v end
