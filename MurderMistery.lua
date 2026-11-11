@@ -251,15 +251,15 @@ local FARM_GROUND_OFFSET = -1.2
 local FARM_TOUCH_COOLDOWN = 0.22
 local FARM_FALLBACK_TIMEOUT = 10
 local FARM_FALLBACK_COOLDOWN = 2.5
-local FARM_STUCK_TIME = 1.8
+local FARM_STUCK_TIME = 0.5
 local FARM_STUCK_DIST = 1.8
 local FARM_NEAR_RADIUS = 20
 local FARM_COLLECT_SPEED_RESET_TIME = 0.4
-local FARM_FLY_SPEED = 23
-local FARM_NEAR_BOOST = 1.7
+local FARM_FLY_SPEED = 20
+local FARM_NEAR_BOOST = 1.4
 local FARM_BLACKLIST_TIME = 4
 local FARM_TARGET_TIMEOUT = 6
-local FARM_UNSTICK_MAX = 2
+local FARM_UNSTICK_MAX = 0.5
 
 local function getFarmSpeed()
     return FARM_FLY_SPEED
@@ -449,7 +449,7 @@ local function isGunTool(t)
     if t:FindFirstChild("Shoot") then return true end
     if t:FindFirstChild("Shoot", true) then return true end
     local name = t.Name:lower()
-    return name:find("gun", 1, true) ~= nil
+    return name:find("Gun", 1, true) ~= nil
         or name:find("pistol", 1, true) ~= nil
         or name:find("revolver", 1, true) ~= nil
         or name:find("sheriff", 1, true) ~= nil
@@ -561,7 +561,7 @@ local function isGunShootRemote(remote)
         return false
     end
     local n = remote.Name:lower()
-    if n:find("shoot", 1, true) or n:find("fire", 1, true) then return true end
+    if n:find("Shoot", 1, true) or n:find("Fire", 1, true) then return true end
     return isGunRelatedRemote(remote)
 end
 
@@ -573,7 +573,7 @@ local function collectShootChannels(gun)
     end
     for _, child in ipairs(gun:GetChildren()) do
         local n = child.Name:lower()
-        if n == "shoot" or n == "fire" or n == "gunshoot" then
+        if n == "Shoot" or n == "Fire" or n == "GunShoot" then
             if child:IsA("RemoteEvent") then push(child, "RemoteEvent")
             elseif child:IsA("BindableEvent") then push(child, "BindableEvent")
             elseif child:IsA("RemoteFunction") then push(child, "RemoteFunction") end
