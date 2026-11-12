@@ -1245,7 +1245,33 @@ function API:CreateWindow(title, subtitle)
         if ok then pfp.Image = thumb end
     end)
 
+    local KeybindsPanel = Instance.new("Frame")
+    KeybindsPanel.Name = "KeybindsPanel"
+    KeybindsPanel.Size = UDim2.new(0, 140, 0, 128)
+    KeybindsPanel.Position = UDim2.new(1, 10, 0, 70)
+    KeybindsPanel.BackgroundColor3 = Colors.Panel
+    KeybindsPanel.BackgroundTransparency = 0.15
+    KeybindsPanel.BorderSizePixel = 0
+    KeybindsPanel.ZIndex = 5
+    KeybindsPanel.Parent = mainFrame
+    makeCorner(KeybindsPanel, 5)
+    register(reg.panels, KeybindsPanel)
+
+    local KeybindsTitle = Instance.new("TextLabel")
+    KeybindsTitle.Size = UDim2.new(1, -16, 0, 20)
+    KeybindsTitle.Position = UDim2.new(0, 8, 0, 6)
+    KeybindsTitle.BackgroundTransparency = 1
+    KeybindsTitle.FontFace = FONT_MAIN
+    KeybindsTitle.TextSize = 11
+    KeybindsTitle.TextColor3 = Colors.Accent
+    KeybindsTitle.TextXAlignment = Enum.TextXAlignment.Left
+    KeybindsTitle.Text = isMobile and "MOBILE CONTROLS" or "LEFT KEYBINDS"
+    KeybindsTitle.ZIndex = 6
+    KeybindsTitle.Parent = KeybindsPanel
+    register(reg.accentTexts, KeybindsTitle)
+
     local function makeKeybindRow(parent, key, label, order)
+        if not parent then return end
         local row = Instance.new("Frame")
         row.Size = UDim2.new(1, -16, 0, 22)
         row.Position = UDim2.new(0, 8, 0, 28 + ((order - 1) * 24))
@@ -1842,6 +1868,10 @@ function API:CreateWindow(title, subtitle)
         end
     end))
 
+    local function setVis(obj, v)
+        if obj then obj.Visible = v end
+    end
+
     local savedSize = isMobile and UDim2.new(0.6, 0, 0.8, 0) or UDim2.new(0, 700, 0, 450)
     local minHeight = isMobile and 46 or 56
     local lastMinimizeAt = 0
@@ -1858,11 +1888,11 @@ function API:CreateWindow(title, subtitle)
             if mainFrame.AbsoluteSize.Y > minHeight + 20 then
                 savedSize = mainFrame.Size
             end
-            tabContainer.Visible = false
-            contentArea.Visible = false
-            playerCard.Visible = false
-            KeybindsPanel.Visible = false
-            DragBar.Visible = false
+            setVis(tabContainer, false)
+            setVis(contentArea, false)
+            setVis(playerCard, false)
+            setVis(KeybindsPanel, false)
+            setVis(DragBar, false)
             mainFrame.ClipsDescendants = true
             TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
                 Size = UDim2.new(mainFrame.Size.X.Scale, mainFrame.Size.X.Offset, 0, minHeight)
@@ -1880,11 +1910,11 @@ function API:CreateWindow(title, subtitle)
                 if mainFrame.AbsoluteSize.Y <= minHeight + 10 then
                     mainFrame.Size = target
                 end
-                tabContainer.Visible = true
-                contentArea.Visible = true
-                playerCard.Visible = true
-                KeybindsPanel.Visible = true
-                DragBar.Visible = true
+                setVis(tabContainer, true)
+                setVis(contentArea, true)
+                setVis(playerCard, true)
+                setVis(KeybindsPanel, true)
+                setVis(DragBar, true)
             end)
         end
     end)
