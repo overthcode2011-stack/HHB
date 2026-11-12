@@ -1245,31 +1245,6 @@ function API:CreateWindow(title, subtitle)
         if ok then pfp.Image = thumb end
     end)
 
-    local KeybindsPanel = Instance.new("Frame")
-    KeybindsPanel.Name = "KeybindsPanel"
-    KeybindsPanel.Size = UDim2.new(0, 140, 0, 128)
-    KeybindsPanel.Position = UDim2.new(1, 10, 0, 70)
-    KeybindsPanel.BackgroundColor3 = Colors.Panel
-    KeybindsPanel.BackgroundTransparency = 0.15
-    KeybindsPanel.BorderSizePixel = 0
-    KeybindsPanel.ZIndex = 5
-    KeybindsPanel.Parent = mainFrame
-    makeCorner(KeybindsPanel, 5)
-    register(reg.panels, KeybindsPanel)
-
-    local KeybindsTitle = Instance.new("TextLabel")
-    KeybindsTitle.Size = UDim2.new(1, -16, 0, 20)
-    KeybindsTitle.Position = UDim2.new(0, 8, 0, 6)
-    KeybindsTitle.BackgroundTransparency = 1
-    KeybindsTitle.FontFace = FONT_MAIN
-    KeybindsTitle.TextSize = 11
-    KeybindsTitle.TextColor3 = Colors.Accent
-    KeybindsTitle.TextXAlignment = Enum.TextXAlignment.Left
-    KeybindsTitle.Text = isMobile and "Mobile user" or "PC User"
-    KeybindsTitle.ZIndex = 6
-    KeybindsTitle.Parent = KeybindsPanel
-    register(reg.accentTexts, KeybindsTitle)
-
     local function makeKeybindRow(parent, key, label, order)
         local row = Instance.new("Frame")
         row.Size = UDim2.new(1, -16, 0, 22)
