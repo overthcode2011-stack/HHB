@@ -818,7 +818,7 @@ function API:CreateWindow(title, subtitle)
         title.TextSize = isMobile and 12 or 13
         title.TextColor3 = Colors.Accent
         title.TextXAlignment = Enum.TextXAlignment.Left
-        title.Text = "Happy Hub"
+        title.Text = "replicatedscripts UI"
         title.Parent = frame
         local msg = Instance.new("TextLabel")
         msg.Size = UDim2.new(1, -50, 0, 16)
@@ -896,13 +896,6 @@ function API:CreateWindow(title, subtitle)
     mainFrame.Parent = screenGui
     makeCorner(mainFrame, 6)
     reg.mainFrame = mainFrame
-
-    local Shadow = Instance.new("UIShadow")
-    Shadow.Name = "Shadow"
-    Shadow.BackgroundTransparency = 0
-    Shadow.Color = Color3.fromRGB(0, 0, 0)
-    Shadow.ImageTransparency = 0.5
-    Shadow.Parent = mainFrame
 
     local TopBar = Instance.new("Frame")
     TopBar.Name = "TopBar"
