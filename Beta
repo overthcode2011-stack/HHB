@@ -1247,10 +1247,10 @@ function API:CreateWindow(title, subtitle)
 
     local KeybindsPanel = Instance.new("Frame")
     KeybindsPanel.Name = "KeybindsPanel"
-    KeybindsPanel.Size = UDim2.new(0, 140, 0, 128)
-    KeybindsPanel.Position = UDim2.new(0.25, 0, 0.2, 0)
+    KeybindsPanel.Size = UDim2.new(0.35, 0, 0.4,0)
+    KeybindsPanel.Position = UDim2.new(0.8, 0, 0.5, 0)
     KeybindsPanel.BackgroundColor3 = Colors.Panel
-    KeybindsPanel.BackgroundTransparency = 0.15
+    KeybindsPanel.BackgroundTransparency = 0.45
     KeybindsPanel.BorderSizePixel = 0
     KeybindsPanel.ZIndex = 5
     KeybindsPanel.Parent = mainFrame
