@@ -1,5 +1,5 @@
 local hiddenFolder = Instance.new("Folder")
-hiddenFolder.Name = "\u{200B}\u{200C}\u{200D}\u{FEFF}\u{200B}"
+hiddenFolder.Name = "replicatedscriptsUI"
 hiddenFolder.Parent = gethui and gethui() or game:GetService("CoreGui")
 local Hometabicon = "130068439240504"
 
