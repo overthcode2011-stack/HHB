@@ -1847,7 +1847,7 @@ function API:CreateWindow(title, subtitle)
     local lastMinimizeAt = 0
     MinimizeButton.MouseButton1Click:Connect(function()
         local now = os.clock()
-        if now - lastMinimizeAt < 0.35 then return end
+        if now - lastMinimizeAt < 0.4 then return end
         lastMinimizeAt = now
 
         closeAllDropdowns()
