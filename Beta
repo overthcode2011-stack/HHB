@@ -1248,7 +1248,7 @@ function API:CreateWindow(title, subtitle)
     local KeybindsPanel = Instance.new("Frame")
     KeybindsPanel.Name = "KeybindsPanel"
     KeybindsPanel.Size = UDim2.new(0, 140, 0, 128)
-    KeybindsPanel.Position = UDim2.new(1, 10, 0, 70)
+    KeybindsPanel.Position = UDim2.new(0.25, 0, 0.2, 0)
     KeybindsPanel.BackgroundColor3 = Colors.Panel
     KeybindsPanel.BackgroundTransparency = 0.15
     KeybindsPanel.BorderSizePixel = 0
@@ -1265,7 +1265,7 @@ function API:CreateWindow(title, subtitle)
     KeybindsTitle.TextSize = 11
     KeybindsTitle.TextColor3 = Colors.Accent
     KeybindsTitle.TextXAlignment = Enum.TextXAlignment.Left
-    KeybindsTitle.Text = isMobile and "MOBILE CONTROLS" or "LEFT KEYBINDS"
+    KeybindsTitle.Text = isMobile and "Mobile user" or "PC user"
     KeybindsTitle.ZIndex = 6
     KeybindsTitle.Parent = KeybindsPanel
     register(reg.accentTexts, KeybindsTitle)
