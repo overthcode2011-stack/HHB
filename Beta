@@ -1254,6 +1254,7 @@ function API:CreateWindow(title, subtitle)
     KeybindsPanel.BorderSizePixel = 0
     KeybindsPanel.ZIndex = 5
     KeybindsPanel.Parent = mainFrame
+    KeybindsPanel.Visible = false
     makeCorner(KeybindsPanel, 5)
     register(reg.panels, KeybindsPanel)
 
