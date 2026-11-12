@@ -6,8 +6,8 @@ API.Config = {
     KeySystem = {
         Enabled = false,
         Provider = "Linkvertise", 
-        URL = "https://linkvertise.com/replicatedscriptsexample",
-        ExpectedKey = "XXX-XXXX-XXXX-XXXX", 
+        URL = "https://linkvertise.com/your-link-here",
+        ExpectedKey = "XXXX-XXXX-XXXX", 
     }
 }
 
@@ -1842,7 +1842,8 @@ function API:CreateWindow(title, subtitle)
         end
     end))
 
-    local savedSize = nil
+    local savedSize = isMobile and UDim2.new(0.6, 0, 0.8, 0) or UDim2.new(0, 700, 0, 450)
+    local minHeight = isMobile and 46 or 56
     local lastMinimizeAt = 0
     MinimizeButton.MouseButton1Click:Connect(function()
         local now = os.clock()
@@ -1854,16 +1855,20 @@ function API:CreateWindow(title, subtitle)
         MinimizeIcon.Image = window.Minimized and EXPAND_ICON or MIN_ICON
 
         if window.Minimized then
-            savedSize = mainFrame.Size
+            if mainFrame.AbsoluteSize.Y > minHeight + 20 then
+                savedSize = mainFrame.Size
+            end
             tabContainer.Visible = false
             contentArea.Visible = false
             playerCard.Visible = false
             KeybindsPanel.Visible = false
             DragBar.Visible = false
+            mainFrame.ClipsDescendants = true
             TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-                Size = UDim2.new(mainFrame.Size.X.Scale, mainFrame.Size.X.Offset, 0, isMobile and 46 or 56)
+                Size = UDim2.new(mainFrame.Size.X.Scale, mainFrame.Size.X.Offset, 0, minHeight)
             }):Play()
         else
+            mainFrame.ClipsDescendants = false
             local target = savedSize
                 or (isMobile and UDim2.new(0.6, 0, 0.8, 0) or UDim2.new(0, 700, 0, 450))
             local tw = TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
@@ -1872,6 +1877,9 @@ function API:CreateWindow(title, subtitle)
             tw:Play()
             tw.Completed:Connect(function()
                 if window.Minimized then return end
+                if mainFrame.AbsoluteSize.Y <= minHeight + 10 then
+                    mainFrame.Size = target
+                end
                 tabContainer.Visible = true
                 contentArea.Visible = true
                 playerCard.Visible = true
