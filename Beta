@@ -6,8 +6,8 @@ API.Config = {
     KeySystem = {
         Enabled = false,
         Provider = "Linkvertise", 
-        URL = "https://linkvertise.com/your-link-here",
-        ExpectedKey = "YOUR-KEY-HERE", 
+        URL = "https://linkvertise.com/replicatedscriptsexample",
+        ExpectedKey = "XXX-XXXX-XXXX-XXXX", 
     }
 }
 
