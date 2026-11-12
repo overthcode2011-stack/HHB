@@ -255,11 +255,11 @@ local FARM_STUCK_TIME = 1.8
 local FARM_STUCK_DIST = 1.8
 local FARM_NEAR_RADIUS = 20
 local FARM_COLLECT_SPEED_RESET_TIME = 0.4
-local FARM_FLY_SPEED = 22
-local FARM_NEAR_BOOST = 1
+local FARM_FLY_SPEED = 36
+local FARM_NEAR_BOOST = 1.7
 local FARM_BLACKLIST_TIME = 4
 local FARM_TARGET_TIMEOUT = 6
-local FARM_UNSTICK_MAX = 4.5
+local FARM_UNSTICK_MAX = 2
 
 local function getFarmSpeed()
     return FARM_FLY_SPEED
@@ -3212,23 +3212,33 @@ local function getFlingList()
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             local n = plr.Name
-            if n and n ~= "" and not seen[n] then
+            if type(n) == "string" and n ~= "" and not seen[n] then
                 seen[n] = true
                 table.insert(names, n)
             end
         end
     end
-    if #names == 0 then
-        return { "Murderer", "Sheriff", "Hero" }
-    end
     return names
+end
+
+local function setDropdownSelection(ref, value)
+    if not ref or not value then return end
+    pcall(function()
+        if type(ref.Set) == "function" then ref:Set(value) return end
+        if type(ref.SetValue) == "function" then ref:SetValue(value) return end
+        if type(ref.SetSelected) == "function" then ref:SetSelected(value) return end
+    end)
 end
 
 local function applyDropdownOptions(ref, names)
     if not ref then return false end
-    names = names or ROLE_OPTIONS
     if type(names) ~= "table" or #names == 0 then
-        names = ROLE_OPTIONS
+        names = { "Murderer", "Sheriff", "Hero" }
+    end
+
+    local copy = {}
+    for i = 1, #names do
+        copy[i] = names[i]
     end
 
     pcall(function()
@@ -3238,34 +3248,52 @@ local function applyDropdownOptions(ref, names)
         if type(ref.ClearOptions) == "function" then ref:ClearOptions() end
     end)
     pcall(function()
-        if type(ref.SetOptions) == "function" then
-            ref:SetOptions({})
-        end
+        if type(ref.RemoveAll) == "function" then ref:RemoveAll() end
+    end)
+    pcall(function()
+        if type(ref.SetOptions) == "function" then ref:SetOptions({}) end
+    end)
+    pcall(function()
+        if type(ref.Refresh) == "function" then ref:Refresh({}) end
     end)
 
     local ok = false
     if type(ref.SetOptions) == "function" then
-        ok = pcall(function() ref:SetOptions(names) end)
+        ok = pcall(function() ref:SetOptions(copy) end)
     end
     if not ok and type(ref.Refresh) == "function" then
-        ok = pcall(function() ref:Refresh(names) end)
+        ok = pcall(function() ref:Refresh(copy) end)
     end
     if not ok and type(ref.UpdateOptions) == "function" then
-        ok = pcall(function() ref:UpdateOptions(names) end)
+        ok = pcall(function() ref:UpdateOptions(copy) end)
     end
     if not ok and type(ref.SetValues) == "function" then
-        ok = pcall(function() ref:SetValues(names) end)
+        ok = pcall(function() ref:SetValues(copy) end)
     end
-    if type(ref.Set) == "function" and _G.__HH_FlingTarget then
-        pcall(function() ref:Set(_G.__HH_FlingTarget) end)
-    elseif type(ref.SetValue) == "function" and _G.__HH_FlingTarget then
-        pcall(function() ref:SetValue(_G.__HH_FlingTarget) end)
+    if not ok and type(ref.Add) == "function" then
+        for _, n in ipairs(copy) do
+            pcall(function() ref:Add(n) end)
+        end
+        ok = true
     end
+
+    local sel = _G.__HH_FlingTarget
+    local valid = false
+    if sel then
+        for _, n in ipairs(copy) do
+            if n == sel then valid = true break end
+        end
+    end
+    if not valid then
+        sel = "Murderer"
+        _G.__HH_FlingTarget = sel
+    end
+    setDropdownSelection(ref, sel)
     return ok
 end
 
 flingDropdownRef = window:CreateDropdown(playersTab, "Player", getFlingList(), "Murderer", function(v)
-    if v and v ~= "" then
+    if type(v) == "string" and v ~= "" then
         _G.__HH_FlingTarget = v
     end
 end)
@@ -3278,23 +3306,14 @@ local function refreshFlingDropdown(force)
     if not force and signature == lastFlingSignature then return end
     lastFlingSignature = signature
     applyDropdownOptions(flingDropdownRef, names)
-
-    if _G.__HH_FlingTarget and _G.__HH_FlingTarget ~= "" then
-        local stillHere = false
-        for _, n in ipairs(names) do
-            if n == _G.__HH_FlingTarget then stillHere = true; break end
-        end
-        if not stillHere then
-            _G.__HH_FlingTarget = "Murderer"
-        end
-    else
-        _G.__HH_FlingTarget = "Murderer"
-    end
 end
 
 local function resolveSelectedPlayer()
     local sel = _G.__HH_FlingTarget
-    if not sel or sel == "" then sel = "Murderer" end
+    if type(sel) ~= "string" or sel == "" then
+        sel = "Murderer"
+        _G.__HH_FlingTarget = sel
+    end
     if sel == "Murderer" then return getMurderer() end
     if sel == "Sheriff" then return getSheriff() end
     if sel == "Hero" then return getHero() end
@@ -3302,35 +3321,30 @@ local function resolveSelectedPlayer()
 end
 
 task.defer(function()
-    task.wait(0.35)
+    task.wait(0.4)
     refreshFlingDropdown(true)
 end)
 
 trackThread(task.spawn(function()
     while true do
-        task.wait(1.25)
+        task.wait(1)
         refreshFlingDropdown(false)
     end
 end))
 
 Players.PlayerAdded:Connect(function(plr)
-    task.wait(0.25)
+    task.wait(0.2)
     refreshFlingDropdown(true)
     if plr then
         plr.CharacterAdded:Connect(function()
-            task.wait(0.4)
+            task.wait(0.3)
             refreshFlingDropdown(true)
         end)
     end
 end)
 Players.PlayerRemoving:Connect(function()
-    task.wait(0.25)
+    task.wait(0.2)
     refreshFlingDropdown(true)
-end)
-
-window:CreateButton(playersTab, "Refresh", function()
-    refreshFlingDropdown(true)
-    notify("Players refreshed", 1.5)
 end)
 
 window:CreateButton(playersTab, "Fling", function()
