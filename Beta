@@ -1258,7 +1258,7 @@ function API:CreateWindow(title, subtitle)
     register(reg.panels, KeybindsPanel)
 
     local KeybindsTitle = Instance.new("TextLabel")
-    KeybindsTitle.Size = UDim2.new(1, -16, 0, 20)
+    KeybindsTitle.Size = UDim2.new(1.1, 0, 0.3, 0)
     KeybindsTitle.Position = UDim2.new(0, 8, 0, 6)
     KeybindsTitle.BackgroundTransparency = 1
     KeybindsTitle.FontFace = FONT_MAIN
