@@ -3204,8 +3204,6 @@ end)
 window:CreateLabel(playersTab, "Player")
 _G.__HH_FlingTarget = "Murderer"
 
-local ROLE_OPTIONS = { "Murderer", "Sheriff", "Hero" }
-
 local function getFlingList()
     local names = { "Murderer", "Sheriff", "Hero" }
     local seen = { Murderer = true, Sheriff = true, Hero = true }
@@ -3221,66 +3219,32 @@ local function getFlingList()
     return names
 end
 
-local function setDropdownSelection(ref, value)
-    if not ref or not value then return end
-    pcall(function()
-        if type(ref.Set) == "function" then ref:Set(value) return end
-        if type(ref.SetValue) == "function" then ref:SetValue(value) return end
-        if type(ref.SetSelected) == "function" then ref:SetSelected(value) return end
-    end)
-end
+flingDropdownRef = window:CreateDropdown(playersTab, "Target", getFlingList(), "Murderer", function(v)
+    if type(v) == "string" and v ~= "" then
+        _G.__HH_FlingTarget = v
+    end
+end)
 
-local function applyDropdownOptions(ref, names)
-    if not ref then return false end
-    if type(names) ~= "table" or #names == 0 then
-        names = { "Murderer", "Sheriff", "Hero" }
-    end
+lastFlingSignature = table.concat(getFlingList(), "|")
 
-    local copy = {}
-    for i = 1, #names do
-        copy[i] = names[i]
-    end
+local function refreshFlingDropdown(force)
+    local names = getFlingList()
+    local signature = table.concat(names, "|")
+    if not force and signature == lastFlingSignature then return end
+    lastFlingSignature = signature
 
-    pcall(function()
-        if type(ref.Clear) == "function" then ref:Clear() end
-    end)
-    pcall(function()
-        if type(ref.ClearOptions) == "function" then ref:ClearOptions() end
-    end)
-    pcall(function()
-        if type(ref.RemoveAll) == "function" then ref:RemoveAll() end
-    end)
-    pcall(function()
-        if type(ref.SetOptions) == "function" then ref:SetOptions({}) end
-    end)
-    pcall(function()
-        if type(ref.Refresh) == "function" then ref:Refresh({}) end
-    end)
+    if not flingDropdownRef then return end
 
-    local ok = false
-    if type(ref.SetOptions) == "function" then
-        ok = pcall(function() ref:SetOptions(copy) end)
-    end
-    if not ok and type(ref.Refresh) == "function" then
-        ok = pcall(function() ref:Refresh(copy) end)
-    end
-    if not ok and type(ref.UpdateOptions) == "function" then
-        ok = pcall(function() ref:UpdateOptions(copy) end)
-    end
-    if not ok and type(ref.SetValues) == "function" then
-        ok = pcall(function() ref:SetValues(copy) end)
-    end
-    if not ok and type(ref.Add) == "function" then
-        for _, n in ipairs(copy) do
-            pcall(function() ref:Add(n) end)
-        end
-        ok = true
+    if type(flingDropdownRef.SetOptions) == "function" then
+        pcall(function() flingDropdownRef:SetOptions(names) end)
+    elseif type(flingDropdownRef.Refresh) == "function" then
+        pcall(function() flingDropdownRef:Refresh(names) end)
     end
 
     local sel = _G.__HH_FlingTarget
     local valid = false
-    if sel then
-        for _, n in ipairs(copy) do
+    if type(sel) == "string" then
+        for _, n in ipairs(names) do
             if n == sel then valid = true break end
         end
     end
@@ -3288,32 +3252,19 @@ local function applyDropdownOptions(ref, names)
         sel = "Murderer"
         _G.__HH_FlingTarget = sel
     end
-    setDropdownSelection(ref, sel)
-    return ok
-end
-
-flingDropdownRef = window:CreateDropdown(playersTab, "Player", getFlingList(), "Murderer", function(v)
-    if type(v) == "string" and v ~= "" then
-        _G.__HH_FlingTarget = v
+    if type(flingDropdownRef.SetValue) == "function" then
+        pcall(function() flingDropdownRef:SetValue(sel) end)
     end
-end)
-
-lastFlingSignature = ""
-
-local function refreshFlingDropdown(force)
-    local names = getFlingList()
-    local signature = table.concat(names, "|")
-    if not force and signature == lastFlingSignature then return end
-    lastFlingSignature = signature
-    applyDropdownOptions(flingDropdownRef, names)
 end
 
 local function resolveSelectedPlayer()
     local sel = _G.__HH_FlingTarget
-    if type(sel) ~= "string" or sel == "" then
-        sel = "Murderer"
-        _G.__HH_FlingTarget = sel
+    if (type(sel) ~= "string" or sel == "") and flingDropdownRef and type(flingDropdownRef.GetValue) == "function" then
+        local ok, v = pcall(function() return flingDropdownRef:GetValue() end)
+        if ok and type(v) == "string" and v ~= "" then sel = v end
     end
+    if type(sel) ~= "string" or sel == "" then sel = "Murderer" end
+    _G.__HH_FlingTarget = sel
     if sel == "Murderer" then return getMurderer() end
     if sel == "Sheriff" then return getSheriff() end
     if sel == "Hero" then return getHero() end
@@ -3321,7 +3272,7 @@ local function resolveSelectedPlayer()
 end
 
 task.defer(function()
-    task.wait(0.4)
+    task.wait(0.5)
     refreshFlingDropdown(true)
 end)
 
@@ -3332,15 +3283,9 @@ trackThread(task.spawn(function()
     end
 end))
 
-Players.PlayerAdded:Connect(function(plr)
+Players.PlayerAdded:Connect(function()
     task.wait(0.2)
     refreshFlingDropdown(true)
-    if plr then
-        plr.CharacterAdded:Connect(function()
-            task.wait(0.3)
-            refreshFlingDropdown(true)
-        end)
-    end
 end)
 Players.PlayerRemoving:Connect(function()
     task.wait(0.2)
