@@ -897,19 +897,12 @@ function API:CreateWindow(title, subtitle)
     makeCorner(mainFrame, 6)
     reg.mainFrame = mainFrame
 
-    local Shadow = Instance.new("ImageLabel")
+    local Shadow = Instance.new("UIShadow")
     Shadow.Name = "Shadow"
-    Shadow.Size = UDim2.new(1, 30, 1, 30)
-    Shadow.Position = UDim2.new(0, -15, 0, -15)
-    Shadow.BackgroundTransparency = 1
-    Shadow.Image = "rbxassetid://5028857084"
-    Shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    Shadow.BackgroundTransparency = 0
+    Shadow.Color = Color3.fromRGB(0, 0, 0)
     Shadow.ImageTransparency = 0.5
-    Shadow.ScaleType = Enum.ScaleType.Slice
-    Shadow.SliceCenter = Rect.new(24, 24, 276, 276)
-    Shadow.ZIndex = 0
     Shadow.Parent = mainFrame
-    makeCorner(Shadow, 6)
 
     local TopBar = Instance.new("Frame")
     TopBar.Name = "TopBar"
@@ -1250,9 +1243,6 @@ function API:CreateWindow(title, subtitle)
     end
 
     local userNameText = "@" .. LocalPlayer.Name
-    if SPECIAL_IDS[LocalPlayer.UserId] then
-        userNameText = userNameText .. SPECIAL_CHAR
-    end
     pfpUser.Text = userNameText
 
     task.spawn(function()
@@ -1282,7 +1272,7 @@ function API:CreateWindow(title, subtitle)
     KeybindsTitle.TextSize = 11
     KeybindsTitle.TextColor3 = Colors.Accent
     KeybindsTitle.TextXAlignment = Enum.TextXAlignment.Left
-    KeybindsTitle.Text = isMobile and "MOBILE CONTROLS" or "LEFT KEYBINDS"
+    KeybindsTitle.Text = isMobile and "Mobile user" or "PC User"
     KeybindsTitle.ZIndex = 6
     KeybindsTitle.Parent = KeybindsPanel
     register(reg.accentTexts, KeybindsTitle)
@@ -1319,9 +1309,9 @@ function API:CreateWindow(title, subtitle)
         register(reg.subtexts, lbl)
     end
 
-    makeKeybindRow(KeybindsPanel, isMobile and "BTN" or "T", "Toggle Aimbot", 1)
-    makeKeybindRow(KeybindsPanel, isMobile and "BTN" or "O", "Toggle ESP", 2)
-    makeKeybindRow(KeybindsPanel, isMobile and "BTN" or "F3", "Toggle UI", 3)
+    makeKeybindRow(KeybindsPanel, isMobile and "Tip" or "Tip", "API is fully free!", 1)
+    makeKeybindRow(KeybindsPanel, isMobile and "API" or "API", "replicatedscripts", 2)
+    makeKeybindRow(KeybindsPanel, isMobile and "UI" or "UI", "F3 to Open", 3)
 
     local DragBar = Instance.new("Frame")
     DragBar.Name = "DragBar"
