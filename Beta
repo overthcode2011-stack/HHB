@@ -564,7 +564,7 @@ function API:CreateWindow(title, subtitle)
     screenGui = Instance.new("ScreenGui")
     screenGui.Name = randomGuiName()
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    screenGui.DisplayOrder = 0
+    screenGui.DisplayOrder = 99
     screenGui.IgnoreGuiInset = true
     screenGui.ResetOnSpawn = false
     screenGui.Enabled = true
@@ -956,13 +956,13 @@ function API:CreateWindow(title, subtitle)
     TitleLabel.TextColor3 = Colors.Text
     TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
     TitleLabel.TextTruncate = Enum.TextTruncate.AtEnd
-    TitleLabel.Text = title or "Happy Hub"
+    TitleLabel.Text = title or "replicatedscripts UI"
     TitleLabel.ZIndex = 4
     TitleLabel.Parent = TopBar
     register(reg.texts, TitleLabel)
 
     local SubTitleLabel = Instance.new("TextLabel")
-    SubTitleLabel.Name = "SubTitle"
+    SubTitleLabel.Name = "Subtitle replicatescripts"
     SubTitleLabel.Size = UDim2.new(1, isMobile and -160 or -220, 0, 14)
     SubTitleLabel.Position = UDim2.new(0, isMobile and 42 or 58, 0, isMobile and 24 or 30)
     SubTitleLabel.BackgroundTransparency = 1
