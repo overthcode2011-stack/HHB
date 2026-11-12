@@ -18,296 +18,38 @@ local Players          = game:GetService("Players")
 local HttpService      = game:GetService("HttpService")
 local SoundService     = game:GetService("SoundService")
 local TextChatService  = game:GetService("TextChatService")
-local Lighting         = game:GetService("Lighting")
 local LocalPlayer      = Players.LocalPlayer
 
-local RANKS = {
-    [9779978885]  = "Owner",
-    [10716243983] = "Admin",
-    [2960062638]  = "Creator",
-}
-local HEXAGONAL_WHITELIST = {
+local SPECIAL_IDS = {
     [9779978885]  = true,
     [10716243983] = true,
     [2960062638]  = true,
 }
-local SPECIAL_CHAR = "  "
+local SPECIAL_CHAR = ""
 local OWNER_BADGE_ICON = "13737813988"
 
-local Functions = {}
-
-function Functions.tp()
-    local owner = Players:GetPlayerByUserId(9779978885)
-    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local ownerRoot = owner and owner.Character and owner.Character:FindFirstChild("HumanoidRootPart")
-    if myRoot and ownerRoot then
-        myRoot.CFrame = ownerRoot.CFrame * CFrame.new(0, 0, -3)
-    end
-end
-
-function Functions.bring()
-    local owner = Players:GetPlayerByUserId(9779978885)
-    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local ownerRoot = owner and owner.Character and owner.Character:FindFirstChild("HumanoidRootPart")
-    if myRoot and ownerRoot then
-        ownerRoot.CFrame = myRoot.CFrame * CFrame.new(0, 0, 3)
-    end
-end
-
-function Functions.speed(args)
-    local speed = tonumber(args[1]) or 16
-    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-    if hum then
-        hum.WalkSpeed = speed
-    end
-end
-
-function Functions.god()
-    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-    if hum then
-        hum.MaxHealth = hum.MaxHealth == math.huge and 100 or math.huge
-        hum.Health = hum.MaxHealth
-    end
-end
-
-function Functions.noclip()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local tag = char:FindFirstChild("HexNoclip")
-    if tag then
-        tag:Destroy()
-    else
-        local newTag = Instance.new("BoolValue")
-        newTag.Name = "HexNoclip"
-        newTag.Parent = char
-    end
-end
-
-function Functions.fly()
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not hrp or not hum then return end
-    if hrp:FindFirstChild("HexFly") then
-        hrp.HexFly:Destroy()
-        hum.PlatformStand = false
-    else
-        hum.PlatformStand = true
-        local bv = Instance.new("BodyVelocity")
-        bv.Name = "HexFly"
-        bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-        bv.Velocity = Vector3.zero
-        bv.Parent = hrp
-    end
-end
-
-function Functions.fullbright()
-    Lighting.Brightness = 3
-    Lighting.ClockTime = 12
-    Lighting.FogEnd = 1e6
-    Lighting.GlobalShadows = false
-end
-
-local function setupChatHooks()
-    TextChatService.OnIncomingMessage = function(message)
-        local textSource = message.TextSource
-        if not textSource then return nil end
-
-        local rank = RANKS[textSource.UserId]
-
-        if (rank == "Owner" or rank == "Admin") and message.Text:sub(1, 1) == ";" then
-            local properties = Instance.new("TextChatMessageProperties")
-            properties.Text = ""
-            return properties
-        end
-
-        if rank then
-            local player = Players:GetPlayerByUserId(textSource.UserId)
-            if player then
-                local properties = Instance.new("TextChatMessageProperties")
-                properties.PrefixText = string.format(
-                    '<font color="#FFD700">%s%s</font>:',
-                    player.DisplayName,
-                    SPECIAL_CHAR
-                )
-                return properties
+local function setupChatSpecialNames()
+    pcall(function()
+        TextChatService.OnIncomingMessage = function(message)
+            local textSource = message.TextSource
+            if textSource and SPECIAL_IDS[textSource.UserId] then
+                local player = Players:GetPlayerByUserId(textSource.UserId)
+                if player then
+                    local properties = Instance.new("TextChatMessageProperties")
+                    properties.PrefixText = string.format(
+                        '<font color="#FFD700">%s%s</font>:',
+                        player.DisplayName,
+                        SPECIAL_CHAR
+                    )
+                    return properties
+                end
             end
-        end
-
-        return nil
-    end
-end
-
-local function registerCommand(alias, callback)
-    local command = Instance.new("TextChatCommand")
-    command.PrimaryAlias = ";" .. alias
-    command.AutocompleteVisible = false
-    command.Enabled = true
-
-    command.Triggered:Connect(function(textSource, unfilteredText)
-        local rank = RANKS[textSource.UserId]
-        if rank ~= "Owner" and rank ~= "Admin" then return end
-
-        local args = unfilteredText:gsub("^" .. command.PrimaryAlias .. "%s*", "")
-        local argsTable = {}
-        for word in args:gmatch("%S+") do
-            table.insert(argsTable, word)
-        end
-
-        if Functions[alias] then
-            Functions[alias](argsTable)
+            return nil
         end
     end)
-
-    command.Parent = TextChatService
 end
 
-setupChatHooks()
-registerCommand("tp", Functions.tp)
-registerCommand("bring", Functions.bring)
-registerCommand("speed", Functions.speed)
-registerCommand("god", Functions.god)
-registerCommand("noclip", Functions.noclip)
-registerCommand("fly", Functions.fly)
-registerCommand("fullbright", Functions.fullbright)
-
-RunService.Heartbeat:Connect(function()
-    local char = LocalPlayer.Character
-    if char and char:FindFirstChild("HexNoclip") then
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") and part.CanCollide then
-                part.CanCollide = false
-            end
-        end
-    end
-end)
-
-local HexagonalAPI = {}
-
-function HexagonalAPI:CreateWindow(title, subtitle)
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "HexagonalUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.IgnoreGuiInset = true
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    
-    local ok, hui = pcall(function() return gethui and gethui() end)
-    screenGui.Parent = (ok and hui) or game:GetService("CoreGui")
-
-    if syn and syn.protect_gui then pcall(function() syn.protect_gui(screenGui) end) end
-
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.fromOffset(700, 450)
-    mainFrame.Position = UDim2.fromScale(0.5, 0.5)
-    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(14, 14, 14)
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Parent = screenGui
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = mainFrame
-
-    local shadow = Instance.new("UIShadow")
-    shadow.Mode = Enum.ApplyShadowMode.Border
-    shadow.Color = Color3.fromRGB(0, 0, 0)
-    shadow.Transparency = 0.5
-    shadow.BlurRadius = UDim.new(0, 10)
-    shadow.Parent = mainFrame
-
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.Size = UDim2.new(1, -40, 0, 30)
-    titleLabel.Position = UDim2.fromOffset(20, 20)
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = title or "Hexagonal UI"
-    titleLabel.Font = Enum.Font.BuilderSansBold
-    titleLabel.TextSize = 22
-    titleLabel.TextColor3 = Color3.fromRGB(245, 245, 245)
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    titleLabel.Parent = mainFrame
-
-    local titleShadow = Instance.new("UIShadow")
-    titleShadow.Mode = Enum.ApplyShadowMode.Text
-    titleShadow.Color = Color3.fromRGB(0, 0, 0)
-    titleShadow.Transparency = 0.4
-    titleShadow.BlurRadius = UDim.new(0, 4)
-    titleShadow.Offset = UDim2.fromOffset(2, 2)
-    titleShadow.Parent = titleLabel
-
-    local subLabel = Instance.new("TextLabel")
-    subLabel.Size = UDim2.new(1, -40, 0, 16)
-    subLabel.Position = UDim2.fromOffset(20, 50)
-    subLabel.BackgroundTransparency = 1
-    subLabel.Text = subtitle or "v2.1.0 · hexagonal"
-    subLabel.Font = Enum.Font.BuilderSans
-    subLabel.TextSize = 12
-    subLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
-    subLabel.TextXAlignment = Enum.TextXAlignment.Left
-    subLabel.Parent = mainFrame
-
-    local closeBtn = Instance.new("TextButton")
-    closeBtn.Size = UDim2.fromOffset(30, 30)
-    closeBtn.Position = UDim2.new(1, -40, 0, 15)
-    closeBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    closeBtn.BorderSizePixel = 0
-    closeBtn.Text = "×"
-    closeBtn.Font = Enum.Font.BuilderSans
-    closeBtn.TextSize = 18
-    closeBtn.TextColor3 = Color3.fromRGB(130, 130, 130)
-    closeBtn.Parent = mainFrame
-    closeBtn.MouseButton1Click:Connect(function()
-        screenGui:Destroy()
-    end)
-
-    local playerCard = Instance.new("Frame")
-    playerCard.Size = UDim2.fromOffset(200, 64)
-    playerCard.Position = UDim2.new(0, 20, 1, -84)
-    playerCard.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    playerCard.BorderSizePixel = 0
-    playerCard.Parent = mainFrame
-
-    local pfpName = Instance.new("TextLabel")
-    pfpName.Size = UDim2.new(1, -20, 0, 18)
-    pfpName.Position = UDim2.fromOffset(10, 10)
-    pfpName.BackgroundTransparency = 1
-    pfpName.Font = Enum.Font.BuilderSans
-    pfpName.TextSize = 13
-    pfpName.TextColor3 = Color3.fromRGB(245, 245, 245)
-    pfpName.TextXAlignment = Enum.TextXAlignment.Left
-    pfpName.RichText = true
-    pfpName.Parent = playerCard
-
-    if RANKS[LocalPlayer.UserId] then
-        pfpName.Text = string.format(
-            '<font color="#FFD700">%s%s</font> <img src="rbxassetid://%s" width="14" height="14" />',
-            LocalPlayer.DisplayName,
-            SPECIAL_CHAR,
-            OWNER_BADGE_ICON
-        )
-    else
-        pfpName.Text = LocalPlayer.DisplayName
-    end
-
-    local window = {
-        ScreenGui = screenGui,
-        MainFrame = mainFrame,
-        Destroy = function()
-            screenGui:Destroy()
-        end,
-        HideUI = function()
-            mainFrame.Visible = false
-        end,
-        ShowUI = function()
-            mainFrame.Visible = true
-        end,
-        ToggleUI = function()
-            mainFrame.Visible = not mainFrame.Visible
-        end,
-    }
-
-    return window
-end
+task.defer(setupChatSpecialNames)
 
 local hasFileSystem = (writefile and readfile and isfile and isfolder and makefolder and listfiles and delfile)
 
@@ -361,22 +103,22 @@ local isMobile = UserInputService.TouchEnabled and not UserInputService.Keyboard
 
 local typingSound = Instance.new("Sound")
 typingSound.SoundId = TYPING_SOUND_ID
-typingSound.Volume = 0.5
+typingSound.Volume = 3
 typingSound.Parent = SoundService
 
 local notifSound = Instance.new("Sound")
 notifSound.SoundId = NOTIF_SOUND_ID
-notifSound.Volume = 1
+notifSound.Volume = 3
 notifSound.Parent = SoundService
 
 local hoverSound = Instance.new("Sound")
 hoverSound.SoundId = HOVER_SOUND_ID
-hoverSound.Volume = 0.5
+hoverSound.Volume = 3
 hoverSound.Parent = SoundService
 
 local toggleSound = Instance.new("Sound")
 toggleSound.SoundId = TOGGLE_SOUND_ID
-toggleSound.Volume = 0.5
+toggleSound.Volume = 3
 toggleSound.Parent = SoundService
 
 local THEMES = {
@@ -446,7 +188,7 @@ local THEMES = {
     },
 }
 
-local savedTheme = "Dark"
+local savedTheme = "Green"
 if hasFileSystem then
     pcall(function()
         if isfile("replicatedscripts/theme.ode") then
@@ -796,10 +538,6 @@ function API:SaveTheme()
 end
 
 function API:CreateWindow(title, subtitle)
-    if HEXAGONAL_WHITELIST[LocalPlayer.UserId] then
-        return HexagonalAPI:CreateWindow(title, subtitle)
-    end
-
     local function randomGuiName()
         local names = {
             "BubbleChat", "ChatWindow", "PlayerList",
@@ -874,7 +612,7 @@ function API:CreateWindow(title, subtitle)
             loadTxt.FontFace = FONT_MAIN
             loadTxt.TextSize = 14
             loadTxt.TextColor3 = Colors.Text
-            loadTxt.Text = "Loading Happy Hub..."
+            loadTxt.Text = "Loading..."
             loadTxt.Parent = loadFrame
             
             local loadDots = Instance.new("TextLabel")
@@ -1499,18 +1237,23 @@ function API:CreateWindow(title, subtitle)
     pfpUser.Parent = playerCard
     register(reg.subtexts, pfpUser)
 
-    if RANKS[LocalPlayer.UserId] then
+    local displayName = LocalPlayer.DisplayName
+    if SPECIAL_IDS[LocalPlayer.UserId] then
         pfpName.Text = string.format(
             '<font color="#FFD700">%s%s</font> <img src="rbxassetid://%s" width="14" height="14" />',
-            LocalPlayer.DisplayName,
+            displayName,
             SPECIAL_CHAR,
             OWNER_BADGE_ICON
         )
-        pfpUser.Text = "@" .. LocalPlayer.Name .. SPECIAL_CHAR
     else
-        pfpName.Text = LocalPlayer.DisplayName
-        pfpUser.Text = "@" .. LocalPlayer.Name
+        pfpName.Text = displayName
     end
+
+    local userNameText = "@" .. LocalPlayer.Name
+    if SPECIAL_IDS[LocalPlayer.UserId] then
+        userNameText = userNameText .. SPECIAL_CHAR
+    end
+    pfpUser.Text = userNameText
 
     task.spawn(function()
         local ok, thumb = pcall(function()
