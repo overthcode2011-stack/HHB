@@ -7,7 +7,7 @@ API.Config = {
         Enabled = false,
         Provider = "Linkvertise", 
         URL = "https://linkvertise.com/your-link-here",
-        ExpectedKey = "Put here your key...", 
+        ExpectedKey = "YOUR-KEY-HERE", 
     }
 }
 
@@ -109,13 +109,7 @@ function Functions.fullbright()
 end
 
 local function setupChatHooks()
-    local originalCallback = TextChatService.OnIncomingMessage
     TextChatService.OnIncomingMessage = function(message)
-        if originalCallback then
-            local result = originalCallback(message)
-            if result then return result end
-        end
-
         local textSource = message.TextSource
         if not textSource then return nil end
 
@@ -452,7 +446,7 @@ local THEMES = {
     },
 }
 
-local savedTheme = "Green"
+local savedTheme = "Dark"
 if hasFileSystem then
     pcall(function()
         if isfile("replicatedscripts/theme.ode") then
