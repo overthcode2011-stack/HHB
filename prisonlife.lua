@@ -440,15 +440,17 @@ pcall(function()
            and Aimbot.Enabled and Aimbot.BulletRedirect then
             local args = {...}
             local bullets = args[1]
-            if type(bullets) == "table" then
+            if type(bullets) == "table" and #bullets > 0 then
                 local tgt = GetAimbotTarget()
                 if tgt then
                     local pos, headInst = GetTargetPos(tgt)
                     if pos and headInst then
+                        local origin = workspace.CurrentCamera.CFrame.Position
                         for _, b in ipairs(bullets) do
-                            if type(b) == "table" and #b >= 3 then
-                                b[2] = pos
-                                b[3] = headInst
+                            if type(b) == "table" then
+                                b.Hit = headInst
+                                b.Distance = (pos - origin).Magnitude
+                                b.RayObject = Ray.new(origin, pos - origin)
                             end
                         end
                     end
