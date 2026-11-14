@@ -445,12 +445,14 @@ pcall(function()
                 if tgt then
                     local pos, headInst = GetTargetPos(tgt)
                     if pos and headInst then
-                        local origin = workspace.CurrentCamera.CFrame.Position
                         for _, b in ipairs(bullets) do
-                            if type(b) == "table" then
-                                b.Hit = headInst
-                                b.Distance = (pos - origin).Magnitude
-                                b.RayObject = Ray.new(origin, pos - origin)
+                            if type(b) == "table" and #b >= 3 then
+                                -- Estructura esperada por el servidor:
+                                -- b[1] = Origen (Vector3)
+                                -- b[2] = Posición de impacto (Vector3)
+                                -- b[3] = Instancia golpeada (Instance)
+                                b[2] = pos
+                                b[3] = headInst
                             end
                         end
                     end
