@@ -94,13 +94,111 @@ local purgeMemoryCaches
 
 local API
 do
-    local ok, err = pcall(function()
-        API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/API"))()
-    end)
-    if not ok or type(API) ~= "table" then
-        warn("[HappyHub] API load failed: " .. tostring(err))
+    local API_URL = "https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/API"
+
+    local function safeHttpGet(url)
+        if type(url) ~= "string" or url == "" then return nil, "bad url" end
+
+        local getters = {}
+        if type(httpget) == "function" then table.insert(getters, httpget) end
+        if type(HttpGet) == "function" then table.insert(getters, HttpGet) end
+        if type(http) == "table" and type(http.get) == "function" then
+            table.insert(getters, function(u) return http.get(u) end)
+        end
+        if type(request) == "function" then
+            table.insert(getters, function(u)
+                local res = request({ Url = u, Method = "GET" })
+                if type(res) == "table" then
+                    return res.Body or res.body
+                end
+                return res
+            end)
+        end
+        if type(http_request) == "function" then
+            table.insert(getters, function(u)
+                local res = http_request({ Url = u, Method = "GET" })
+                if type(res) == "table" then
+                    return res.Body or res.body
+                end
+                return res
+            end)
+        end
+        if game then
+            local okG, gHttp = pcall(function()
+                return game.HttpGet or game.httpget
+            end)
+            if okG and type(gHttp) == "function" then
+                table.insert(getters, function(u)
+                    return gHttp(game, u)
+                end)
+            end
+            if type(game.HttpGet) == "function" then
+                table.insert(getters, function(u)
+                    return game:HttpGet(u)
+                end)
+            end
+            if type(game.HttpGetAsync) == "function" then
+                table.insert(getters, function(u)
+                    return game:HttpGetAsync(u)
+                end)
+            end
+        end
+        if type(syn) == "table" and type(syn.request) == "function" then
+            table.insert(getters, function(u)
+                local res = syn.request({ Url = u, Method = "GET" })
+                if type(res) == "table" then
+                    return res.Body or res.body
+                end
+                return res
+            end)
+        end
+
+        local lastErr = "no http function"
+        for _, fn in ipairs(getters) do
+            local ok, body = pcall(fn, url)
+            if ok and type(body) == "string" and #body > 32 then
+                return body
+            end
+            lastErr = tostring(body)
+        end
+        return nil, lastErr
+    end
+
+    local function safeLoadstring(src)
+        local loaders = {}
+        if type(loadstring) == "function" then table.insert(loaders, loadstring) end
+        if type(load) == "function" then table.insert(loaders, load) end
+        for _, ld in ipairs(loaders) do
+            local ok, fn = pcall(ld, src)
+            if ok and type(fn) == "function" then
+                return fn
+            end
+        end
+        return nil
+    end
+
+    local body, httpErr = safeHttpGet(API_URL)
+    if type(body) ~= "string" then
+        warn("[HappyHub] API HttpGet failed: " .. tostring(httpErr))
         return
     end
+
+    local chunk = safeLoadstring(body)
+    if type(chunk) ~= "function" then
+        warn("[HappyHub] API loadstring failed")
+        return
+    end
+
+    local okRun, result = pcall(chunk)
+    if not okRun then
+        warn("[HappyHub] API runtime error: " .. tostring(result))
+        return
+    end
+    if type(result) ~= "table" then
+        warn("[HappyHub] API returned non-table")
+        return
+    end
+    API = result
 end
 
 local Players = game:GetService("Players")
