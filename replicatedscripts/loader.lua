@@ -1,5 +1,5 @@
-local BASE = "https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/replicatedscripts/"
-local API_URL = "https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API" 
+local ROOT_URL = "https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/"
+local SCRIPTS_URL = ROOT_URL .. "replicatedscripts/"
 
 local function loadChunk(url, name)
     local ok, err = pcall(function()
@@ -11,7 +11,7 @@ local function loadChunk(url, name)
     end)
 
     if not ok then
-        warn("[HappyHub] " .. name .. " -> " .. tostring(err))
+        warn("[HH] " .. name .. " -> " .. tostring(err))
         pcall(function()
             game:GetService("StarterGui"):SetCore("SendNotification", {
                 Title = "Happy Hub",
@@ -24,8 +24,7 @@ local function loadChunk(url, name)
     return true
 end
 
-
-if not loadChunk(BASE .. "core.lua", "core.lua") then return end
-
-
-if not loadChunk(API_URL, "API") then return end
+if not loadChunk(ROOT_URL .. "API", "API") then return end
+if not loadChunk(SCRIPTS_URL .. "icons_config.lua", "icons_config.lua") then return end
+if not loadChunk(SCRIPTS_URL .. "logic.lua", "logic.lua") then return end
+if not loadChunk(SCRIPTS_URL .. "ui.lua", "ui.lua") then return end
