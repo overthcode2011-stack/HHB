@@ -7,7 +7,7 @@ local function loadChunk(url, name)
         assert(type(src) == "string" and #src > 64, "empty response")
         local fn, compileErr = loadstring(src)
         assert(fn, tostring(compileErr))
-        fn() -- Ejecuta el script sin importar si retorna algo o no
+        fn()
     end)
 
     if not ok then
