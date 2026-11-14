@@ -1,107 +1,13 @@
-do
-    local oldState = getgenv and getgenv().__HH_STATE
-    if oldState then
-        pcall(function()
-            for _, c in ipairs(oldState.connections or {}) do
-                pcall(function() c:Disconnect() end)
-            end
-            for _, t in ipairs(oldState.threads or {}) do
-                pcall(task.cancel, t)
-            end
-            for _, g in ipairs(oldState.screenGuis or {}) do
-                pcall(function() g:Destroy() end)
-            end
-        end)
-        if getgenv then getgenv().__HH_STATE = nil end
-        task.wait(0.3)
-    end
-end
-
-getgenv().__HH_STATE = {
-    connections = {},
-    threads = {},
-    screenGuis = {},
-    startedAt = tick(),
-}
-
-local ConnectionRegistry = {}
-
-local function trackConn(key, conn)
-    if not conn then return conn end
-    if key then
-        if ConnectionRegistry[key] then
-            pcall(function() ConnectionRegistry[key]:Disconnect() end)
-        end
-        ConnectionRegistry[key] = conn
-    end
-    local list = getgenv().__HH_STATE.connections
-    local n = #list
-    if n > 80 then
-        local alive = {}
-        for i = 1, n do
-            local c = list[i]
-            if c then
-                local ok, connected = pcall(function() return c.Connected end)
-                if ok and connected then
-                    alive[#alive + 1] = c
-                end
-            end
-        end
-        getgenv().__HH_STATE.connections = alive
-        list = alive
-    end
-    table.insert(list, conn)
-    return conn
-end
-
-local function dropConn(key)
-    if ConnectionRegistry[key] then
-        pcall(function() ConnectionRegistry[key]:Disconnect() end)
-        ConnectionRegistry[key] = nil
-    end
-end
-
-local function trackThread(t)
-    if t then
-        local list = getgenv().__HH_STATE.threads
-        if #list > 40 then
-            local alive = {}
-            for i = 1, #list do
-                local th = list[i]
-                if th then
-                    local ok, status = pcall(function() return coroutine.status(th) end)
-                    if ok and status ~= "dead" then
-                        alive[#alive + 1] = th
-                    end
-                end
-            end
-            getgenv().__HH_STATE.threads = alive
-            list = alive
-        end
-        table.insert(list, t)
-    end
-    return t
-end
-
-local function trackGui(g)
-    if g then
-        table.insert(getgenv().__HH_STATE.screenGuis, g)
-    end
-    return g
-end
-
-local purgeMemoryCaches
+local hiddenFolder = Instance.new("Folder")
+hiddenFolder.Name = "\u{200B}\u{200C}\u{200D}\u{FEFF}\u{200B}"
+hiddenFolder.Parent = gethui and gethui() or game:GetService("CoreGui")
+local Hometabicon = "130068439240504"
 
 local success, API = pcall(function()
-    return loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/API"))()
+    return loadstring(game:HttpGet('https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API'))()
 end)
 if not success or not API then
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "Error",
-            Text = "API failed.",
-        })
-    end)
+    game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Error", Text = "API failed."})
     return
 end
 
