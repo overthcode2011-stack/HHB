@@ -93,15 +93,28 @@ end
 local purgeMemoryCaches
 
 local success, API = pcall(function()
-    return loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API"))()
+    local src = game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB-MM2-/refs/heads/main/API")
+    if type(src) ~= "string" or #src < 64 then
+        error("HttpGet empty")
+    end
+    local fn, err = loadstring(src)
+    if type(fn) ~= "function" then
+        error(tostring(err) or "loadstring nil")
+    end
+    local result = fn()
+    if type(result) ~= "table" then
+        error("API not table")
+    end
+    return result
 end)
-if not success or not API then
+if not success or type(API) ~= "table" then
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
             Title = "Error",
             Text = "API failed.",
         })
     end)
+    warn("[HappyHub] API load failed: " .. tostring(API))
     return
 end
 
@@ -232,11 +245,9 @@ local MovementSettings = {
 local AvatarSettings = { Korblox = false, AnimPack = false }
 local FarmSettings = { AutoFarm = false, CoinCooldown = 1.5, UltraOpt = true, FarmSpeed = 18, NearBoost = 1.2 }
 
-local BEAM = {
-    CLEAR = Color3.fromRGB(0, 255, 100),
-    WALL  = Color3.fromRGB(255, 50, 50),
-    INNO  = Color3.fromRGB(255, 130, 0),
-}
+local BEAM_CLEAR = Color3.fromRGB(0, 255, 100)
+local BEAM_WALL  = Color3.fromRGB(255, 50, 50)
+local BEAM_INNO  = Color3.fromRGB(255, 130, 0)
 
 local AntiVoidSettings = { Threshold = -30, SafeY = 10 }
 
@@ -244,41 +255,33 @@ local WALL_GRACE_TIME = 0.2
 local TargetVisibility = {}
 local MurdererCache = { plr = nil, time = 0 }
 local VisCache = {}
-local C = {
-    VIS_TTL = 0.05,
-    MURDERER_TTL = 0.4,
-    FARM_GOAL = 50,
-    FARM_TOUCH_RADIUS = 22,
-    FARM_ARRIVE_DIST = 5,
-    FARM_DANGER_DIST = 20,
-    FARM_GROUND_OFFSET = -1.2,
-    FARM_TOUCH_COOLDOWN = 0.3,
-    FARM_FALLBACK_TIMEOUT = 20,
-    FARM_FALLBACK_COOLDOWN = 8,
-    FARM_STUCK_TIME = 3.2,
-    FARM_STUCK_DIST = 2.2,
-    FARM_NEAR_RADIUS = 14,
-    FARM_COLLECT_SPEED_RESET_TIME = 0.45,
-    FARM_FLY_SPEED = 18,
-    FARM_NEAR_BOOST = 1.2,
-    FARM_BLACKLIST_TIME = 5,
-    FARM_TARGET_TIMEOUT = 9,
-    FARM_UNSTICK_MAX = 1,
-    AUTO_KILL_COOLDOWN = 2,
-    ANTI_FOCUS_RADIUS = 45,
-    ANTI_FOCUS_DURATION = 5,
-    KNIFE_DODGE_MIN_DIST = 12,
-    KNIFE_DODGE_OFFSET = 20,
-    KNIFE_DODGE_COOLDOWN = 0.4,
-    YARHM_SHOOT_OFFSET = 2.8,
-}
+local VIS_TTL = 0.05
+local MURDERER_TTL = 0.4
+
+local FARM_GOAL = 50
+local FARM_TOUCH_RADIUS = 22
+local FARM_ARRIVE_DIST = 5
+local FARM_DANGER_DIST = 20
+local FARM_GROUND_OFFSET = -1.2
+local FARM_TOUCH_COOLDOWN = 0.3
+local FARM_FALLBACK_TIMEOUT = 20
+local FARM_FALLBACK_COOLDOWN = 8
+local FARM_STUCK_TIME = 3.2
+local FARM_STUCK_DIST = 2.2
+local FARM_NEAR_RADIUS = 14
+local FARM_COLLECT_SPEED_RESET_TIME = 0.45
+local FARM_FLY_SPEED = 18
+local FARM_NEAR_BOOST = 1.2
+local FARM_BLACKLIST_TIME = 5
+local FARM_TARGET_TIMEOUT = 9
+local FARM_UNSTICK_MAX = 1
 
 local function getFarmSpeed()
     local s = FarmSettings.FarmSpeed
     if type(s) == "number" and s >= 5 then
         return math.clamp(s, 5, 60)
     end
-    return C.FARM_FLY_SPEED
+    return FARM_FLY_SPEED
 end
 
 local function getNearBoost()
@@ -286,8 +289,18 @@ local function getNearBoost()
     if type(b) == "number" and b >= 1 then
         return math.clamp(b, 1, 2)
     end
-    return C.FARM_NEAR_BOOST
+    return FARM_NEAR_BOOST
 end
+
+local AUTO_KILL_COOLDOWN = 2
+local ANTI_FOCUS_RADIUS = 45
+local ANTI_FOCUS_DURATION = 5
+
+local KNIFE_DODGE_MIN_DIST = 12
+local KNIFE_DODGE_OFFSET = 20
+local KNIFE_DODGE_COOLDOWN = 0.4
+
+local YARHM_SHOOT_OFFSET = 2.8
 
 local S = {
     noclipConn = nil, godConn = nil, antiAFKConn = nil,
@@ -372,7 +385,7 @@ end
 local function isCoinBlacklisted(coin)
     local t = S.farmBlacklist[coin]
     if not t then return false end
-    if tick() - t > C.FARM_BLACKLIST_TIME then
+    if tick() - t > FARM_BLACKLIST_TIME then
         S.farmBlacklist[coin] = nil
         return false
     end
@@ -388,7 +401,7 @@ local function tryDodgeKnife(p1, p2)
     if typeof(p1) ~= "Vector3" or typeof(p2) ~= "Vector3" then return end
 
     local now = tick()
-    if now - S.lastKnifeDodge < C.KNIFE_DODGE_COOLDOWN then return end
+    if now - S.lastKnifeDodge < KNIFE_DODGE_COOLDOWN then return end
 
     local myHRP = getHRP()
     if not myHRP then return end
@@ -406,7 +419,7 @@ local function tryDodgeKnife(p1, p2)
     if proj < -10 or proj > len + 30 then return end
 
     local closest = p1 + unit * math.clamp(proj, 0, len)
-    if (myPos - closest).Magnitude > C.KNIFE_DODGE_MIN_DIST then return end
+    if (myPos - closest).Magnitude > KNIFE_DODGE_MIN_DIST then return end
     if math.abs(closest.Y - myPos.Y) > 10 then return end
 
     local perp = unit:Cross(Vector3.yAxis)
@@ -419,9 +432,9 @@ local function tryDodgeKnife(p1, p2)
     if (myPos - closest):Dot(perp) < 0 then sideSign = -1 end
 
     local dodgePos = Vector3.new(
-        myPos.X + perp.X * sideSign * C.KNIFE_DODGE_OFFSET,
+        myPos.X + perp.X * sideSign * KNIFE_DODGE_OFFSET,
         myPos.Y + 3,
-        myPos.Z + perp.Z * sideSign * C.KNIFE_DODGE_OFFSET
+        myPos.Z + perp.Z * sideSign * KNIFE_DODGE_OFFSET
     )
 
     myHRP.CFrame = CFrame.new(dodgePos)
@@ -864,7 +877,7 @@ end
 local function getMurdererCached()
     local now = tick()
     local cached = MurdererCache.plr
-    if cached and cached.Parent and cached.Character and (now - MurdererCache.time) < C.MURDERER_TTL then
+    if cached and cached.Parent and cached.Character and (now - MurdererCache.time) < MURDERER_TTL then
         return cached
     end
     local fresh = getMurderer()
@@ -941,7 +954,7 @@ local function getPredictedPosition(plr, shootOffset)
     local torso = plr.Character:FindFirstChild("UpperTorso") or plr.Character:FindFirstChild("HumanoidRootPart")
     local hum = plr.Character:FindFirstChildOfClass("Humanoid")
     if not torso or not hum then return nil end
-    local offset = shootOffset or C.YARHM_SHOOT_OFFSET
+    local offset = shootOffset or YARHM_SHOOT_OFFSET
     local vel = torso.AssemblyLinearVelocity
     local moveDir = hum.MoveDirection
     return torso.Position
@@ -1185,7 +1198,7 @@ local function buildTargetCF(targetPlr, targetPart)
         if pred then return pred end
         return CFrame.new(targetPart.Position)
     end
-    local pos = getPredictedPosition(targetPlr, C.YARHM_SHOOT_OFFSET)
+    local pos = getPredictedPosition(targetPlr, YARHM_SHOOT_OFFSET)
     if pos then return CFrame.new(pos) end
     local hrp = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
     if hrp then return CFrame.new(hrp.Position) end
@@ -1297,7 +1310,7 @@ local function createBeamSegment()
     beam.FaceCamera = true
     beam.Width0 = 0.15
     beam.Width1 = 0.15
-    beam.Color = ColorSequence.new(BEAM.CLEAR)
+    beam.Color = ColorSequence.new(BEAM_CLEAR)
     beam.Transparency = NumberSequence.new(0.2)
     beam.LightEmission = 1
     beam.Parent = startPart
@@ -1350,11 +1363,11 @@ local function updateBeam()
                 local hitType = classifyPathHit(myHRP.Position, targetPart.Position, murderer.Character)
                 local color
                 if hitType == "clear" or hitType == "target" then
-                    color = BEAM.CLEAR
+                    color = BEAM_CLEAR
                 elseif hitType == "innocent" then
-                    color = BEAM.INNO
+                    color = BEAM_INNO
                 else
-                    color = BEAM.WALL
+                    color = BEAM_WALL
                 end
                 renderBeamPath(S.beamData, waypoints, color)
             else
@@ -2476,7 +2489,7 @@ local function stopCoinCollector()
 end
 
 local function startCoinCollector()
-    if S.totalCoins >= C.FARM_GOAL then return end
+    if S.totalCoins >= FARM_GOAL then return end
     if not getCoinContainer() then return end
     if not getHRP() then return end
 
@@ -2509,11 +2522,11 @@ local function startCoinCollector()
     S.coinConnection = trackConn("farm", RunService.Heartbeat:Connect(function()
         if not S.coinCollecting then return end
         if not S.roundActive then stopCoinCollector() return end
-        if S.totalCoins >= C.FARM_GOAL then
+        if S.totalCoins >= FARM_GOAL then
             if S.coinStatusSetter then S.coinStatusSetter("Goal reached") end
             stopCoinCollector()
             if isLocalMurderer() then
-                if not S.killAllRunning and tick() - S.roundStartedAt >= C.AUTO_KILL_COOLDOWN then
+                if not S.killAllRunning and tick() - S.roundStartedAt >= AUTO_KILL_COOLDOWN then
                     S.killAllRunning = true
                     if S.coinStatusSetter then S.coinStatusSetter("Murderer · killing...") end
                     notify("Goal reached · killing everyone", 2)
@@ -2564,9 +2577,9 @@ local function startCoinCollector()
 
         for _, coin in ipairs(coins) do
             if coin and coin.Parent then
-                if (coin.Position - myPos).Magnitude <= C.FARM_TOUCH_RADIUS then
+                if (coin.Position - myPos).Magnitude <= FARM_TOUCH_RADIUS then
                     local lastTouch = S.farmTouchedCoins[coin]
-                    if not lastTouch or now - lastTouch > C.FARM_TOUCH_COOLDOWN then
+                    if not lastTouch or now - lastTouch > FARM_TOUCH_COOLDOWN then
                         S.farmTouchedCoins[coin] = now
                         task.spawn(function()
                             pcall(firetouchinterest, hrp, coin, 0)
@@ -2592,7 +2605,7 @@ local function startCoinCollector()
         end
         local blCount = 0
         for coin, t in pairs(S.farmBlacklist) do
-            if now - t > C.FARM_BLACKLIST_TIME + 2 or not coin or not coin.Parent then
+            if now - t > FARM_BLACKLIST_TIME + 2 or not coin or not coin.Parent then
                 S.farmBlacklist[coin] = nil
             else
                 blCount = blCount + 1
@@ -2607,8 +2620,8 @@ local function startCoinCollector()
         local mHRP = (not localIsMurderer) and murderer and murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
         local distToMurderer = mHRP and (myPos - mHRP.Position).Magnitude or math.huge
 
-        local antiFocusActive = (now - S.fadeReceivedAt) < C.ANTI_FOCUS_DURATION
-        local effectiveDanger = antiFocusActive and C.ANTI_FOCUS_RADIUS or C.FARM_DANGER_DIST
+        local antiFocusActive = (now - S.fadeReceivedAt) < ANTI_FOCUS_DURATION
+        local effectiveDanger = antiFocusActive and ANTI_FOCUS_RADIUS or FARM_DANGER_DIST
         if mHRP and distToMurderer < effectiveDanger then
             local awayDir = Vector3.new(myPos.X - mHRP.Position.X, 0, myPos.Z - mHRP.Position.Z)
             if awayDir.Magnitude < 0.1 then awayDir = Vector3.new(1, 0, 0) end
@@ -2621,7 +2634,7 @@ local function startCoinCollector()
             return
         end
 
-        if S.farmTargetCoin and (now - S.farmTargetStartedAt) > C.FARM_TARGET_TIMEOUT then
+        if S.farmTargetCoin and (now - S.farmTargetStartedAt) > FARM_TARGET_TIMEOUT then
             blacklistCoin(S.farmTargetCoin)
             S.farmTargetCoin = nil
             S.farmTargetStartedAt = 0
@@ -2668,19 +2681,19 @@ local function startCoinCollector()
         end
 
         local distToTarget = (target.Position - myPos).Magnitude
-        local targetPos = target.Position + Vector3.new(0, C.FARM_GROUND_OFFSET, 0)
+        local targetPos = target.Position + Vector3.new(0, FARM_GROUND_OFFSET, 0)
         local delta = targetPos - myPos
         local horiz = Vector3.new(delta.X, 0, delta.Z)
         local hDist = horiz.Magnitude
 
-        if distToTarget < C.FARM_ARRIVE_DIST then
+        if distToTarget < FARM_ARRIVE_DIST then
             S.farmWalkBV.Velocity = Vector3.new(delta.X, delta.Y, delta.Z) * 4
             S.farmStuckPos = myPos
             S.farmStuckAt = now
         else
             local baseSpeed = getFarmSpeed()
-            local justCollected = (now - S.farmLastCollectSpeedAt) < C.FARM_COLLECT_SPEED_RESET_TIME
-            if not justCollected and distToTarget < C.FARM_NEAR_RADIUS then
+            local justCollected = (now - S.farmLastCollectSpeedAt) < FARM_COLLECT_SPEED_RESET_TIME
+            if not justCollected and distToTarget < FARM_NEAR_RADIUS then
                 baseSpeed = baseSpeed * getNearBoost()
             end
 
@@ -2692,17 +2705,17 @@ local function startCoinCollector()
             end
         end
 
-        if distToTarget < C.FARM_TOUCH_RADIUS then
+        if distToTarget < FARM_TOUCH_RADIUS then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
         elseif not S.farmStuckPos then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
-        elseif (myPos - S.farmStuckPos).Magnitude > C.FARM_STUCK_DIST then
+        elseif (myPos - S.farmStuckPos).Magnitude > FARM_STUCK_DIST then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
             S.farmUnstickAttempts = 0
-        elseif now - S.farmStuckAt > C.FARM_STUCK_TIME then
+        elseif now - S.farmStuckAt > FARM_STUCK_TIME then
             S.farmUnstickAttempts = (S.farmUnstickAttempts or 0) + 1
             local angle = math.rad((S.farmUnstickAttempts * 120) % 360)
             local side = Vector3.new(math.cos(angle), 0, math.sin(angle))
@@ -2711,7 +2724,7 @@ local function startCoinCollector()
             end
             S.farmStuckPos = myPos
             S.farmStuckAt = now
-            if S.farmUnstickAttempts >= C.FARM_UNSTICK_MAX then
+            if S.farmUnstickAttempts >= FARM_UNSTICK_MAX then
                 blacklistCoin(S.farmTargetCoin)
                 S.farmTargetCoin = nil
                 S.farmUnstickAttempts = 0
@@ -2723,8 +2736,8 @@ local function startCoinCollector()
         end
 
         local timeSinceCollect = now - math.max(S.farmStartedAt, S.lastCollectTime)
-        if timeSinceCollect > C.FARM_FALLBACK_TIMEOUT
-            and now - S.farmLastFallbackAt > C.FARM_FALLBACK_COOLDOWN
+        if timeSinceCollect > FARM_FALLBACK_TIMEOUT
+            and now - S.farmLastFallbackAt > FARM_FALLBACK_COOLDOWN
             and (localIsMurderer or not mHRP or distToMurderer > 30) then
             S.farmLastFallbackAt = now
             local tpCoin = nil
@@ -2764,7 +2777,7 @@ end
 local function shouldWaitForCoins()
     if not FarmSettings.AutoFarm then return false end
     if not S.roundActive then return false end
-    if S.totalCoins >= C.FARM_GOAL then return false end
+    if S.totalCoins >= FARM_GOAL then return false end
     return true
 end
 
@@ -3100,187 +3113,1509 @@ do
     end
 end
 
+homeTab      = window:CreateTab("Home", ICONS.Home)
+playersTab   = window:CreateTab("Players", ICONS.Plr)
+espTab       = window:CreateTab("Visuals", ICONS.Vis)
+movementTab  = window:CreateTab("Movement", ICONS.Mov)
+aimbotTab    = window:CreateTab("Combat", ICONS.Aim)
+avatarTab    = window:CreateTab("Avatar", ICONS.Avt)
+farmTab      = window:CreateTab("Farm", ICONS.Farm)
+miscTab      = window:CreateTab("Misc", ICONS.Misc)
 
-getgenv().__HH_MM2 = {
-    trackConn = trackConn,
-    dropConn = dropConn,
-    trackThread = trackThread,
-    trackGui = trackGui,
-    registerControl = registerControl,
-    syncUIControls = syncUIControls,
-    notify = notify,
-    getCurrentTheme = getCurrentTheme,
-    setTheme = setTheme,
-    getFarmSpeed = getFarmSpeed,
-    getNearBoost = getNearBoost,
-    getHRP = getHRP,
-    getHumanoid = getHumanoid,
-    markRoundStarted = markRoundStarted,
-    isCoinValid = isCoinValid,
-    isCoinBlacklisted = isCoinBlacklisted,
-    blacklistCoin = blacklistCoin,
-    tryDodgeKnife = tryDodgeKnife,
-    setupKnifeDodgeHook = setupKnifeDodgeHook,
-    isGunTool = isGunTool,
-    findGunEquipped = findGunEquipped,
-    findGunInBackpack = findGunInBackpack,
-    waitForGunAttachment = waitForGunAttachment,
-    ensureGunReady = ensureGunReady,
-    isGunRelatedRemote = isGunRelatedRemote,
-    isGunShootRemote = isGunShootRemote,
-    collectShootChannels = collectShootChannels,
-    fireGunChannels = fireGunChannels,
-    spectatePlayer = spectatePlayer,
-    stopSpectating = stopSpectating,
-    hookGunShootEvent = hookGunShootEvent,
-    scanForGunShoot = scanForGunShoot,
-    findGunDrop = findGunDrop,
-    hasTool = hasTool,
-    getRoleFromCache = getRoleFromCache,
-    isLocalSheriffOrHero = isLocalSheriffOrHero,
-    isPlrMurderer = isPlrMurderer,
-    isTargetSafe = isTargetSafe,
-    getMM2Role = getMM2Role,
-    getMurderer = getMurderer,
-    getMurdererCached = getMurdererCached,
-    getSheriff = getSheriff,
-    getHero = getHero,
-    isLocalMurderer = isLocalMurderer,
-    getMM2TargetPart = getMM2TargetPart,
-    predictAim = predictAim,
-    getPredictedPosition = getPredictedPosition,
-    getCharacterFromPart = getCharacterFromPart,
-    classifyPathHit = classifyPathHit,
-    applyGracePeriod = applyGracePeriod,
-    isVisibleForShot = isVisibleForShot,
-    isVisible = isVisible,
-    buildBeamPath = buildBeamPath,
-    getGunRaycastOrigin = getGunRaycastOrigin,
-    getWallbangOrigin = getWallbangOrigin,
-    pathBlockedTo = pathBlockedTo,
-    fireGunShootRemote = fireGunShootRemote,
-    buildTargetCF = buildTargetCF,
-    prepareGun = prepareGun,
-    shootAt = shootAt,
-    yarhmFireAt = yarhmFireAt,
-    yarhmInstakill = yarhmInstakill,
-    mobileForceShoot = mobileForceShoot,
-    clearBeamPool = clearBeamPool,
-    createBeamSegment = createBeamSegment,
-    ensureSegments = ensureSegments,
-    renderBeamPath = renderBeamPath,
-    updateBeam = updateBeam,
-    ensureBeamConn = ensureBeamConn,
-    stopBeamIfIdle = stopBeamIfIdle,
-    refreshBeam = refreshBeam,
-    startAntiVoid = startAntiVoid,
-    stopAntiVoid = stopAntiVoid,
-    playEmote = playEmote,
-    playMiniBoxAnimation = playMiniBoxAnimation,
-    stopMiniBoxAnimation = stopMiniBoxAnimation,
-    playMusic = playMusic,
-    stopMusic = stopMusic,
-    equipKnife = equipKnife,
-    getLocalKnife = getLocalKnife,
-    getTpEvent = getTpEvent,
-    fireTeleportToPart = fireTeleportToPart,
-    teleportToPlayer = teleportToPlayer,
-    bringGunToPlayer = bringGunToPlayer,
-    clearHighlights = clearHighlights,
-    clearGunESP = clearGunESP,
-    applyGunESP = applyGunESP,
-    applyESP = applyESP,
-    refreshAllESP = refreshAllESP,
-    startNameTagUpdater = startNameTagUpdater,
-    stopNameTagUpdater = stopNameTagUpdater,
-    getFadeEvent = getFadeEvent,
-    findGunHolder = findGunHolder,
-    isSheriffDead = isSheriffDead,
-    clearHeroFlags = clearHeroFlags,
-    stopHeroWatcher = stopHeroWatcher,
-    startHeroWatcher = startHeroWatcher,
-    onRoundBegin = onRoundBegin,
-    onRoundEnd = onRoundEnd,
-    updateRoleCache = updateRoleCache,
-    hookFadeEvent = hookFadeEvent,
-    applyKorblox = applyKorblox,
-    removeKorblox = removeKorblox,
-    applyAnimPack = applyAnimPack,
-    getCoinContainer = getCoinContainer,
-    applyFastFlags = applyFastFlags,
-    enableUltraOptimization = enableUltraOptimization,
-    disableUltraOptimization = disableUltraOptimization,
-    getHelperRefs = getHelperRefs,
-    ensureHelper = ensureHelper,
-    restoreHelper = restoreHelper,
-    ensureFarmHelpers = ensureFarmHelpers,
-    restoreFarmHelpers = restoreFarmHelpers,
-    ensureFarmNoclip = ensureFarmNoclip,
-    restoreFarmNoclip = restoreFarmNoclip,
-    getAllCoins = getAllCoins,
-    attachFarmGyro = attachFarmGyro,
-    ensureFarmBodyMovers = ensureFarmBodyMovers,
-    stopFarmBodyMovers = stopFarmBodyMovers,
-    stopCoinCollector = stopCoinCollector,
-    startCoinCollector = startCoinCollector,
-    shouldWaitForCoins = shouldWaitForCoins,
-    getFlingTargetByName = getFlingTargetByName,
-    yarhmFling = yarhmFling,
-    startFlingTarget = startFlingTarget,
-    attachFlyBodyMovers = attachFlyBodyMovers,
-    detachFlyBodyMovers = detachFlyBodyMovers,
-    getFlyInput = getFlyInput,
-    startFly = startFly,
-    stopFly = stopFly,
-    startFOVCircle = startFOVCircle,
-    stopFOVCircle = stopFOVCircle,
-    startMobileFlyDrag = startMobileFlyDrag,
-    ConnectionRegistry = ConnectionRegistry,
-    Players = Players,
-    RunService = RunService,
-    UserInputService = UserInputService,
-    ReplicatedStorage = ReplicatedStorage,
-    LocalPlayer = LocalPlayer,
-    isMobile = isMobile,
-    HAS = HAS,
-    LocalControlRegistry = LocalControlRegistry,
-    ICONS = ICONS,
-    EMOTES = EMOTES,
-    MUSIC_TRACKS = MUSIC_TRACKS,
-    CUSTOM_ANIMS = CUSTOM_ANIMS,
-    MINI_BOX_ANIM_ID = MINI_BOX_ANIM_ID,
-    AimbotSettings = AimbotSettings,
-    VisualSettings = VisualSettings,
-    MiscSettings = MiscSettings,
-    MovementSettings = MovementSettings,
-    AvatarSettings = AvatarSettings,
-    FarmSettings = FarmSettings,
-    BEAM = BEAM,
-    AntiVoidSettings = AntiVoidSettings,
-    WALL_GRACE_TIME = WALL_GRACE_TIME,
-    TargetVisibility = TargetVisibility,
-    MurdererCache = MurdererCache,
-    VisCache = VisCache,
-    C = C,
-    S = S,
-    UI = UI,
-    UNC = UNC,
-    GunShootBindable = GunShootBindable,
-    GunShootLastArgs = GunShootLastArgs,
-    GunShootHandlerHooked = GunShootHandlerHooked,
-    ESP_COLORS = ESP_COLORS,
-    ESP = ESP,
-    FAST_FLAGS = FAST_FLAGS,
-    API = API,
-    window = window,
-    homeTab = homeTab,
-    playersTab = playersTab,
-    espTab = espTab,
-    movementTab = movementTab,
-    aimbotTab = aimbotTab,
-    avatarTab = avatarTab,
-    farmTab = farmTab,
-    miscTab = miscTab,
-}
+window:CreateImageCard(homeTab, {
+    Image = "rbxthumb://type=Asset&id=" .. game.PlaceId .. "&w=420&h=420",
+    Title = "Murder mistery 2",
+    Subtitle = "by Nikilis",
+    Description = "Murder Mistery · replicatedman · v11.7 API · Open Source proyect",
+    Height = 150,
+    ImageWidth = 130,
+    OnClick = function()
+        API:Notify("Actual game", 2)
+    end,
+})
 
+window:CreateLabel(homeTab, "Music")
+UI.musicTrackDropdown = window:CreateDropdown(homeTab, "Track", {
+    "Companion",
+    "Her Boyfriend",
+    "I Stalk Ur Socials",
+    "EYUHH!",
+    "Low Cortisol",
+}, "Companion", function(v)
+    MiscSettings.SelectedMusic = v
+    if MiscSettings.MusicCompanion then
+        playMusic()
+    end
+end)
 
+UI.musicToggleRef = window:CreateToggle(homeTab, "Play Music", false, function(v)
+    MiscSettings.MusicCompanion = v
+    if v then
+        playMusic()
+    else
+        stopMusic()
+        notify("Music stopped")
+    end
+end)
+registerControl(MiscSettings, "MusicCompanion", UI.musicToggleRef)
+
+window:CreateLabel(homeTab, "Creators")
+window:CreateParagraph(homeTab, "@replicatedman · Developer · Hub Creator")
+window:CreateParagraph(homeTab, "@odecode · Hexagonal Client · Farm Engine")
+
+window:CreateLabel(homeTab, "Features")
+window:CreateParagraph(homeTab, "Players · ESP · Movement · Aimbot · Avatar · Farm · Misc · Configs")
+
+window:CreateLabel(playersTab, "Teleport")
+UI.tpAllToggleRef = window:CreateToggle(playersTab, "TP All", false, function(v)
+    MovementSettings.TPAll = v
+    if v then
+        S.tpAllRunning = true
+        S.tpAllTask = task.spawn(function()
+            while S.tpAllRunning do
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    if not S.tpAllRunning then break end
+                    if plr ~= LocalPlayer then
+                        teleportToPlayer(plr)
+                        task.wait(0.1)
+                    end
+                end
+                task.wait(0.1)
+            end
+        end)
+    else
+        S.tpAllRunning = false
+        if S.tpAllTask then task.cancel(S.tpAllTask); S.tpAllTask = nil end
+    end
+end)
+registerControl(MovementSettings, "TPAll", UI.tpAllToggleRef)
+
+window:CreateLabel(playersTab, "Role Teleport")
+_G.__HH_TpTarget = "Murder"
+window:CreateDropdown(playersTab, "Target", { "Murder", "Sheriff", "Hero" }, "Murder", function(v)
+    _G.__HH_TpTarget = v
+end)
+
+window:CreateButton(playersTab, "Teleport", function()
+    local target = _G.__HH_TpTarget
+    local plr
+    if target == "Sheriff" then plr = getSheriff()
+    elseif target == "Hero" then plr = getHero()
+    else plr = getMurderer() end
+    if teleportToPlayer(plr) then
+        notify("Teleported to " .. target)
+    else
+        notify("No " .. target .. " found")
+    end
+end)
+
+window:CreateLabel(playersTab, "Player")
+_G.__HH_FlingTarget = "Murderer"
+
+local function getFlingList()
+    local names = { "Murderer", "Sheriff", "Hero" }
+    local seen = { Murderer = true, Sheriff = true, Hero = true }
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            local n = plr.Name
+            if type(n) == "string" and n ~= "" and not seen[n] then
+                seen[n] = true
+                table.insert(names, n)
+            end
+        end
+    end
+    return names
+end
+
+flingDropdownRef = window:CreateDropdown(
+    playersTab,
+    "Target",
+    { "Murderer", "Sheriff", "Hero" },
+    "Murderer",
+    function(v)
+        if type(v) == "string" and v ~= "" then
+            _G.__HH_FlingTarget = v
+        end
+    end
+)
+
+lastFlingSignature = "Murderer|Sheriff|Hero"
+
+local function refreshFlingDropdown(force)
+    local names = getFlingList()
+    local signature = table.concat(names, "|")
+    if not force and signature == lastFlingSignature then return end
+    lastFlingSignature = signature
+
+    if not flingDropdownRef then return end
+
+    if type(flingDropdownRef.SetOptions) == "function" then
+        pcall(function() flingDropdownRef:SetOptions(names) end)
+    elseif type(flingDropdownRef.Refresh) == "function" then
+        pcall(function() flingDropdownRef:Refresh(names) end)
+    end
+
+    local sel = _G.__HH_FlingTarget
+    local valid = false
+    if type(sel) == "string" then
+        for _, n in ipairs(names) do
+            if n == sel then valid = true break end
+        end
+    end
+    if not valid then
+        sel = "Murderer"
+        _G.__HH_FlingTarget = sel
+    end
+    if type(flingDropdownRef.SetValue) == "function" then
+        pcall(function() flingDropdownRef:SetValue(sel) end)
+    end
+end
+
+local function resolveSelectedPlayer()
+    local sel = _G.__HH_FlingTarget
+    if (type(sel) ~= "string" or sel == "") and flingDropdownRef and type(flingDropdownRef.GetValue) == "function" then
+        local ok, v = pcall(function() return flingDropdownRef:GetValue() end)
+        if ok and type(v) == "string" and v ~= "" then sel = v end
+    end
+    if type(sel) ~= "string" or sel == "" then sel = "Murderer" end
+    _G.__HH_FlingTarget = sel
+    if sel == "Murderer" then return getMurderer() end
+    if sel == "Sheriff" then return getSheriff() end
+    if sel == "Hero" then return getHero() end
+    return getFlingTargetByName(sel)
+end
+
+task.defer(function()
+    task.wait(0.5)
+    refreshFlingDropdown(true)
+end)
+
+trackThread(task.spawn(function()
+    while true do
+        task.wait(1)
+        refreshFlingDropdown(false)
+    end
+end))
+
+Players.PlayerAdded:Connect(function()
+    task.wait(0.2)
+    refreshFlingDropdown(true)
+end)
+Players.PlayerRemoving:Connect(function()
+    task.wait(0.2)
+    refreshFlingDropdown(true)
+end)
+
+window:CreateButton(playersTab, "Fling", function()
+    local plr = resolveSelectedPlayer()
+    if not plr then notify("Target not found") return end
+    startFlingTarget(plr)
+end)
+
+window:CreateButton(playersTab, "Spectate", function()
+    local plr = resolveSelectedPlayer()
+    if not plr then notify("Target not found") return end
+    spectatePlayer(plr)
+    notify("Spectating " .. plr.DisplayName, 2)
+end)
+
+window:CreateButton(playersTab, "Stop", function()
+    stopSpectating()
+    S.flingTargetRunning = false
+    if S.flingTargetThread then
+        pcall(task.cancel, S.flingTargetThread)
+        S.flingTargetThread = nil
+    end
+    notify("Stopped", 1.5)
+end)
+
+window:CreateLabel(playersTab, "Server")
+window:CreateButton(playersTab, "Rejoin", function()
+    pcall(function()
+        game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+    end)
+end)
+window:CreateButton(playersTab, "Server Hop", function()
+    pcall(function()
+        local data = game:GetService("HttpService"):JSONDecode(
+            game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100")
+        )
+        if data and data.data then
+            for _, s in ipairs(data.data) do
+                if s.id ~= game.JobId and s.playing < s.maxPlayers then
+                    game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, s.id, LocalPlayer)
+                    return
+                end
+            end
+        end
+    end)
+end)
+
+window:CreateLabel(espTab, "ESP")
+UI.mm2ESPToggleRef = window:CreateToggle(espTab, "Roles", false, function(v)
+    ESP.active.MM2 = v
+    VisualSettings.MM2ESP = v
+    refreshAllESP()
+    if v then
+        if not ConnectionRegistry["rolesesp"] then
+            local lastEspTick = 0
+            trackConn("rolesesp", RunService.Heartbeat:Connect(function()
+                local now = tick()
+                if now - lastEspTick < 0.4 then return end
+                lastEspTick = now
+                if ESP.active.MM2 or VisualSettings.GunESP then
+                    if ESP.active.MM2 then refreshAllESP() end
+                    if VisualSettings.GunESP then applyGunESP() end
+                end
+            end))
+        end
+    else
+        dropConn("rolesesp")
+    end
+end)
+registerControl(VisualSettings, "MM2ESP", UI.mm2ESPToggleRef)
+
+UI.ogESPToggleRef = window:CreateToggle(espTab, "Neutral", false, function(v)
+    ESP.active.OG = v
+    VisualSettings.OGESP = v
+    refreshAllESP()
+end)
+registerControl(VisualSettings, "OGESP", UI.ogESPToggleRef)
+
+window:CreateLabel(espTab, "Additional")
+UI.nameTagToggleRef = window:CreateToggle(espTab, "Nametag", false, function(v)
+    ESP.active.NameTag = v
+    VisualSettings.NameTags = v
+    refreshAllESP()
+    if v then startNameTagUpdater() else stopNameTagUpdater() end
+end)
+registerControl(VisualSettings, "NameTags", UI.nameTagToggleRef)
+
+UI.gunESPToggleRef = window:CreateToggle(espTab, "Gun", false, function(v)
+    VisualSettings.GunESP = v
+    applyGunESP()
+    if v then
+        if not ConnectionRegistry["gunesp"] then
+            local lastGunEsp = 0
+            trackConn("gunesp", RunService.Heartbeat:Connect(function()
+                local now = tick()
+                if now - lastGunEsp < 0.5 then return end
+                lastGunEsp = now
+                if VisualSettings.GunESP then applyGunESP() end
+            end))
+        end
+    else
+        dropConn("gunesp")
+        clearGunESP()
+    end
+end)
+registerControl(VisualSettings, "GunESP", UI.gunESPToggleRef)
+
+window:CreateLabel(espTab, "Beam")
+UI.beamToggleRef = window:CreateToggle(espTab, "Beam", false, function(v)
+    VisualSettings.Beam = v
+    if v then ensureBeamConn() end
+    stopBeamIfIdle()
+end)
+registerControl(VisualSettings, "Beam", UI.beamToggleRef)
+
+window:CreateLabel(espTab, "Spectate")
+window:CreateParagraph(espTab, "Players tab → select target → Spectate / Stop")
+
+window:CreateLabel(movementTab, "Fly")
+UI.flyToggleRef = window:CreateToggle(movementTab, "Fly", false, function(v)
+    MovementSettings.Fly = v
+    if v then startFly() else stopFly() end
+end)
+registerControl(MovementSettings, "Fly", UI.flyToggleRef)
+
+UI.flySpeedRef = window:CreateSlider(movementTab, "Fly Speed", 5, 200, 40, function(v) MovementSettings.FlySpeed = v end)
+registerControl(MovementSettings, "FlySpeed", UI.flySpeedRef)
+
+window:CreateLabel(movementTab, "Speed")
+UI.walkSpeedRef = window:CreateSlider(movementTab, "Walk Speed", 4, 150, 16, function(v)
+    MovementSettings.WalkSpeed = v
+    local hum = getHumanoid()
+    if hum then hum.WalkSpeed = v end
+end)
+registerControl(MovementSettings, "WalkSpeed", UI.walkSpeedRef)
+
+UI.jumpPowerRef = window:CreateSlider(movementTab, "Jump Power", 10, 200, 50, function(v)
+    MovementSettings.JumpPower = v
+    local hum = getHumanoid()
+    if hum then hum.JumpPower = v; hum.UseJumpPower = true end
+end)
+registerControl(MovementSettings, "JumpPower", UI.jumpPowerRef)
+
+window:CreateLabel(movementTab, "Modifications")
+UI.noclipRef = window:CreateToggle(movementTab, "Noclip", false, function(v)
+    MovementSettings.Noclip = v
+    if v then
+        trackConn("noclip", RunService.Stepped:Connect(function()
+            local c = LocalPlayer.Character
+            if c then
+                for _, p in ipairs(c:GetDescendants()) do
+                    if p:IsA("BasePart") then p.CanCollide = false end
+                end
+            end
+        end))
+    else
+        dropConn("noclip")
+        local c = LocalPlayer.Character
+        if c then
+            for _, p in ipairs(c:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = true end
+            end
+        end
+    end
+end)
+registerControl(MovementSettings, "Noclip", UI.noclipRef)
+
+UI.godRef = window:CreateToggle(movementTab, "God Mode", false, function(v)
+    MovementSettings.God = v
+    if v then
+        trackConn("god", RunService.Heartbeat:Connect(function()
+            local hum = getHumanoid()
+            if hum then hum.Health = hum.MaxHealth end
+        end))
+    else
+        dropConn("god")
+    end
+end)
+registerControl(MovementSettings, "God", UI.godRef)
+
+UI.antiVoidRef = window:CreateToggle(movementTab, "Anti-Void", false, function(v)
+    MiscSettings.AntiVoid = v
+    if v then startAntiVoid() else stopAntiVoid() end
+end)
+registerControl(MiscSettings, "AntiVoid", UI.antiVoidRef)
+
+UI.ijRef = window:CreateToggle(movementTab, "Infinite Jump", false, function(v)
+    MiscSettings.InfJump = v
+end)
+registerControl(MiscSettings, "InfJump", UI.ijRef)
+
+trackConn("jump", UserInputService.JumpRequest:Connect(function()
+    if MiscSettings.InfJump then
+        local hum = getHumanoid()
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end))
+
+UI.afkRef = window:CreateToggle(movementTab, "Anti-AFK", false, function(v)
+    MiscSettings.AntiAFK = v
+    if v then
+        local vu = game:GetService("VirtualUser")
+        trackConn("antiafk", LocalPlayer.Idled:Connect(function()
+            vu:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+            task.wait(1)
+            vu:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+        end))
+    else
+        dropConn("antiafk")
+    end
+end)
+registerControl(MiscSettings, "AntiAFK", UI.afkRef)
+
+UI.antiFlingRef = window:CreateToggle(movementTab, "Anti-Fling", false, function(v)
+    MovementSettings.AntiFling = v
+    if v then
+        S.antiFlingActive = true
+        local function disableHRPCollision(plr)
+            if plr == LocalPlayer then return end
+            local char = plr.Character; if not char then return end
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then hrp.CanCollide = false end
+        end
+        for _, plr in ipairs(Players:GetPlayers()) do disableHRPCollision(plr) end
+        local conn = Players.PlayerAdded:Connect(function(plr)
+            if plr == LocalPlayer then return end
+            plr.CharacterAdded:Connect(function(char)
+                task.wait(0.1)
+                if S.antiFlingActive then
+                    local hrp = char:FindFirstChild("HumanoidRootPart")
+                    if hrp then hrp.CanCollide = false end
+                end
+            end)
+        end)
+        table.insert(S.antiFlingConnections, conn)
+    else
+        S.antiFlingActive = false
+        local function enableHRPCollision(plr)
+            if plr == LocalPlayer then return end
+            local char = plr.Character; if not char then return end
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then hrp.CanCollide = true end
+        end
+        for _, plr in ipairs(Players:GetPlayers()) do enableHRPCollision(plr) end
+        for _, c in ipairs(S.antiFlingConnections) do c:Disconnect() end
+        S.antiFlingConnections = {}
+    end
+end)
+registerControl(MovementSettings, "AntiFling", UI.antiFlingRef)
+
+window:CreateLabel(movementTab, "Emotes")
+for _, emote in ipairs(EMOTES) do
+    window:CreateButton(movementTab, emote.name, function()
+        playEmote(emote.name, emote.id)
+    end)
+end
+
+window:CreateButton(movementTab, "Stop Emote", function()
+    if S.currentEmoteTrack then
+        pcall(function() S.currentEmoteTrack:Stop(0.1) end)
+        S.currentEmoteTrack = nil
+        notify("Emote stopped", 1.5)
+    end
+end)
+
+window:CreateLabel(movementTab, "Reset")
+window:CreateButton(movementTab, "Autokill", function()
+    local hum = getHumanoid()
+    if hum then hum.Health = 0 end
+end)
+
+window:CreateLabel(movementTab, "Fling")
+UI.flingToggleRef = window:CreateToggle(movementTab, "Fling", false, function(v)
+    MovementSettings.Fling = v
+    if v then
+        if S.flingRunning then return end
+        S.flingRunning = true
+        S.flingTask = task.spawn(function()
+            while S.flingRunning do
+                task.wait()
+                local character = LocalPlayer.Character
+                local hrp = character and character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local velo = hrp.Velocity
+                    hrp.Velocity = velo * 10000 + Vector3.new(0, 10000, 0)
+                    RunService.RenderStepped:Wait()
+                    hrp.Velocity = velo
+                    RunService.Stepped:Wait()
+                end
+            end
+            S.flingTask = nil
+        end)
+    else
+        S.flingRunning = false
+        if S.flingTask then task.cancel(S.flingTask); S.flingTask = nil end
+        local hrp = getHRP()
+        if hrp then hrp.Velocity = Vector3.zero end
+    end
+end)
+registerControl(MovementSettings, "Fling", UI.flingToggleRef)
+
+window:CreateLabel(aimbotTab, "Aimbot")
+UI.mm2LockRef = window:CreateToggle(aimbotTab, "Aimbot", false, function(v)
+    AimbotSettings.MM2LockOn = v
+    if v then
+        trackConn("aimbot", RunService.RenderStepped:Connect(function()
+            if not AimbotSettings.MM2LockOn then return end
+            local murderer = getMurdererCached()
+            if not isTargetSafe(murderer) then return end
+            local targetPart = getMM2TargetPart(murderer.Character)
+            local myHRP = getHRP()
+            if not targetPart or not myHRP then return end
+            local dist = (myHRP.Position - targetPart.Position).Magnitude
+            if dist > AimbotSettings.MM2Range then return end
+            if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
+            if AimbotSettings.FOVCircle then
+                local cam = workspace.CurrentCamera
+                if cam then
+                    local sp, on = cam:WorldToViewportPoint(targetPart.Position)
+                    if on then
+                        local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+                        if (Vector2.new(sp.X, sp.Y) - center).Magnitude > AimbotSettings.FOVRadius then return end
+                    end
+                end
+            end
+            local camera = workspace.CurrentCamera
+            local targetCF = CFrame.new(camera.CFrame.Position, targetPart.Position)
+            local alpha = math.clamp(1 / AimbotSettings.MM2Smooth, 0.02, 1)
+            camera.CFrame = camera.CFrame:Lerp(targetCF, alpha)
+        end))
+    else
+        dropConn("aimbot")
+    end
+end)
+registerControl(AimbotSettings, "MM2LockOn", UI.mm2LockRef)
+
+UI.mm2SmoothRef = window:CreateSlider(aimbotTab, "Smoothness", 1, 30, 8, function(v) AimbotSettings.MM2Smooth = v end)
+registerControl(AimbotSettings, "MM2Smooth", UI.mm2SmoothRef)
+
+UI.mm2RangeRef = window:CreateSlider(aimbotTab, "Distance", 50, 1000, 500, function(v) AimbotSettings.MM2Range = v end)
+registerControl(AimbotSettings, "MM2Range", UI.mm2RangeRef)
+
+UI.mm2TargetRef = window:CreateDropdown(aimbotTab, "Target Bone", { "Head", "Torso", "Small Avatar" }, "Head", function(v)
+    AimbotSettings.MM2Target = v
+end)
+registerControl(AimbotSettings, "MM2Target", UI.mm2TargetRef)
+
+UI.fovToggleRef = window:CreateToggle(aimbotTab, "FOV Circle", false, function(v)
+    AimbotSettings.FOVCircle = v
+    if v then startFOVCircle() else stopFOVCircle() end
+end)
+registerControl(AimbotSettings, "FOVCircle", UI.fovToggleRef)
+
+UI.fovRadiusRef = window:CreateSlider(aimbotTab, "FOV Radius", 40, 500, 120, function(v) AimbotSettings.FOVRadius = v end)
+registerControl(AimbotSettings, "FOVRadius", UI.fovRadiusRef)
+
+window:CreateLabel(aimbotTab, "Trigger Bot")
+UI.triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function(v)
+    AimbotSettings.TriggerBot = v
+    if v then
+        local lastShot = 0
+        trackConn("triggerbot", RunService.RenderStepped:Connect(function()
+            if not AimbotSettings.TriggerBot then return end
+            local murderer = getMurdererCached()
+            if not isTargetSafe(murderer) then return end
+            local targetPart = getMM2TargetPart(murderer.Character)
+            if not targetPart then return end
+            local myHRP = getHRP()
+            if not myHRP then return end
+            if not findGunEquipped() and not findGunInBackpack() then return end
+            local dist = (myHRP.Position - targetPart.Position).Magnitude
+            if dist > AimbotSettings.TriggerRange then return end
+            if not isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
+            if not isMobile then
+                local cam = workspace.CurrentCamera
+                local sp, on = cam:WorldToViewportPoint(targetPart.Position)
+                if not on then return end
+                local mouse = UserInputService:GetMouseLocation()
+                if (Vector2.new(sp.X, sp.Y) - mouse).Magnitude >= 12 then return end
+            end
+            local now = tick()
+            if now - lastShot < 0.08 then return end
+            lastShot = now
+            yarhmFireAt(murderer, targetPart)
+        end))
+    else
+        dropConn("triggerbot")
+    end
+end)
+registerControl(AimbotSettings, "TriggerBot", UI.triggerRef)
+
+UI.triggerRangeRef = window:CreateSlider(aimbotTab, "Trigger Range", 20, 400, 150, function(v) AimbotSettings.TriggerRange = v end)
+registerControl(AimbotSettings, "TriggerRange", UI.triggerRangeRef)
+
+window:CreateLabel(aimbotTab, "AutoShoot")
+window:CreateParagraph(aimbotTab, "PC keybinds · T lock · O ESP · B auto fire · V shoot murderer")
+UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
+    AimbotSettings.AutoFire = v
+    if v then
+        local lastShot = 0
+        trackConn("autofire", RunService.RenderStepped:Connect(function()
+            if not AimbotSettings.AutoFire then return end
+            if shouldWaitForCoins() then return end
+            local murderer = getMurdererCached()
+            if not isTargetSafe(murderer) then return end
+            local targetPart = getMM2TargetPart(murderer.Character)
+            if not targetPart then return end
+            if not findGunEquipped() and not findGunInBackpack() then return end
+            local now = tick()
+            if now - lastShot < 0.12 then return end
+            lastShot = now
+            shootAt(murderer, targetPart, true)
+        end))
+    else
+        dropConn("autofire")
+    end
+end)
+registerControl(AimbotSettings, "AutoFire", UI.autoFireRef)
+
+window:CreateLabel(aimbotTab, "Sheriff / Hero")
+UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill", false, function(v)
+    AimbotSettings.AutoKillMurderer = v
+    if v then
+        local lastShot = 0
+        trackConn("autokill", RunService.RenderStepped:Connect(function()
+            if not AimbotSettings.AutoKillMurderer then return end
+            if not isLocalSheriffOrHero() then return end
+            if shouldWaitForCoins() then return end
+            if tick() - S.roundStartedAt < AUTO_KILL_COOLDOWN then return end
+            local murderer = getMurdererCached()
+            if not isTargetSafe(murderer) then return end
+            local targetPart = getMM2TargetPart(murderer.Character)
+            if not targetPart then return end
+            local now = tick()
+            if now - lastShot < 0.12 then return end
+            lastShot = now
+            shootAt(murderer, targetPart, true)
+        end))
+    else
+        dropConn("autokill")
+    end
+end)
+registerControl(AimbotSettings, "AutoKillMurderer", UI.autoKillRef)
+
+UI.wallCheckRef = window:CreateToggle(aimbotTab, "Wall Check", true, function(v)
+    AimbotSettings.WallCheck = v
+end)
+registerControl(AimbotSettings, "WallCheck", UI.wallCheckRef)
+
+window:CreateLabel(aimbotTab, "Murderer OP")
+
+local function findKnifeRemotes()
+    local knife = getLocalKnife()
+    if not knife then
+        equipKnife()
+        task.wait(0.15)
+        knife = getLocalKnife()
+    end
+    if not knife then return nil, nil, nil, nil end
+    local events = knife:FindFirstChild("Events")
+    local handle = knife:FindFirstChild("Handle")
+    if not events then return knife, nil, nil, handle end
+    return knife, events:FindFirstChild("KnifeStabbed"), events:FindFirstChild("HandleTouched"), handle
+end
+
+local function serverKillAllTick()
+    local knife, stabEv, touchEv, handle = findKnifeRemotes()
+    if not knife then return false end
+
+    if knife.Parent ~= LocalPlayer.Character then
+        local hum = getHumanoid()
+        if hum then pcall(function() hum:EquipTool(knife) end) end
+        task.wait(0.05)
+        knife = getLocalKnife() or knife
+        handle = knife and knife:FindFirstChild("Handle") or handle
+        local events = knife and knife:FindFirstChild("Events")
+        if events then
+            stabEv = events:FindFirstChild("KnifeStabbed")
+            touchEv = events:FindFirstChild("HandleTouched")
+        end
+    end
+
+    if stabEv then pcall(function() stabEv:FireServer() end) end
+
+    if isMobile then
+        pcall(function() knife:Activate() end)
+        local canTouch = type(firetouchinterest) == "function"
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                    local head = plr.Character:FindFirstChild("Head")
+                    if touchEv then
+                        if hrp then pcall(function() touchEv:FireServer(hrp) end) end
+                        if head then pcall(function() touchEv:FireServer(head) end) end
+                    end
+                    if canTouch and handle then
+                        if hrp then
+                            pcall(firetouchinterest, hrp, handle, 0)
+                            pcall(firetouchinterest, hrp, handle, 1)
+                            pcall(firetouchinterest, handle, hrp, 0)
+                            pcall(firetouchinterest, handle, hrp, 1)
+                        end
+                        if head then
+                            pcall(firetouchinterest, head, handle, 0)
+                            pcall(firetouchinterest, head, handle, 1)
+                        end
+                    end
+                end
+            end
+        end
+    else
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                    local head = plr.Character:FindFirstChild("Head")
+                    if touchEv then
+                        if hrp then pcall(function() touchEv:FireServer(hrp) end) end
+                        if head then pcall(function() touchEv:FireServer(head) end) end
+                    end
+                end
+            end
+        end
+    end
+    return true
+end
+
+window:CreateButton(aimbotTab, "Kill Everyone", function()
+    local hasKnife = getLocalKnife() ~= nil
+    if not hasKnife then
+        equipKnife()
+        task.wait(0.2)
+        hasKnife = getLocalKnife() ~= nil
+    end
+    if not isLocalMurderer() and not hasKnife then
+        notify("You are not the Murderer")
+        return
+    end
+    if S.killAllRunning then notify("Already running") return end
+    if tick() - S.roundStartedAt < AUTO_KILL_COOLDOWN and S.roundStartedAt > 0 then
+        notify("Wait " .. string.format("%.1f", AUTO_KILL_COOLDOWN - (tick() - S.roundStartedAt)) .. "s", 2)
+        return
+    end
+    S.killAllRunning = true
+    notify("Killing everyone")
+
+    task.spawn(function()
+        local startTime = tick()
+        while S.killAllRunning and tick() - startTime < 6 do
+            serverKillAllTick()
+            task.wait(0.04)
+        end
+        S.killAllRunning = false
+        notify("Done")
+    end)
+end)
+
+UI.autoKillAllRef = window:CreateToggle(aimbotTab, "Auto Kill All", false, function(v)
+    S.autoKillAll = v
+    if v then
+        if S.killAllTask then return end
+        S.killAllTask = task.spawn(function()
+            while S.autoKillAll do
+                if S.roundActive and isLocalMurderer() and tick() - S.roundStartedAt >= AUTO_KILL_COOLDOWN then
+                    if not shouldWaitForCoins() then
+                        serverKillAllTick()
+                    end
+                end
+                task.wait(0.05)
+            end
+            S.killAllTask = nil
+        end)
+        notify("Enabled")
+    else
+        if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
+        notify("Disabled")
+    end
+end)
+registerControl(AimbotSettings, "AutoKillAll", UI.autoKillAllRef)
+
+window:CreateLabel(avatarTab, "Avatar")
+
+UI.korbloxRef = window:CreateToggle(avatarTab, "Korblox", false, function(v)
+    AvatarSettings.Korblox = v
+    if v then applyKorblox() else removeKorblox() end
+end)
+registerControl(AvatarSettings, "Korblox", UI.korbloxRef)
+
+window:CreateLabel(avatarTab, "Anims")
+UI.animPackRef = window:CreateToggle(avatarTab, "Custom Anims", false, function(v)
+    AvatarSettings.AnimPack = v
+    if v then
+        applyAnimPack()
+        notify("Anim pack applied")
+    else
+        notify("Rejoin to restore anims", 3)
+    end
+end)
+registerControl(AvatarSettings, "AnimPack", UI.animPackRef)
+
+function reapplyActiveFeatures()
+    if AimbotSettings.MM2LockOn then
+        local tmp = AimbotSettings.MM2LockOn
+        AimbotSettings.MM2LockOn = false
+        task.wait(0.02)
+        AimbotSettings.MM2LockOn = tmp
+        if UI.mm2LockRef and UI.mm2LockRef.SetState then
+            pcall(function() UI.mm2LockRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.mm2LockRef:SetState(true, true) end)
+        end
+    end
+    if AimbotSettings.TriggerBot then
+        if UI.triggerRef and UI.triggerRef.SetState then
+            pcall(function() UI.triggerRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.triggerRef:SetState(true, true) end)
+        end
+    end
+    if AimbotSettings.AutoFire then
+        if UI.autoFireRef and UI.autoFireRef.SetState then
+            pcall(function() UI.autoFireRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.autoFireRef:SetState(true, true) end)
+        end
+    end
+    if AimbotSettings.AutoKillMurderer then
+        if UI.autoKillRef and UI.autoKillRef.SetState then
+            pcall(function() UI.autoKillRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.autoKillRef:SetState(true, true) end)
+        end
+    end
+    if MovementSettings.Noclip then
+        if UI.noclipRef and UI.noclipRef.SetState then
+            pcall(function() UI.noclipRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.noclipRef:SetState(true, true) end)
+        end
+    end
+    if MovementSettings.God then
+        if UI.godRef and UI.godRef.SetState then
+            pcall(function() UI.godRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.godRef:SetState(true, true) end)
+        end
+    end
+    if MiscSettings.AntiAFK then
+        if UI.afkRef and UI.afkRef.SetState then
+            pcall(function() UI.afkRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.afkRef:SetState(true, true) end)
+        end
+    end
+    if MiscSettings.AntiVoid then
+        if UI.antiVoidRef and UI.antiVoidRef.SetState then
+            pcall(function() UI.antiVoidRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.antiVoidRef:SetState(true, true) end)
+        end
+    end
+    if MovementSettings.Fly then
+        if UI.flyToggleRef and UI.flyToggleRef.SetState then
+            pcall(function() UI.flyToggleRef:SetState(false, true) end)
+            task.wait(0.05)
+            pcall(function() UI.flyToggleRef:SetState(true, true) end)
+        end
+    end
+    if VisualSettings.Beam then
+        if UI.beamToggleRef and UI.beamToggleRef.SetState then
+            pcall(function() UI.beamToggleRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.beamToggleRef:SetState(true, true) end)
+        end
+    end
+    if VisualSettings.NameTags then
+        if UI.nameTagToggleRef and UI.nameTagToggleRef.SetState then
+            pcall(function() UI.nameTagToggleRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.nameTagToggleRef:SetState(true, true) end)
+        end
+    end
+    if VisualSettings.GunESP then
+        if UI.gunESPToggleRef and UI.gunESPToggleRef.SetState then
+            pcall(function() UI.gunESPToggleRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.gunESPToggleRef:SetState(true, true) end)
+        end
+    end
+    if VisualSettings.MM2ESP then
+        if UI.mm2ESPToggleRef and UI.mm2ESPToggleRef.SetState then
+            pcall(function() UI.mm2ESPToggleRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.mm2ESPToggleRef:SetState(true, true) end)
+        end
+    end
+    if AimbotSettings.FOVCircle then
+        if UI.fovToggleRef and UI.fovToggleRef.SetState then
+            pcall(function() UI.fovToggleRef:SetState(false, true) end)
+            task.wait(0.02)
+            pcall(function() UI.fovToggleRef:SetState(true, true) end)
+        end
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    MurdererCache.plr = nil
+    MurdererCache.time = 0
+    for k in pairs(TargetVisibility) do TargetVisibility[k] = nil end
+    for k in pairs(VisCache) do VisCache[k] = nil end
+    S.korbloxPart = nil
+    S.lastSafeCFrame = nil
+    S.currentEmoteTrack = nil
+    S.miniBoxTrack = nil
+    S.flingOriginalCFrame = nil
+    S.flingOriginalPosition = nil
+    S.flingTargetRunning = false
+    S.killAllRunning = false
+    S.flingRunning = false
+    S.spectating = false
+    S.spectateTarget = nil
+    S.spectateDefaultSubject = nil
+    S.lastCollectTime = 0
+    S.lastCamUpdate = 0
+    S.autoKillAll = S.autoKillAll or false
+    S.farmTargetCoin = nil
+    pcall(purgeMemoryCaches, false)
+    S.farmTouchedCoins = {}
+    S.farmBlacklist = {}
+    S.farmWalkBV = nil
+    S.farmLastCollectAt = 0
+    S.farmStartedAt = 0
+    S.farmLastFallbackAt = 0
+    S.farmStuckPos = nil
+    S.farmStuckAt = 0
+    S.farmLastCollectSpeedAt = 0
+    S.farmTargetStartedAt = 0
+    S.lastGyroUpdate = 0
+    S.rerolling = false
+    if S.killAllTask then pcall(task.cancel, S.killAllTask); S.killAllTask = nil end
+    if S.animPriorityConn then S.animPriorityConn:Disconnect(); S.animPriorityConn = nil end
+    if S.flingTargetThread then pcall(task.cancel, S.flingTargetThread); S.flingTargetThread = nil end
+    if S.flingTask then pcall(task.cancel, S.flingTask); S.flingTask = nil end
+    stopFarmBodyMovers()
+    clearBeamPool(S.beamData)
+    task.wait(0.6)
+    if isMobile then scanForGunShoot() end
+    if MovementSettings.Fly then attachFlyBodyMovers() end
+    if AvatarSettings.Korblox then pcall(applyKorblox) end
+    if AvatarSettings.AnimPack then pcall(applyAnimPack) end
+    if FarmSettings.AutoFarm and S.roundActive then
+        task.wait(0.5)
+        if not S.coinCollecting then startCoinCollector() end
+    end
+    task.wait(0.2)
+    reapplyActiveFeatures()
+end)
+
+window:CreateLabel(farmTab, "Coin Farm")
+
+UI.autoFarmRef = window:CreateToggle(farmTab, "Auto Farm", false, function(v)
+    FarmSettings.AutoFarm = v
+    if v then
+        ensureFarmHelpers()
+        ensureFarmNoclip()
+        if S.roundActive and not S.coinCollecting then startCoinCollector() end
+    else
+        stopCoinCollector()
+        restoreFarmNoclip()
+        restoreFarmHelpers()
+    end
+end)
+registerControl(FarmSettings, "AutoFarm", UI.autoFarmRef)
+
+UI.farmSpeedRef = window:CreateSlider(farmTab, "Farm Speed", 8, 40, 18, function(v)
+    FarmSettings.FarmSpeed = v
+end)
+registerControl(FarmSettings, "FarmSpeed", UI.farmSpeedRef)
+
+window:CreateParagraph(farmTab, "Farm speed is separate from Fly · fewer teleports")
+
+window:CreateLabel(farmTab, "Stats")
+local coinCountFrame = window:CreateParagraph(farmTab, "0")
+local coinCountLabel = coinCountFrame:FindFirstChildOfClass("TextLabel")
+local statusFrame = window:CreateParagraph(farmTab, "Idle")
+local statusLabel = statusFrame:FindFirstChildOfClass("TextLabel")
+
+S.coinCountSetter = function(n)
+    if coinCountLabel then coinCountLabel.Text = "" .. tostring(n) end
+end
+S.coinStatusSetter = function(txt)
+    if statusLabel then statusLabel.Text = "" .. txt end
+end
+
+local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+local gameplay = remotes and remotes:FindFirstChild("Gameplay")
+local coinsStartedEvent = gameplay and gameplay:FindFirstChild("CoinsStarted")
+local coinCollectedEvent = gameplay and gameplay:FindFirstChild("CoinCollected")
+local roundEndFadeEvent = gameplay and gameplay:FindFirstChild("RoundEndFade")
+local roundStartEvent = gameplay and gameplay:FindFirstChild("RoundStart")
+
+if coinsStartedEvent then
+    coinsStartedEvent.OnClientEvent:Connect(function(data)
+        markRoundStarted()
+        stopCoinCollector()
+        S.bagProgress = {}
+        if type(data) == "table" and data.Coin then
+            if data.Coin.CollectionLimit then
+                FARM_GOAL = data.Coin.CollectionLimit
+            end
+        end
+        S.totalCoins = 0
+        S.farmTargetCoin = nil
+        S.farmBlacklist = {}
+        S.farmTouchedCoins = {}
+        S.farmLastCollectSpeedAt = 0
+        if S.coinCountSetter then S.coinCountSetter(0) end
+        S.roundActive = true
+        if FarmSettings.AutoFarm then
+            ensureFarmNoclip()
+            startCoinCollector()
+        end
+    end)
+end
+
+if coinCollectedEvent then
+    coinCollectedEvent.OnClientEvent:Connect(function(bagName, currentCoins)
+        S.lastCollectTime = tick()
+        S.farmLastCollectAt = tick()
+        S.farmLastCollectSpeedAt = tick()
+
+        S.farmTargetCoin = nil
+        S.farmTargetStartedAt = 0
+        S.farmStuckPos = nil
+        S.farmStuckAt = 0
+
+        if type(bagName) == "string" and type(currentCoins) == "number" then
+            S.bagProgress[bagName] = currentCoins
+        end
+        S.totalCoins = 0
+        for _, v in pairs(S.bagProgress) do
+            if type(v) == "number" then
+                S.totalCoins = S.totalCoins + v
+            end
+        end
+        if S.coinCountSetter then S.coinCountSetter(S.totalCoins) end
+    end)
+end
+
+if roundStartEvent then
+    roundStartEvent.OnClientEvent:Connect(function()
+        markRoundStarted()
+        stopCoinCollector()
+        S.bagProgress = {}
+        S.totalCoins = 0
+        S.farmTargetCoin = nil
+        S.farmBlacklist = {}
+        S.farmTouchedCoins = {}
+        S.farmLastCollectSpeedAt = 0
+        S.rerolling = false
+        S.killAllRunning = false
+        S.roundActive = true
+        if S.coinCountSetter then S.coinCountSetter(0) end
+        pcall(function()
+            for k in pairs(TargetVisibility) do TargetVisibility[k] = nil end
+            for k in pairs(VisCache) do VisCache[k] = nil end
+        end)
+        task.wait(0.1)
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then applyESP(plr) end
+        end
+        refreshBeam()
+        onRoundBegin()
+        if FarmSettings.AutoFarm then
+            ensureFarmNoclip()
+            task.wait(0.5)
+            startCoinCollector()
+        end
+        task.wait(0.3)
+        reapplyActiveFeatures()
+    end)
+end
+
+if roundEndFadeEvent then
+    roundEndFadeEvent.OnClientEvent:Connect(function()
+        S.roundActive = false
+        S.roundStartedAt = 0
+        S.fadeReceivedAt = 0
+        S.roleCache = {}
+        S.rerolling = false
+        stopCoinCollector()
+        onRoundEnd()
+        if FarmSettings.AutoFarm then
+            restoreFarmNoclip()
+        end
+        task.wait(0.05)
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer then clearHighlights(plr) end
+        end
+        purgeMemoryCaches(true)
+    end)
+end
+
+trackThread(task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting and S.totalCoins < FARM_GOAL then
+            startCoinCollector()
+        end
+    end
+end))
+
+trackThread(task.spawn(function()
+    while true do
+        task.wait(45)
+        pcall(purgeMemoryCaches, false)
+        local list = getgenv().__HH_STATE and getgenv().__HH_STATE.connections
+        if list and #list > 60 then
+            local alive = {}
+            for i = 1, #list do
+                local c = list[i]
+                if c then
+                    local ok, connected = pcall(function() return c.Connected end)
+                    if ok and connected then alive[#alive + 1] = c end
+                end
+            end
+            getgenv().__HH_STATE.connections = alive
+        end
+    end
+end))
+
+window:CreateLabel(miscTab, "Gun")
+window:CreateButton(miscTab, "Pick up Gun", function()
+    local ok, reason = bringGunToPlayer()
+    if ok then notify("Gun incoming")
+    else notify("Failed: " .. tostring(reason)) end
+end)
+
+UI.autoTpGunRef = window:CreateToggle(miscTab, "Auto Gun", false, function(v)
+    MiscSettings.AutoTpGun = v
+    if v then
+        if S.autoTpGunThread then return end
+        S.autoTpGunThread = task.spawn(function()
+            while MiscSettings.AutoTpGun do
+                task.wait(0.5)
+                if not MiscSettings.AutoTpGun then break end
+                bringGunToPlayer()
+            end
+            S.autoTpGunThread = nil
+        end)
+    else
+        if S.autoTpGunThread then task.cancel(S.autoTpGunThread); S.autoTpGunThread = nil end
+    end
+end)
+registerControl(MiscSettings, "AutoTpGun", UI.autoTpGunRef)
+
+window:CreateLabel(miscTab, "Silent Aim")
+UI.silentRef = window:CreateToggle(miscTab, "Silent Aim", false, function(v)
+    MiscSettings.SilentAim = v
+    if v and not S.silentAimHookInstalled then
+        notify("Silent Aim unavailable", 2)
+    end
+end)
+registerControl(MiscSettings, "SilentAim", UI.silentRef)
+
+window:CreateLabel(miscTab, "Knife Dodge")
+UI.knifeDodgeRef = window:CreateToggle(miscTab, "Dodge Thrown Knives", true, function(v)
+    MiscSettings.KnifeDodge = v
+    if v then
+        if not ConnectionRegistry["knife_dodge"] then setupKnifeDodgeHook() end
+    else
+        dropConn("knife_dodge")
+    end
+end)
+registerControl(MiscSettings, "KnifeDodge", UI.knifeDodgeRef)
+
+setupKnifeDodgeHook()
+
+window:CreateLabel(miscTab, "Debug")
+window:CreateButton(miscTab, "Check Gun Status", function()
+    local char = LocalPlayer.Character
+    if not char then notify("No character", 3) return end
+    local rigGun = findGunEquipped()
+    local bagGun = findGunInBackpack()
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local equipped = hum and hum:FindFirstChildWhichIsA("Tool")
+    local msg = {}
+    table.insert(msg, "Rig: " .. (rigGun and rigGun.Name or "no"))
+    table.insert(msg, "Bag: " .. (bagGun and bagGun.Name or "no"))
+    table.insert(msg, "Equipped: " .. (equipped and equipped.Name or "no"))
+    notify(table.concat(msg, " | "), 6)
+end)
+
+function toggleESPAll()
+    local anyOn = VisualSettings.MM2ESP or VisualSettings.NameTags or VisualSettings.GunESP or VisualSettings.Beam
+    local newState = not anyOn
+
+    VisualSettings.MM2ESP   = newState
+    VisualSettings.NameTags = newState
+    VisualSettings.GunESP   = newState
+    VisualSettings.Beam     = newState
+    VisualSettings.OGESP    = false
+
+    ESP.active.MM2     = newState
+    ESP.active.NameTag = newState
+    ESP.active.OG      = false
+
+    refreshAllESP()
+    applyGunESP()
+
+    if newState then
+        if not ConnectionRegistry["nametag"] then startNameTagUpdater() end
+        ensureBeamConn()
+    else
+        stopNameTagUpdater()
+        stopBeamIfIdle()
+        clearGunESP()
+        clearBeamPool(S.beamData)
+    end
+
+    if UI.mm2ESPToggleRef and UI.mm2ESPToggleRef.SetState then pcall(function() UI.mm2ESPToggleRef:SetState(newState, true) end) end
+    if UI.nameTagToggleRef and UI.nameTagToggleRef.SetState then pcall(function() UI.nameTagToggleRef:SetState(newState, true) end) end
+    if UI.gunESPToggleRef and UI.gunESPToggleRef.SetState then pcall(function() UI.gunESPToggleRef:SetState(newState, true) end) end
+    if UI.beamToggleRef and UI.beamToggleRef.SetState then pcall(function() UI.beamToggleRef:SetState(newState, true) end) end
+    if UI.ogESPToggleRef and UI.ogESPToggleRef.SetState then pcall(function() UI.ogESPToggleRef:SetState(false, true) end) end
+
+    for plr, h in pairs(ESP.highlights.OG) do
+        if h and h.Parent then h:Destroy() end
+        ESP.highlights.OG[plr] = nil
+    end
+
+    notify("ESP " .. (newState and "ON" or "OFF"), 2)
+end
+
+function createReopenButton()
+    if not isMobile then return end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "HH_ReopenUI"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 999
+    pcall(function() gui.Parent = game:GetService("CoreGui") end)
+    if not gui.Parent then
+        gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    end
+    trackGui(gui)
+
+    local btn = Instance.new("TextButton")
+    btn.Name = "ReopenBtn"
+    btn.Size = UDim2.new(0, 56, 0, 56)
+    btn.Position = UDim2.new(0, 20, 0, 200)
+    btn.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    btn.TextColor3 = Color3.fromRGB(0, 220, 130)
+    btn.Text = "UI"
+    btn.TextSize = 18
+    btn.Font = Enum.Font.GothamBold
+    btn.AutoButtonColor = false
+    btn.BorderSizePixel = 0
+    btn.Active = true
+    btn.Parent = gui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = btn
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(0, 220, 130)
+    stroke.Thickness = 2
+    stroke.Parent = btn
+
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragStart = input.Position
+            startPos = btn.Position
+            dragging = false
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragStart then return end
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            if delta.Magnitude > 6 then
+                dragging = true
+                btn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            end
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragStart = nil
+            dragging = false
+        end
+    end)
+
+    btn.MouseButton1Click:Connect(function()
+        if dragging then return end
+        pcall(function()
+            if window and type(window.ToggleUI) == "function" then
+                window:ToggleUI()
+            end
+        end)
+    end)
+end
+
+function setupMobileButtons()
+    if not isMobile then return end
+
+    if type(window.AddMobileButton) == "function" then
+        pcall(function() window:ClearMobileButtons() end)
+
+        pcall(function()
+            window:AddMobileButton({
+                OnClick = function() task.spawn(mobileForceShoot) end,
+                Icon = "rbxassetid://12804017021",
+                Tooltip = "Shoot Murderer"
+            })
+        end)
+
+        pcall(function()
+            window:AddMobileButton({
+                OnClick = function() toggleESPAll() end,
+                Icon = "rbxassetid://12804017021",
+                Tooltip = "Toggle ESP"
+            })
+        end)
+    end
+
+    if type(window._makeMobileBtn) == "function" then
+        pcall(function()
+            window._makeMobileBtn("AIM", function()
+                if UI.mm2LockRef and UI.mm2LockRef.SetState and UI.mm2LockRef.GetState then
+                    local current = false
+                    pcall(function() current = UI.mm2LockRef:GetState() end)
+                    pcall(function() UI.mm2LockRef:SetState(not current) end)
+                end
+            end)
+        end)
+        pcall(function()
+            window._makeMobileBtn("ESP", function()
+                toggleESPAll()
+            end)
+        end)
+        pcall(function()
+            window._makeMobileBtn("UI", function()
+                if window and type(window.ToggleUI) == "function" then
+                    window:ToggleUI()
+                end
+            end)
+        end)
+    end
+
+    createReopenButton()
+end
+
+setupMobileButtons()
+startMobileFlyDrag()
+
+trackConn("hotkeys", UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if isMobile then return end
+    if UserInputService:GetFocusedTextBox() then return end
+    if input.KeyCode == Enum.KeyCode.T then
+        if UI.mm2LockRef then UI.mm2LockRef.SetState(not UI.mm2LockRef.GetState()) end
+    elseif input.KeyCode == Enum.KeyCode.O then
+        if UI.mm2ESPToggleRef then UI.mm2ESPToggleRef.SetState(not UI.mm2ESPToggleRef.GetState()) end
+    elseif input.KeyCode == Enum.KeyCode.B then
+        if UI.autoFireRef then UI.autoFireRef.SetState(not UI.autoFireRef.GetState()) end
+    elseif input.KeyCode == Enum.KeyCode.V then
+        task.spawn(mobileForceShoot)
+    end
+end))
+
+function snapshotSettings()
+    return {
+        Aimbot = {
+            MM2LockOn   = AimbotSettings.MM2LockOn,
+            MM2Smooth   = AimbotSettings.MM2Smooth,
+            MM2Range    = AimbotSettings.MM2Range,
+            MM2Target   = AimbotSettings.MM2Target,
+            TriggerBot  = AimbotSettings.TriggerBot,
+            TriggerRange= AimbotSettings.TriggerRange,
+            AutoFire    = AimbotSettings.AutoFire,
+            AutoKillMurderer = AimbotSettings.AutoKillMurderer,
+            WallCheck   = AimbotSettings.WallCheck,
+            FOVCircle   = AimbotSettings.FOVCircle,
+            FOVRadius   = AimbotSettings.FOVRadius,
+        },
+        Visual = {
+            MM2ESP   = VisualSettings.MM2ESP,
+            OGESP    = VisualSettings.OGESP,
+            NameTags = VisualSettings.NameTags,
+            GunESP   = VisualSettings.GunESP,
+            Beam     = VisualSettings.Beam,
+        },
+        Misc = {
+            InfJump        = MiscSettings.InfJump,
+            AntiAFK        = MiscSettings.AntiAFK,
+            AntiVoid       = MiscSettings.AntiVoid,
+            AutoTpGun      = MiscSettings.AutoTpGun,
+            SilentAim      = MiscSettings.SilentAim,
+            MusicCompanion = MiscSettings.MusicCompanion,
+            KnifeDodge     = MiscSettings.KnifeDodge,
+            SelectedMusic  = MiscSettings.SelectedMusic,
+        },
+        Movement = {
+            Noclip       = MovementSettings.Noclip,
+            God          = MovementSettings.God,
+            Fly          = MovementSettings.Fly,
+            WalkSpeed    = MovementSettings.WalkSpeed,
+            JumpPower    = MovementSettings.JumpPower,
+            FlySpeed     = MovementSettings.FlySpeed,
+            AntiFling    = MovementSettings.AntiFling,
+            Fling        = MovementSettings.Fling,
+            TPAll        = MovementSettings.TPAll,
+            FlingTarget  = MovementSettings.FlingTarget,
+            FlingDuration= MovementSettings.FlingDuration,
+            FlingDistance= MovementSettings.FlingDistance,
+        },
+        Avatar = {
+            Korblox   = AvatarSettings.Korblox,
+            AnimPack  = AvatarSettings.AnimPack,
+        },
+        Farm = {
+            AutoFarm = FarmSettings.AutoFarm,
+            FarmSpeed = FarmSettings.FarmSpeed,
+            NearBoost = FarmSettings.NearBoost,
+        },
+        AntiVoid = {
+            Threshold = AntiVoidSettings.Threshold,
+            SafeY = AntiVoidSettings.SafeY,
+        },
+        Theme = getCurrentTheme(),
+    }
+end
+
+function applyConfig(data)
+    if not data then return end
+    if data.Aimbot then
+        for k, v in pairs(data.Aimbot) do AimbotSettings[k] = v end
+    end
+    if data.Visual then
+        for k, v in pairs(data.Visual) do VisualSettings[k] = v end
+    end
+    if data.Misc then
+        for k, v in pairs(data.Misc) do MiscSettings[k] = v end
+    end
+    if data.Movement then
+        for k, v in pairs(data.Movement) do MovementSettings[k] = v end
+    end
+    if data.Avatar then
+        for k, v in pairs(data.Avatar) do AvatarSettings[k] = v end
+    end
+    if data.Farm then
+        if data.Farm.AutoFarm ~= nil then FarmSettings.AutoFarm = data.Farm.AutoFarm end
+        if data.Farm.FarmSpeed ~= nil then FarmSettings.FarmSpeed = data.Farm.FarmSpeed end
+        if data.Farm.NearBoost ~= nil then FarmSettings.NearBoost = data.Farm.NearBoost end
+    end
+    if data.AntiVoid then
+        for k, v in pairs(data.AntiVoid) do AntiVoidSettings[k] = v end
+    end
+    if data.Theme and data.Theme ~= getCurrentTheme() then setTheme(data.Theme) end
+    if MiscSettings.KnifeDodge then
+        if not ConnectionRegistry["knife_dodge"] then setupKnifeDodgeHook() end
+    else
+        dropConn("knife_dodge")
+    end
+    reapplyActiveFeatures()
+    local hum = getHumanoid()
+    if hum then
+        hum.WalkSpeed = MovementSettings.WalkSpeed
+        hum.JumpPower = MovementSettings.JumpPower
+        hum.UseJumpPower = true
+    end
+    if AvatarSettings.Korblox then pcall(applyKorblox) else pcall(removeKorblox) end
+    if AvatarSettings.AnimPack then pcall(applyAnimPack) end
+    if FarmSettings.AutoFarm then
+        ensureFarmHelpers()
+        ensureFarmNoclip()
+        if S.roundActive and not S.coinCollecting then startCoinCollector() end
+    else
+        stopCoinCollector()
+        restoreFarmNoclip()
+        restoreFarmHelpers()
+    end
+    if MiscSettings.MusicCompanion then playMusic() else stopMusic() end
+    syncUIControls()
+    if window.UpdateThemeButtons then window:UpdateThemeButtons() end
+end
+
+window:SetConfigSnapshot(snapshotSettings)
+window:SetConfigApply(applyConfig)
+window:BuildConfigPage()
+
+pcall(function() setTheme("Green") end)
+if window.UpdateThemeButtons then pcall(function() window:UpdateThemeButtons() end) end
+
+task.delay(2, function()
+    if isMobile then
+        notify("Mobile loaded", 4)
+    else
+        notify("PC loaded", 4)
+    end
+end)
+
+notify("Hello again "..LocalPlayer.DisplayName, 3)
