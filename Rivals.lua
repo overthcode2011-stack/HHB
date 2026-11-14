@@ -56,7 +56,7 @@ end
 
 local function walkForPlayers(value, depth)
     depth = depth or 0
-    if depth > 5 then return end
+    if depth > 3 then return end -- Optimizado: Reducido de 5 a 3 para evitar lag en tablas grandes
     local t = typeof(value)
     if t == "Instance" then
         if value:IsA("Player") then markActive(value.Name) end
@@ -377,26 +377,8 @@ pcall(function()
     end
 end)
 
-local function rotateRigTowards(part)
-    if not part or not part.Parent then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    local dx = part.Position.X - hrp.Position.X
-    local dz = part.Position.Z - hrp.Position.Z
-    local desiredYaw = math.atan2(-dx, -dz)
-    local currentYaw = math.atan2(-hrp.CFrame.LookVector.X, -hrp.CFrame.LookVector.Z)
-    local diff = math.atan2(math.sin(desiredYaw - currentYaw), math.cos(desiredYaw - currentYaw))
-    local newYaw = currentYaw + diff * math.clamp(AimbotSettings.Smoothing * 1.5, 0, 1)
-    local look = Vector3.new(-math.sin(newYaw), 0, -math.cos(newYaw))
-    local right = Vector3.new(math.cos(newYaw), 0, -math.sin(newYaw))
-    hrp.CFrame = CFrame.fromMatrix(hrp.CFrame.Position, right, Vector3.new(0, 1, 0), -look)
-end
-
 local function aimViaMouse(part)
     if not part or not part.Parent then return end
-    if not mousemoverel then return end
     local cam = workspace.CurrentCamera
     if not cam then return end
     local screenPos = cam:WorldToViewportPoint(part.Position)
@@ -411,8 +393,25 @@ local function aimViaMouse(part)
     local moveX = dX * smooth
     local moveY = dY * smooth
     if dist > 200 then moveX = moveX * 0.7; moveY = moveY * 0.7 end
-    rotateRigTowards(part)
-    pcall(mousemoverel, moveX, moveY)
+    
+    -- Optimización: Solo rotamos el rig si no tenemos mousemoverel. Si lo tenemos, mover el ratón es más que suficiente y evita lag por físicas.
+    if not mousemoverel then
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local dx = part.Position.X - hrp.Position.X
+            local dz = part.Position.Z - hrp.Position.Z
+            local desiredYaw = math.atan2(-dx, -dz)
+            local currentYaw = math.atan2(-hrp.CFrame.LookVector.X, -hrp.CFrame.LookVector.Z)
+            local diff = math.atan2(math.sin(desiredYaw - currentYaw), math.cos(desiredYaw - currentYaw))
+            local newYaw = currentYaw + diff * math.clamp(AimbotSettings.Smoothing * 1.5, 0, 1)
+            local look = Vector3.new(-math.sin(newYaw), 0, -math.cos(newYaw))
+            local right = Vector3.new(math.cos(newYaw), 0, -math.sin(newYaw))
+            hrp.CFrame = CFrame.fromMatrix(hrp.CFrame.Position, right, Vector3.new(0, 1, 0), -look)
+        end
+    else
+        pcall(mousemoverel, moveX, moveY)
+    end
 end
 
 local function healthColor(ratio)
@@ -422,27 +421,14 @@ local function healthColor(ratio)
 end
 
 local R15_BONES = {
-    {"Head","UpperTorso"},
-    {"UpperTorso","LowerTorso"},
-    {"UpperTorso","LeftUpperArm"},
-    {"LeftUpperArm","LeftLowerArm"},
-    {"LeftLowerArm","LeftHand"},
-    {"UpperTorso","RightUpperArm"},
-    {"RightUpperArm","RightLowerArm"},
-    {"RightLowerArm","RightHand"},
-    {"LowerTorso","LeftUpperLeg"},
-    {"LeftUpperLeg","LeftLowerLeg"},
-    {"LeftLowerLeg","LeftFoot"},
-    {"LowerTorso","RightUpperLeg"},
-    {"RightUpperLeg","RightLowerLeg"},
-    {"RightLowerLeg","RightFoot"},
+    {"Head","UpperTorso"}, {"UpperTorso","LowerTorso"}, {"UpperTorso","LeftUpperArm"},
+    {"LeftUpperArm","LeftLowerArm"}, {"LeftLowerArm","LeftHand"}, {"UpperTorso","RightUpperArm"},
+    {"RightUpperArm","RightLowerArm"}, {"RightLowerArm","RightHand"}, {"LowerTorso","LeftUpperLeg"},
+    {"LeftUpperLeg","LeftLowerLeg"}, {"LeftLowerLeg","LeftFoot"}, {"LowerTorso","RightUpperLeg"},
+    {"RightUpperLeg","RightLowerLeg"}, {"RightLowerLeg","RightFoot"},
 }
 local R6_BONES = {
-    {"Head","Torso"},
-    {"Torso","Left Arm"},
-    {"Torso","Right Arm"},
-    {"Torso","Left Leg"},
-    {"Torso","Right Leg"},
+    {"Head","Torso"}, {"Torso","Left Arm"}, {"Torso","Right Arm"}, {"Torso","Left Leg"}, {"Torso","Right Leg"},
 }
 
 local ESP = { active = false, boxes = {}, skeletons = {}, tracers = {}, names = {}, hpbars = {}, dists = {} }
@@ -513,8 +499,7 @@ local function createSkeleton(plr)
     if plr == LocalPlayer or ESP.skeletons[plr] then return end
     local char = plr.Character
     if not char then return end
-    local bones = char:FindFirstChild("UpperTorso") and R15_BONES
-              or char:FindFirstChild("Torso") and R6_BONES
+    local bones = char:FindFirstChild("UpperTorso") and R15_BONES or char:FindFirstChild("Torso") and R6_BONES
     if not bones then return end
     local lines = {}
     for i, bone in ipairs(bones) do
@@ -731,52 +716,26 @@ local function shouldRender(plr, myPos)
     return true
 end
 
+-- Optimización: Ya no se destruyen y crean objetos cada 2 segundos, solo se ocultan/muestran.
 local function syncESP()
     if not ESP.active then return end
     local cam = workspace.CurrentCamera
     if not cam then return end
     local myHRP = getHRP()
     local myPos = myHRP and myHRP.Position
-    local seen = {}
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             local render = shouldRender(plr, myPos)
-            seen[plr] = true
             if render then
-                if VisualSettings.RivalsESP then
-                    if not ESP.boxes[plr] then createBox(plr) end
-                else if ESP.boxes[plr] then destroyBox(plr) end end
-                if VisualSettings.Skeleton then
-                    if not ESP.skeletons[plr] then createSkeleton(plr) end
-                else if ESP.skeletons[plr] then destroySkeleton(plr) end end
-                if VisualSettings.Tracers then
-                    if not ESP.tracers[plr] then createTracer(plr) end
-                else if ESP.tracers[plr] then destroyTracer(plr) end end
-                if VisualSettings.NameTags then
-                    if not ESP.names[plr] then createNameTag(plr) end
-                else if ESP.names[plr] then destroyNameTag(plr) end end
-                if VisualSettings.HealthBar then
-                    if not ESP.hpbars[plr] then createHealthBar(plr) end
-                else if ESP.hpbars[plr] then destroyHealthBar(plr) end end
-                if VisualSettings.Distance then
-                    if not ESP.dists[plr] then createDistanceTag(plr) end
-                else if ESP.dists[plr] then destroyDistanceTag(plr) end end
-            else
-                if ESP.boxes[plr] then destroyBox(plr) end
-                if ESP.skeletons[plr] then destroySkeleton(plr) end
-                if ESP.tracers[plr] then destroyTracer(plr) end
-                if ESP.names[plr] then destroyNameTag(plr) end
-                if ESP.hpbars[plr] then destroyHealthBar(plr) end
-                if ESP.dists[plr] then destroyDistanceTag(plr) end
+                if VisualSettings.RivalsESP then if not ESP.boxes[plr] then createBox(plr) end end
+                if VisualSettings.Skeleton then if not ESP.skeletons[plr] then createSkeleton(plr) end end
+                if VisualSettings.Tracers then if not ESP.tracers[plr] then createTracer(plr) end end
+                if VisualSettings.NameTags then if not ESP.names[plr] then createNameTag(plr) end end
+                if VisualSettings.HealthBar then if not ESP.hpbars[plr] then createHealthBar(plr) end end
+                if VisualSettings.Distance then if not ESP.dists[plr] then createDistanceTag(plr) end end
             end
         end
     end
-    for plr in pairs(ESP.boxes) do if not seen[plr] then destroyBox(plr) end end
-    for plr in pairs(ESP.skeletons) do if not seen[plr] then destroySkeleton(plr) end end
-    for plr in pairs(ESP.tracers) do if not seen[plr] then destroyTracer(plr) end end
-    for plr in pairs(ESP.names) do if not seen[plr] then destroyNameTag(plr) end end
-    for plr in pairs(ESP.hpbars) do if not seen[plr] then destroyHealthBar(plr) end end
-    for plr in pairs(ESP.dists) do if not seen[plr] then destroyDistanceTag(plr) end end
 end
 
 local function startESP()
@@ -790,14 +749,8 @@ local function stopESP()
     clearAllESP()
 end
 
-local function anyVisualOn()
-    return VisualSettings.RivalsESP or VisualSettings.Skeleton
-        or VisualSettings.Tracers or VisualSettings.NameTags
-        or VisualSettings.HealthBar or VisualSettings.Distance
-end
-
 local function refreshESPState()
-    if anyVisualOn() then
+    if VisualSettings.RivalsESP or VisualSettings.Skeleton or VisualSettings.Tracers or VisualSettings.NameTags or VisualSettings.HealthBar or VisualSettings.Distance then
         if not ESP.active then startESP() end
     else
         if ESP.active then stopESP() end
@@ -998,6 +951,7 @@ task.spawn(function()
     end
 end)
 
+-- Optimización: Eliminado el escaneo masivo cada 1.5s. Ahora solo revisa cuando se añade un Texto nuevo.
 local deathKeywords = { "you died", "you were", "eliminated", "game over", "defeated", "respawning", "you lost", "you have died", "died", "respawning in" }
 local hookedTexts = {}
 
@@ -1024,26 +978,14 @@ local function hookText(v)
     end)
 end
 
-local function scanDeathGuis()
-    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
-    local containers = {}
-    if pGui then table.insert(containers, pGui) end
-    pcall(function() table.insert(containers, game:GetService("CoreGui")) end)
-    for _, container in ipairs(containers) do
-        pcall(function()
-            for _, v in ipairs(container:GetDescendants()) do
-                if v:IsA("TextLabel") or v:IsA("TextButton") then
-                    hookText(v)
-                end
-            end
-        end)
-    end
-end
-
 task.spawn(function()
-    while task.wait(1.5) do
-        pcall(scanDeathGuis)
+    local pGui = LocalPlayer:WaitForChild("PlayerGui")
+    for _, v in ipairs(pGui:GetDescendants()) do
+        if v:IsA("TextLabel") or v:IsA("TextButton") then hookText(v) end
     end
+    pGui.DescendantAdded:Connect(function(v)
+        if v:IsA("TextLabel") or v:IsA("TextButton") then hookText(v) end
+    end)
 end)
 
 local espAcc, aimAcc, fpsAcc = 0, 0, 0
