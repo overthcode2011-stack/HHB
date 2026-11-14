@@ -25,6 +25,6 @@ local function loadChunk(url, name)
 end
 
 if not loadChunk(ROOT_URL .. "API", "API") then return end
-if not loadChunk(SCRIPTS_URL .. "icons_config.lua", "icons_config.lua") then return end
+if not loadChunk(SCRIPTS_URL .. "config.lua", "config.lua") then return end
 if not loadChunk(SCRIPTS_URL .. "logic.lua", "logic.lua") then return end
 if not loadChunk(SCRIPTS_URL .. "ui.lua", "ui.lua") then return end
