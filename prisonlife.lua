@@ -1,5 +1,26 @@
 local API_URL = 'https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API'
 
+local EXECUTOR_NAME = "Unknown"
+do
+    if identifyexecutor then
+        local ok, n = pcall(identifyexecutor)
+        if ok and n then EXECUTOR_NAME = tostring(n) end
+    elseif getexecutorname then
+        local ok, n = pcall(getexecutorname)
+        if ok and n then EXECUTOR_NAME = tostring(n) end
+    elseif syn then EXECUTOR_NAME = "Synapse X"
+    elseif KRNL_LOADED or Krnl then EXECUTOR_NAME = "Krnl"
+    elseif fluxus then EXECUTOR_NAME = "Fluxus"
+    elseif secure_call then EXECUTOR_NAME = "Script-Ware"
+    elseif Electron then EXECUTOR_NAME = "Electron"
+    elseif delta then EXECUTOR_NAME = "Delta"
+    elseif Axe then EXECUTOR_NAME = "Axe"
+    end
+end
+
+local HAS_DRAWING = (Drawing and type(Drawing.new) == "function")
+local HAS_HIGHLIGHT = (Highlight ~= nil)
+
 local ok, API = pcall(function()
     local src = game:HttpGet(API_URL)
     if not src or #src < 50 then error("No URL") end
@@ -18,7 +39,7 @@ local VIM               = game:GetService("VirtualInputManager")
 local Lighting          = game:GetService("Lighting")
 local LocalPlayer       = Players.LocalPlayer
 
-local window    = API:CreateWindow("Happy Hub", "prison life")
+local window    = API:CreateWindow("Happy Hub", "prison life | " .. EXECUTOR_NAME)
 local visualTab = window:CreateTab("Visuals",  API.Icons and API.Icons.Visual or nil)
 local combatTab = window:CreateTab("Combat",   API.Icons and API.Icons.Misc   or nil)
 local escapeTab = window:CreateTab("Escape",   API.Icons and API.Icons.Misc   or nil)
@@ -78,130 +99,225 @@ local function GetHumanoid()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
 
-local ESP = { Enabled=true, Tracers=true, Box=true, Skeleton=false,
-              Health=false, Name=true, TeamColor=true, Drawings={} }
+local ESP = {
+    Enabled = true, Tracers = true, Box = true, Skeleton = false,
+    Health = false, Name = true, TeamColor = true,
+    Drawings = {}, Highlights = {}, UseHighlights = (not HAS_DRAWING) and HAS_HIGHLIGHT,
+}
 
-if Drawing and Drawing.new then
-    Try(window.CreateToggle, window, visualTab, "ESP", true, function(v)
-        ESP.Enabled = v
-        if not v then for p in pairs(ESP.Drawings) do ESP:RemoveDrawings(p) end end
-    end)
-    Try(window.CreateToggle, window, visualTab, "Tracers",  true,  function(v) ESP.Tracers  = v end)
-    Try(window.CreateToggle, window, visualTab, "Box",      true,  function(v) ESP.Box      = v end)
-    Try(window.CreateToggle, window, visualTab, "Skeleton", false, function(v) ESP.Skeleton = v end)
-    Try(window.CreateToggle, window, visualTab, "Health",   false, function(v) ESP.Health   = v end)
-    Try(window.CreateToggle, window, visualTab, "Name",     true,  function(v) ESP.Name     = v end)
-    Try(window.CreateToggle, window, visualTab, "Team Color", true, function(v) ESP.TeamColor = v end)
+local COLOR_ALLY, COLOR_ENEMY, COLOR_NOTEAM =
+    Color3.fromRGB(0, 255, 0), Color3.fromRGB(255, 60, 60), Color3.fromRGB(200, 200, 200)
 
-    local COLOR_ALLY, COLOR_ENEMY, COLOR_NOTEAM =
-        Color3.fromRGB(0,255,0), Color3.fromRGB(255,60,60), Color3.fromRGB(200,200,200)
-    local teamCache = {}
-    local function teamColor(t)
-        if not t then return COLOR_NOTEAM end
-        if teamCache[t] then return teamCache[t] end
-        local c = (t.TeamColor and t.TeamColor.Color) or COLOR_NOTEAM
-        teamCache[t] = c; return c
+local teamCache = {}
+local function teamColor(t)
+    if not t then return COLOR_NOTEAM end
+    if teamCache[t] then return teamCache[t] end
+    local c = (t.TeamColor and t.TeamColor.Color) or COLOR_NOTEAM
+    teamCache[t] = c
+    return c
+end
+task.spawn(function() while task.wait(5) do teamCache = {} end end)
+
+local function colorOf(plr)
+    if ESP.TeamColor then return plr.Team and teamColor(plr.Team) or COLOR_NOTEAM end
+    return (plr.Team and plr.Team == LocalPlayer.Team) and COLOR_ALLY or COLOR_ENEMY
+end
+
+local function validPlayer(plr)
+    if plr == LocalPlayer then return false end
+    local c = plr.Character; if not c then return false end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    return c:FindFirstChild("HumanoidRootPart") and c:FindFirstChild("Head") and h and h.Health > 0
+end
+
+local function removeHighlightsFor(plr)
+    local h = ESP.Highlights[plr]
+    if h then
+        pcall(function() h:Destroy() end)
+        ESP.Highlights[plr] = nil
     end
-    task.spawn(function() while task.wait(5) do teamCache = {} end end)
+end
 
-    local function colorOf(plr)
-        if ESP.TeamColor then return plr.Team and teamColor(plr.Team) or COLOR_NOTEAM end
-        return (plr.Team and plr.Team == LocalPlayer.Team) and COLOR_ALLY or COLOR_ENEMY
+local function createHighlightFor(plr)
+    if ESP.Highlights[plr] then return ESP.Highlights[plr] end
+    if not plr.Character then return nil end
+    local hl = Instance.new("Highlight")
+    hl.Name = "HH_ESP"
+    hl.FillTransparency = 0.6
+    hl.OutlineTransparency = 0
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent = plr.Character
+    ESP.Highlights[plr] = hl
+    return hl
+end
+
+local function updateHighlights()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer or not validPlayer(plr) then
+            removeHighlightsFor(plr)
+        else
+            if ESP.Enabled then
+                local hl = createHighlightFor(plr)
+                if hl then
+                    local col = colorOf(plr)
+                    hl.FillColor = col
+                    hl.OutlineColor = col
+                    hl.Enabled = true
+                end
+            else
+                removeHighlightsFor(plr)
+            end
+        end
     end
+end
 
-    local function valid(plr)
-        if plr == LocalPlayer then return false end
-        local c = plr.Character; if not c then return false end
-        local h = c:FindFirstChildOfClass("Humanoid")
-        return c:FindFirstChild("HumanoidRootPart") and c:FindFirstChild("Head") and h and h.Health > 0
-    end
-
-    function ESP:CreateDrawings(plr)
-        if self.Drawings[plr] then return end
+if HAS_DRAWING then
+    local function createDrawings(plr)
+        if ESP.Drawings[plr] then return end
         local d = {
-            Box=Drawing.new("Square"), Tracer=Drawing.new("Line"),
-            Name=Drawing.new("Text"), HealthBar=Drawing.new("Square"),
-            HealthBG=Drawing.new("Square"), HealthText=Drawing.new("Text"), Skeleton={},
+            Box = Drawing.new("Square"),
+            Tracer = Drawing.new("Line"),
+            Name = Drawing.new("Text"),
+            HealthBar = Drawing.new("Square"),
+            HealthBG = Drawing.new("Square"),
+            HealthText = Drawing.new("Text"),
+            Skeleton = {},
         }
-        d.Box.Thickness=1; d.Box.Filled=false; d.Box.Transparency=1
-        d.Tracer.Thickness=1; d.Tracer.Transparency=1
-        d.Name.Size=14; d.Name.Center=true; d.Name.Outline=true
-        d.Name.OutlineColor=Color3.new(0,0,0); d.Name.Transparency=1
-        d.HealthBG.Filled=true; d.HealthBG.Color=Color3.new(0,0,0)
-        d.HealthBG.Transparency=0.6; d.HealthBG.Thickness=1
-        d.HealthBar.Filled=true; d.HealthBar.Transparency=0.2; d.HealthBar.Thickness=1
-        d.HealthText.Size=12; d.HealthText.Center=true; d.HealthText.Outline=true
-        d.HealthText.OutlineColor=Color3.new(0,0,0); d.HealthText.Transparency=1
-        self.Drawings[plr] = d
+        d.Box.Thickness = 1
+        d.Box.Filled = false
+        d.Box.Transparency = 1
+        d.Box.Visible = false
+
+        d.Tracer.Thickness = 1
+        d.Tracer.Transparency = 1
+        d.Tracer.Visible = false
+
+        d.Name.Size = 14
+        d.Name.Center = true
+        d.Name.Outline = true
+        d.Name.OutlineColor = Color3.new(0, 0, 0)
+        d.Name.Transparency = 1
+        d.Name.Visible = false
+
+        d.HealthBG.Filled = true
+        d.HealthBG.Color = Color3.new(0, 0, 0)
+        d.HealthBG.Transparency = 0.6
+        d.HealthBG.Thickness = 1
+        d.HealthBG.Visible = false
+
+        d.HealthBar.Filled = true
+        d.HealthBar.Transparency = 0.2
+        d.HealthBar.Thickness = 1
+        d.HealthBar.Visible = false
+
+        d.HealthText.Size = 12
+        d.HealthText.Center = true
+        d.HealthText.Outline = true
+        d.HealthText.OutlineColor = Color3.new(0, 0, 0)
+        d.HealthText.Transparency = 1
+        d.HealthText.Visible = false
+
+        ESP.Drawings[plr] = d
     end
 
-    function ESP:RemoveDrawings(plr)
-        local d = self.Drawings[plr]; if not d then return end
+    local function removeDrawings(plr)
+        local d = ESP.Drawings[plr]; if not d then return end
         for _, k in ipairs({"Box","Tracer","Name","HealthBar","HealthBG","HealthText"}) do
             if d[k] then pcall(function() d[k]:Remove() end) end
         end
         for _, l in ipairs(d.Skeleton) do pcall(function() l:Remove() end) end
-        self.Drawings[plr] = nil
+        ESP.Drawings[plr] = nil
     end
 
-    function ESP:Update()
-        if not self.Enabled then return end
+    local function updateDrawings()
+        if not ESP.Enabled then
+            for plr, d in pairs(ESP.Drawings) do
+                for _, k in ipairs({"Box","Tracer","Name","HealthBar","HealthBG","HealthText"}) do
+                    if d[k] then d[k].Visible = false end
+                end
+                for _, l in ipairs(d.Skeleton) do l.Visible = false end
+            end
+            return
+        end
         local cam = workspace.CurrentCamera; if not cam then return end
         for _, plr in ipairs(Players:GetPlayers()) do
-            if not valid(plr) then
-                if self.Drawings[plr] then self:RemoveDrawings(plr) end
+            if not validPlayer(plr) then
+                if ESP.Drawings[plr] then removeDrawings(plr) end
             else
-                self:CreateDrawings(plr)
-                local d = self.Drawings[plr]
+                createDrawings(plr)
+                local d = ESP.Drawings[plr]
+                if not d then continue end
                 local c = plr.Character
                 local hrp, head = c.HumanoidRootPart, c.Head
                 local hum = c:FindFirstChildOfClass("Humanoid")
-                local hp, on = cam:WorldToViewportPoint(head.Position + Vector3.new(0,0.5,0))
-                local fp = cam:WorldToViewportPoint(hrp.Position - Vector3.new(0,3,0))
+                local hp, on = cam:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+                local fp = cam:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
                 if not on then
-                    for _, k in ipairs({"Box","Tracer","Name","HealthBar","HealthBG","HealthText"}) do d[k].Visible = false end
+                    for _, k in ipairs({"Box","Tracer","Name","HealthBar","HealthBG","HealthText"}) do
+                        if d[k] then d[k].Visible = false end
+                    end
                     for _, l in ipairs(d.Skeleton) do l.Visible = false end
                 else
                     local col = colorOf(plr)
                     local h = math.abs(fp.Y - hp.Y); local w = h * 0.5
-                    local tx, ty = hp.X - w/2, hp.Y
-                    d.Box.Visible = self.Box
-                    if self.Box then d.Box.Color=col; d.Box.Size=Vector2.new(w,h); d.Box.Position=Vector2.new(tx,ty) end
-                    d.Tracer.Visible = self.Tracers
-                    if self.Tracers then
-                        d.Tracer.Color=col
-                        d.Tracer.From=Vector2.new(cam.ViewportSize.X/2, cam.ViewportSize.Y)
-                        d.Tracer.To=Vector2.new(hp.X,hp.Y)
+                    local tx, ty = hp.X - w / 2, hp.Y
+
+                    d.Box.Visible = ESP.Box
+                    if ESP.Box then
+                        d.Box.Color = col
+                        d.Box.Size = Vector2.new(w, h)
+                        d.Box.Position = Vector2.new(tx, ty)
                     end
-                    d.Name.Visible = self.Name
-                    if self.Name then
-                        d.Name.Color=col
-                        d.Name.Text=string.format("[%s] %s", plr.Team and plr.Team.Name or "none", plr.Name)
-                        d.Name.Position=Vector2.new(hp.X, ty-18)
+
+                    d.Tracer.Visible = ESP.Tracers
+                    if ESP.Tracers then
+                        d.Tracer.Color = col
+                        d.Tracer.From = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y)
+                        d.Tracer.To = Vector2.new(hp.X, hp.Y)
                     end
-                    d.HealthBar.Visible=self.Health; d.HealthBG.Visible=self.Health; d.HealthText.Visible=self.Health
-                    if self.Health then
-                        local pct = math.clamp(hum.Health/hum.MaxHealth, 0, 1)
-                        d.HealthBG.Size=Vector2.new(4,h); d.HealthBG.Position=Vector2.new(tx-7,ty)
-                        local hc = Color3.fromRGB(255*(1-pct), 255*pct, 0)
-                        d.HealthBar.Color=hc; d.HealthBar.Size=Vector2.new(4,h*pct)
-                        d.HealthBar.Position=Vector2.new(tx-7, ty + h*(1-pct))
-                        d.HealthText.Color=hc; d.HealthText.Text=tostring(math.floor(hum.Health))
-                        d.HealthText.Position=Vector2.new(tx-18, ty + h/2)
+
+                    d.Name.Visible = ESP.Name
+                    if ESP.Name then
+                        d.Name.Color = col
+                        d.Name.Text = string.format("[%s] %s", plr.Team and plr.Team.Name or "none", plr.Name)
+                        d.Name.Position = Vector2.new(hp.X, ty - 18)
                     end
-                    if self.Skeleton then
+
+                    d.HealthBar.Visible = ESP.Health
+                    d.HealthBG.Visible = ESP.Health
+                    d.HealthText.Visible = ESP.Health
+                    if ESP.Health and hum then
+                        local pct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+                        d.HealthBG.Size = Vector2.new(4, h)
+                        d.HealthBG.Position = Vector2.new(tx - 7, ty)
+                        local hc = Color3.fromRGB(255 * (1 - pct), 255 * pct, 0)
+                        d.HealthBar.Color = hc
+                        d.HealthBar.Size = Vector2.new(4, h * pct)
+                        d.HealthBar.Position = Vector2.new(tx - 7, ty + h * (1 - pct))
+                        d.HealthText.Color = hc
+                        d.HealthText.Text = tostring(math.floor(hum.Health))
+                        d.HealthText.Position = Vector2.new(tx - 18, ty + h / 2)
+                    end
+
+                    if ESP.Skeleton then
                         local parts = {
-                            head=head, torso=c:FindFirstChild("UpperTorso") or c:FindFirstChild("Torso"),
-                            larm=c:FindFirstChild("LeftHand") or c:FindFirstChild("Left Arm"),
-                            rarm=c:FindFirstChild("RightHand") or c:FindFirstChild("Right Arm"),
-                            lleg=c:FindFirstChild("LeftFoot") or c:FindFirstChild("Left Leg"),
-                            rleg=c:FindFirstChild("RightFoot") or c:FindFirstChild("Right Leg"),
+                            head = head,
+                            torso = c:FindFirstChild("UpperTorso") or c:FindFirstChild("Torso"),
+                            larm = c:FindFirstChild("LeftHand") or c:FindFirstChild("Left Arm"),
+                            rarm = c:FindFirstChild("RightHand") or c:FindFirstChild("Right Arm"),
+                            lleg = c:FindFirstChild("LeftFoot") or c:FindFirstChild("Left Leg"),
+                            rleg = c:FindFirstChild("RightFoot") or c:FindFirstChild("Right Leg"),
                         }
-                        local conns = {{"head","torso"},{"torso","larm"},{"torso","rarm"},{"torso","lleg"},{"torso","rleg"}}
+                        local conns = {
+                            {"head","torso"},{"torso","larm"},{"torso","rarm"},
+                            {"torso","lleg"},{"torso","rleg"},
+                        }
                         if #d.Skeleton == 0 then
                             for _ = 1, #conns do
                                 local l = Drawing.new("Line")
-                                l.Thickness=1; l.Transparency=1; l.Visible=false
+                                l.Thickness = 1
+                                l.Transparency = 1
+                                l.Visible = false
                                 table.insert(d.Skeleton, l)
                             end
                         end
@@ -209,15 +325,17 @@ if Drawing and Drawing.new then
                             local p1, p2 = parts[cn[1]], parts[cn[2]]
                             local ln = d.Skeleton[i]
                             if p1 and p2 then
-                                local s1,o1 = cam:WorldToViewportPoint(p1.Position)
-                                local s2,o2 = cam:WorldToViewportPoint(p2.Position)
+                                local s1, o1 = cam:WorldToViewportPoint(p1.Position)
+                                local s2, o2 = cam:WorldToViewportPoint(p2.Position)
                                 ln.Visible = o1 and o2
                                 if ln.Visible then
-                                    ln.Color=col
-                                    ln.From=Vector2.new(s1.X,s1.Y)
-                                    ln.To=Vector2.new(s2.X,s2.Y)
+                                    ln.Color = col
+                                    ln.From = Vector2.new(s1.X, s1.Y)
+                                    ln.To = Vector2.new(s2.X, s2.Y)
                                 end
-                            else ln.Visible = false end
+                            else
+                                ln.Visible = false
+                            end
                         end
                     else
                         for _, l in ipairs(d.Skeleton) do l.Visible = false end
@@ -227,18 +345,39 @@ if Drawing and Drawing.new then
         end
     end
 
-    RunService.RenderStepped:Connect(function() pcall(function() ESP:Update() end) end)
-    Players.PlayerRemoving:Connect(function(p) ESP:RemoveDrawings(p) end)
+    RunService.RenderStepped:Connect(function()
+        pcall(updateDrawings)
+        pcall(updateHighlights)
+    end)
+    Players.PlayerRemoving:Connect(function(p)
+        if ESP.Drawings[p] then removeDrawings(p) end
+        removeHighlightsFor(p)
+    end)
+else
+    RunService.RenderStepped:Connect(function()
+        pcall(updateHighlights)
+    end)
+    Players.PlayerRemoving:Connect(function(p)
+        removeHighlightsFor(p)
+    end)
 end
 
+Try(window.CreateToggle, window, visualTab, "ESP", true, function(v) ESP.Enabled = v end)
+Try(window.CreateToggle, window, visualTab, "Tracers", true, function(v) ESP.Tracers = v end)
+Try(window.CreateToggle, window, visualTab, "Box", true, function(v) ESP.Box = v end)
+Try(window.CreateToggle, window, visualTab, "Skeleton", false, function(v) ESP.Skeleton = v end)
+Try(window.CreateToggle, window, visualTab, "Health", false, function(v) ESP.Health = v end)
+Try(window.CreateToggle, window, visualTab, "Name", true, function(v) ESP.Name = v end)
+Try(window.CreateToggle, window, visualTab, "Team Color", true, function(v) ESP.TeamColor = v end)
+
 local Aimbot = {
-    Enabled=false, AutoFire=false, FOV=250, WallCheck=true,
-    Smoothness=0, CameraLock=true, BulletRedirect=true,
+    Enabled = false, AutoFire = false, FOV = 250, WallCheck = true,
+    Smoothness = 0, CameraLock = true, BulletRedirect = true,
 }
 
 local function GetAimbotTarget()
     local cam = workspace.CurrentCamera; if not cam then return nil end
-    local center = Vector2.new(cam.ViewportSize.X/2, cam.ViewportSize.Y/2)
+    local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
     local best, bestD = nil, math.huge
     for _, plr in ipairs(Players:GetPlayers()) do
         if CanBeDamaged(plr) then
@@ -248,7 +387,9 @@ local function GetAimbotTarget()
                 if on then
                     local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
                     if d <= Aimbot.FOV and d < bestD then
-                        if not Aimbot.WallCheck or IsVisible(plr) then best, bestD = plr, d end
+                        if not Aimbot.WallCheck or IsVisible(plr) then
+                            best, bestD = plr, d
+                        end
                     end
                 end
             end
@@ -278,11 +419,13 @@ RunService.RenderStepped:Connect(function()
     if not hum or hum.Health <= 0 then return end
     if not GetAimbotTarget() then return end
     pcall(function()
-        if mouse1click then mouse1click()
-        elseif mouse1press and mouse1release then mouse1press(); mouse1release()
+        if mouse1click then
+            mouse1click()
+        elseif mouse1press and mouse1release then
+            mouse1press(); mouse1release()
         else
-            VIM:SendMouseButtonEvent(0,0,0,true,game,1)
-            VIM:SendMouseButtonEvent(0,0,0,false,game,1)
+            VIM:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+            VIM:SendMouseButtonEvent(0, 0, 0, false, game, 1)
         end
     end)
 end)
@@ -304,7 +447,8 @@ pcall(function()
                     if pos and headInst then
                         for _, b in ipairs(bullets) do
                             if type(b) == "table" and #b >= 3 then
-                                b[2] = pos; b[3] = headInst
+                                b[2] = pos
+                                b[3] = headInst
                             end
                         end
                     end
@@ -324,14 +468,16 @@ Try(window.CreateToggle, window, combatTab, "Wall Check", true, function(v) Aimb
 Try(window.CreateSlider, window, combatTab, "FOV", 50, 800, 250, function(v) Aimbot.FOV = v end)
 Try(window.CreateSlider, window, combatTab, "Smoothness", 0, 0.9, 0, function(v) Aimbot.Smoothness = v end)
 
-local AutoEscape = { Enabled=false, EscapeCF=CFrame.new(484, 98, 2217),
-                     InmateTeam="Inmates", Cooldown=5, LastAttempt=0 }
+local AutoEscape = {
+    Enabled = false, EscapeCF = CFrame.new(484, 98, 2217),
+    InmateTeam = "Inmates", Cooldown = 5, LastAttempt = 0,
+}
 local ESCAPE_DELAY = 3
 
 local function teamMatch(team, name)
     if not team or not team.Name then return false end
-    local a = team.Name:lower():gsub("%s+","")
-    local b = name:lower():gsub("%s+","")
+    local a = team.Name:lower():gsub("%s+", "")
+    local b = name:lower():gsub("%s+", "")
     return a == b or a:find(b, 1, true) ~= nil
 end
 
@@ -383,19 +529,25 @@ Try(window.CreateToggle, window, escapeTab, "Auto Escape", false, function(v)
     if v then AutoEscape.LastAttempt = 0 end
 end)
 Try(window.CreateInput, window, escapeTab, "Escape X", "484", function(t)
-    local n = tonumber(t); if n then
+    local n = tonumber(t)
+    if n then
         local p = AutoEscape.EscapeCF.Position
-        AutoEscape.EscapeCF = CFrame.new(n, p.Y, p.Z) end
+        AutoEscape.EscapeCF = CFrame.new(n, p.Y, p.Z)
+    end
 end)
 Try(window.CreateInput, window, escapeTab, "Escape Y", "98", function(t)
-    local n = tonumber(t); if n then
+    local n = tonumber(t)
+    if n then
         local p = AutoEscape.EscapeCF.Position
-        AutoEscape.EscapeCF = CFrame.new(p.X, n, p.Z) end
+        AutoEscape.EscapeCF = CFrame.new(p.X, n, p.Z)
+    end
 end)
 Try(window.CreateInput, window, escapeTab, "Escape Z", "2217", function(t)
-    local n = tonumber(t); if n then
+    local n = tonumber(t)
+    if n then
         local p = AutoEscape.EscapeCF.Position
-        AutoEscape.EscapeCF = CFrame.new(p.X, p.Y, n) end
+        AutoEscape.EscapeCF = CFrame.new(p.X, p.Y, n)
+    end
 end)
 
 local function GiveKeyCard()
@@ -496,9 +648,11 @@ Try(window.CreateButton, window, escapeTab, "Grab + Return (1.5s)", function()
     task.delay(1.5, ReturnWeapons)
 end)
 
-local Invis = { Running=false, RealChar=nil, FakeChar=nil,
-                FixConn=nil, DiedConn=nil,
-                VoidThreshold = workspace.FallenPartsDestroyHeight }
+local Invis = {
+    Running = false, RealChar = nil, FakeChar = nil,
+    FixConn = nil, DiedConn = nil,
+    VoidThreshold = workspace.FallenPartsDestroyHeight,
+}
 
 local function StopInvisible()
     if not Invis.Running then return end
@@ -599,7 +753,7 @@ Try(window.CreateToggle, window, moveTab, "Invisible", false, function(v)
     if v then StartInvisible() else StopInvisible() end
 end)
 
-local SmartNC = { Active=false, Conn=nil, Saved={} }
+local SmartNC = { Active = false, Conn = nil, Saved = {} }
 
 local function restoreSmartNC()
     for part, orig in pairs(SmartNC.Saved) do
@@ -645,6 +799,7 @@ local function startSmartNC()
     SmartNC.Active = true
     SmartNC.Conn = RunService.Stepped:Connect(smartNCStep)
 end
+
 local function stopSmartNC()
     SmartNC.Active = false
     if SmartNC.Conn then SmartNC.Conn:Disconnect(); SmartNC.Conn = nil end
@@ -655,7 +810,7 @@ Try(window.CreateToggle, window, moveTab, "Noclip", false, function(v)
     if v then startSmartNC() else stopSmartNC() end
 end)
 
-local Fly = { Active=false, Conn=nil, BV=nil, BG=nil, Speed=50 }
+local Fly = { Active = false, Conn = nil, BV = nil, BG = nil, Speed = 50 }
 
 local function attachFly()
     local hrp, hum = GetHRP(), GetHumanoid()
@@ -729,7 +884,7 @@ Try(window.CreateToggle, window, moveTab, "Fly", false, function(v)
 end)
 Try(window.CreateSlider, window, moveTab, "Fly Speed", 10, 300, 50, function(v) Fly.Speed = v end)
 
-local Float = { Active=false, Part=nil, Conn=nil }
+local Float = { Active = false, Part = nil, Conn = nil }
 local FLOAT_OFFSET = -3.2
 
 local function startFloat()
@@ -751,8 +906,7 @@ local function startFloat()
 
     Float.Conn = RunService.Heartbeat:Connect(function()
         if not Float.Active then return end
-        local h = GetHRP()
-        if not h then return end
+        local h = GetHRP(); if not h then return end
         if not Float.Part or not Float.Part.Parent then return end
         Float.Part.CFrame = CFrame.new(
             h.Position.X,
