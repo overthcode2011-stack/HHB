@@ -1,5 +1,5 @@
 local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API"))()
-API.Config.SupportedGames = { 17625359962, 117398147513099 } ---queue added xddddd finally dude
+API.Config.SupportedGames = { 17625359962, 117398147513099 }
 API.Config.KeySystem.Enabled = false
 
 local Players = game:GetService("Players")
