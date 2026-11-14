@@ -1,7 +1,7 @@
 local hiddenFolder = Instance.new("Folder")
 hiddenFolder.Name = "\u{200B}\u{200C}\u{200D}\u{FEFF}\u{200B}"
 hiddenFolder.Parent = gethui and gethui() or game:GetService("CoreGui")
-local Hometabicon = "130068439240504"
+
 
 local success, API = pcall(function()
     return loadstring(game:HttpGet('https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API'))()
