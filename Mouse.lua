@@ -9,11 +9,12 @@ if not window then
     return
 end
 
-local Players    = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local Market     = game:GetService("MarketplaceService")
-local LP         = Players.LocalPlayer
-local Camera     = workspace.CurrentCamera
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Market           = game:GetService("MarketplaceService")
+local LP               = Players.LocalPlayer
+local Camera           = workspace.CurrentCamera
 
 local State = {
     ESP         = true,
@@ -24,7 +25,7 @@ local State = {
     UWUId       = "rbxassetid://139219844119994",
     Noclip      = true,
     DroppedKeys = false,
-    KeysRange   = 50,
+    KeysRange   = 60,
     Subtitles   = true,
 }
 
@@ -34,9 +35,52 @@ local Locations = {
     ["Sala de Máquinas"] = CFrame.new(5.4896574, 35.1807289, 636.038025, 0.999612808, 5.34604272e-09, -0.0278247297, -3.5277663e-09, 1, 6.53965913e-08, 0.0278247297, -6.52731131e-08, 0.999612808),
 }
 
+-- Mouse control
+local OriginalMouseBehavior = UserInputService.MouseBehavior
+local OriginalMouseIcon    = UserInputService.MouseIconEnabled
+
+local function UnlockMouse()
+    UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    UserInputService.MouseIconEnabled = true
+end
+
+local function RestoreMouse()
+    UserInputService.MouseBehavior = OriginalMouseBehavior
+    UserInputService.MouseIconEnabled = OriginalMouseIcon
+end
+
+-- Hook ShowUI / HideUI so mouse unlocks only while UI is open
+local oldShowUI = window.ShowUI
+local oldHideUI = window.HideUI
+
+function window:ShowUI(...)
+    oldShowUI(self, ...)
+    UnlockMouse()
+end
+
+function window:HideUI(...)
+    oldHideUI(self, ...)
+    RestoreMouse()
+end
+
+local oldToggleUI = window.ToggleUI
+if oldToggleUI then
+    function window:ToggleUI(...)
+        oldToggleUI(self, ...)
+        task.defer(function()
+            -- after toggle, check visibility roughly by trying to unlock/restore based on common state
+            -- (F3 uses ToggleUI internally in most cases)
+            UnlockMouse() -- temporary; real state is handled by Show/Hide if called
+        end)
+    end
+end
+
+-- UI starts open
+UnlockMouse()
+
 local function getChar()
     local c = LP.Character
-    return c, c and c:FindFirstChild("HumanoidRootPart")
+    return c, c and c:FindFirstChild("HumanoidRootPart"), c and c:FindFirstChildOfClass("Humanoid")
 end
 
 local function TeleportTo(cf)
@@ -50,6 +94,13 @@ end
 local function getMickeyRig()
     local rig = workspace:FindFirstChild("MickeyVisual")
     if rig and rig:IsA("Model") then return rig end
+end
+
+local function getMickeyPosition()
+    local rig = getMickeyRig()
+    if not rig then return nil end
+    local part = rig:FindFirstChild("HumanoidRootPart") or rig:FindFirstChild("Head") or rig.PrimaryPart
+    return part and part.Position
 end
 
 local function mickeyAlive()
@@ -122,6 +173,16 @@ end
 LP.CharacterAdded:Connect(function() task.wait(0.2); applyNoclip() end)
 task.spawn(function() while task.wait(0.1) do applyNoclip() end end)
 
+-- ============ KEYS: BodyGyro + move to key + AutoPrompt + Avoid Mickey ============
+local activeGyro, activeVelocity
+local SAFE_MICKEY_DIST = 28
+
+local function clearMovementForces()
+    if activeGyro then pcall(function() activeGyro:Destroy() end) end
+    if activeVelocity then pcall(function() activeVelocity:Destroy() end) end
+    activeGyro, activeVelocity = nil, nil
+end
+
 local function firePrompt(prompt)
     if not prompt or not prompt:IsA("ProximityPrompt") then return end
     pcall(function()
@@ -129,49 +190,114 @@ local function firePrompt(prompt)
             fireproximityprompt(prompt)
         else
             prompt:InputHoldBegin()
-            task.wait(prompt.HoldDuration > 0 and prompt.HoldDuration or 0.1)
+            task.wait(prompt.HoldDuration > 0 and prompt.HoldDuration or 0.05)
             prompt:InputHoldEnd()
         end
     end)
 end
 
-task.spawn(function()
-    while task.wait(0.25) do
-        if not State.DroppedKeys then continue end
+local function getNearestKey(hrp)
+    local folder = workspace:FindFirstChild("DroppedKeys")
+    if not folder then return nil end
 
-        local folder = workspace:FindFirstChild("DroppedKeys")
-        if not folder then continue end
+    local nearest, nearestDist, nearestPrompt, nearestBase = nil, State.KeysRange, nil, nil
 
-        local _, hrp = getChar()
-        if not hrp then continue end
+    for _, k in ipairs(folder:GetChildren()) do
+        local base = k:IsA("BasePart") and k
+                  or k.PrimaryPart
+                  or k:FindFirstChildWhichIsA("BasePart", true)
 
-        for _, k in ipairs(folder:GetChildren()) do
-            local base = k:IsA("BasePart") and k
-                      or k.PrimaryPart
-                      or k:FindFirstChildWhichIsA("BasePart", true)
+        if base then
+            local dist = (base.Position - hrp.Position).Magnitude
+            if dist < nearestDist then
+                local prompt = base:FindFirstChildOfClass("ProximityPrompt")
+                    or k:FindFirstChildOfClass("ProximityPrompt")
+                    or k:FindFirstChildWhichIsA("ProximityPrompt", true)
 
-            if base then
-                base.CanCollide = false
-
-                local dist = (base.Position - hrp.Position).Magnitude
-                if dist <= State.KeysRange then
-                    -- Teleport key near player
-                    base.CFrame = CFrame.new(
-                        hrp.Position + Vector3.new(math.random(-2, 2), 1.5, math.random(-2, 2))
-                    )
-
-                    -- Auto prompt
-                    local prompt = base:FindFirstChildOfClass("ProximityPrompt")
-                        or k:FindFirstChildOfClass("ProximityPrompt")
-                        or k:FindFirstChildWhichIsA("ProximityPrompt", true)
-
-                    if prompt then
-                        firePrompt(prompt)
-                    end
-                end
+                nearest = k
+                nearestDist = dist
+                nearestPrompt = prompt
+                nearestBase = base
             end
         end
     end
+
+    return nearest, nearestBase, nearestPrompt, nearestDist
+end
+
+task.spawn(function()
+    while task.wait(0.12) do
+        if not State.DroppedKeys then
+            clearMovementForces()
+            continue
+        end
+
+        local char, hrp, hum = getChar()
+        if not (char and hrp and hum) then
+            clearMovementForces()
+            continue
+        end
+
+        local key, base, prompt, dist = getNearestKey(hrp)
+        if not (key and base) then
+            clearMovementForces()
+            continue
+        end
+
+        -- Avoid Mickey
+        local mickeyPos = getMickeyPosition()
+        if mickeyPos then
+            local mickeyDist = (hrp.Position - mickeyPos).Magnitude
+            if mickeyDist < SAFE_MICKEY_DIST then
+                clearMovementForces()
+                local away = (hrp.Position - mickeyPos).Unit
+                hrp.CFrame = CFrame.new(hrp.Position + away * 5)
+                continue
+            end
+        end
+
+        -- BodyGyro → face the key
+        if not activeGyro or not activeGyro.Parent then
+            clearMovementForces()
+            activeGyro = Instance.new("BodyGyro")
+            activeGyro.Name = "HH_KeyGyro"
+            activeGyro.MaxTorque = Vector3.new(0, 40000, 0)
+            activeGyro.P = 3000
+            activeGyro.D = 500
+            activeGyro.Parent = hrp
+        end
+
+        local lookCF = CFrame.lookAt(hrp.Position, Vector3.new(base.Position.X, hrp.Position.Y, base.Position.Z))
+        activeGyro.CFrame = lookCF
+
+        -- Move toward key
+        if dist > 6 then
+            if not activeVelocity or not activeVelocity.Parent then
+                activeVelocity = Instance.new("BodyVelocity")
+                activeVelocity.Name = "HH_KeyVel"
+                activeVelocity.MaxForce = Vector3.new(30000, 0, 30000)
+                activeVelocity.Parent = hrp
+            end
+            local dir = (Vector3.new(base.Position.X, hrp.Position.Y, base.Position.Z) - hrp.Position).Unit
+            activeVelocity.Velocity = dir * 22
+        else
+            if activeVelocity then
+                pcall(function() activeVelocity:Destroy() end)
+                activeVelocity = nil
+            end
+        end
+
+        -- Always prompt when close
+        if prompt and dist <= 12 then
+            firePrompt(prompt)
+        end
+    end
+end)
+
+LP.CharacterAdded:Connect(function()
+    clearMovementForces()
+    task.wait(0.25)
+    applyNoclip()
 end)
 
 workspace.ChildAdded:Connect(function(c)
@@ -317,13 +443,16 @@ window:CreateDropdown(tab, "Locations", {"Spawn", "Candados", "Sala de Máquinas
 end)
 
 window:CreateLabel(tab, "Keys")
-local keysToggle = window:CreateToggle(tab, "Dropped-key magnet + AutoPrompt", State.DroppedKeys, function(v)
+local keysToggle = window:CreateToggle(tab, "Keys: BodyGyro + AutoPrompt", State.DroppedKeys, function(v)
     State.DroppedKeys = v
-end, "Pulls keys to you and auto fires their ProximityPrompt")
+    if not v then
+        clearMovementForces()
+    end
+end, "Goes to nearest key with BodyGyro, auto prompts, and avoids Mickey")
 
-local keysRangeSlider = window:CreateSlider(tab, "Magnet range", 10, 200, State.KeysRange, function(v)
+local keysRangeSlider = window:CreateSlider(tab, "Key search range", 15, 120, State.KeysRange, function(v)
     State.KeysRange = v
-end, "Max distance for pulling keys + auto prompt")
+end, "Max distance to search for keys")
 
 window:SetConfigSnapshot(function()
     return {
@@ -365,6 +494,7 @@ window:SetConfigApply(function(data)
     if data.DroppedKeys ~= nil then
         keysToggle:SetState(data.DroppedKeys, true)
         State.DroppedKeys = data.DroppedKeys
+        if not data.DroppedKeys then clearMovementForces() end
     end
     if data.KeysRange ~= nil then
         keysRangeSlider:SetValue(data.KeysRange, true)
