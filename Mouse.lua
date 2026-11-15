@@ -1,6 +1,6 @@
 local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API"))()
 
-API.Config.SupportedGames = {89440018933049} --just in game
+API.Config.SupportedGames = {89440018933049}
 API.Config.KeySystem.Enabled = false
 
 local window = API:CreateWindow("Happy Hub", "By replicatedman")
@@ -183,35 +183,45 @@ end)
 
 local home = window:CreateTab("Home", API.Icons.Home)
 
-local function getThumb()
-    local ok, img = pcall(function()
-        return Market:GetGameIconAsync(game.PlaceId, Enum.AssetType.ImageSize.Size420x420)
-    end)
-    if ok then return img end
-    local ok2, img2 = pcall(function()
-        return Market:GetGameIconAsync(game.PlaceId)
-    end)
-    if ok2 then return img2 end
+local placeName = "RATON"
+local creatorName = "Unknown"
+
+local ok, info = pcall(function()
+    return Market:GetProductInfo(game.PlaceId)
+end)
+
+if ok and info then
+    placeName = info.Name or placeName
+    if info.Creator and info.Creator.Name then
+        creatorName = info.Creator.Name
+    end
 end
 
-local thumb = getThumb()
 window:CreateImageCard(home, {
-    Image       = thumb,
-    Title       = "RATON",
-    Subtitle    = "Happy Hub",
-    Description = "Highlight ESP, noclip, UWU scream and dropped-key magnet. Toggle any feature below.",
-    Height      = 240,
-    OnClick     = function() end,
+    Image       = "rbxthumb://type=GameIcon&id=" .. game.PlaceId .. "&w=420&h=420",
+    Title       = placeName,
+    Subtitle    = "by " .. creatorName,
+    Description = placeName .. " · replicatedman · Happy Hub · Open Source",
+    Height      = 150,
+    ImageWidth  = 130,
+    OnClick     = function()
+        API:Notify("Current game", 2)
+    end,
 })
 
 window:CreateParagraph(home,
     "Press F3 to toggle the UI. Open the Settings tab to save your current toggles as a preset.")
 
-window:CreateLabel(home, "Quick toggles")
-window:CreateButton(home, "Reapply highlight", function()
-    removeHighlight(); ensureHighlight()
-    API:Notify("Highlight refreshed", 2)
-end, "Forces the highlight to rebuild on the current rig")
+window:CreateButton(home, "Load Teleport Tool", function()
+    local success, err = pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/tptool.lua"))()
+    end)
+    if success then
+        API:Notify("Teleport Tool loaded", 3)
+    else
+        API:Notify("Failed to load Teleport Tool", 3)
+    end
+end, "Loads the Teleport Tool GUI")
 
 window:CreateButton(home, "Reset UWU sound", function()
     State.UWUId = "rbxassetid://139219844119994"
