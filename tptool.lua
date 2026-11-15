@@ -220,26 +220,19 @@ local Status = Create("TextLabel", {
 
 local OpenBar = Create("TextButton", {
 	Name = "OpenBar",
-	Size = UDim2.fromOffset(230, 32),
-	AnchorPoint = Vector2.new(0.5, 0),
-	Position = UDim2.new(0.5, 0, 0, 12),
-	BackgroundColor3 = Config.Background,
-	BorderSizePixel = 0,
+	Size = UDim2.fromOffset(280, 28),
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -18),
+	BackgroundTransparency = 1,
 	Text = "Press 'I' to Open",
-	TextColor3 = Config.Text,
-	Font = Enum.Font.GothamMedium,
+	TextColor3 = Config.Muted,
+	Font = Enum.Font.Gotham,
 	TextScaled = true,
 	Visible = false,
 	AutoButtonColor = false,
 	ZIndex = 10,
 	Active = true
 }, GUI)
-
-Create("UIStroke", {
-	Color = Config.Accent,
-	Thickness = 1,
-	Transparency = 0.25
-}, OpenBar)
 
 local function SetMouseUnlocked()
 	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
