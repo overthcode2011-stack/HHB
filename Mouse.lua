@@ -122,23 +122,52 @@ end
 LP.CharacterAdded:Connect(function() task.wait(0.2); applyNoclip() end)
 task.spawn(function() while task.wait(0.1) do applyNoclip() end end)
 
+local function firePrompt(prompt)
+    if not prompt or not prompt:IsA("ProximityPrompt") then return end
+    pcall(function()
+        if fireproximityprompt then
+            fireproximityprompt(prompt)
+        else
+            prompt:InputHoldBegin()
+            task.wait(prompt.HoldDuration > 0 and prompt.HoldDuration or 0.1)
+            prompt:InputHoldEnd()
+        end
+    end)
+end
+
 task.spawn(function()
-    while task.wait(0.3) do
+    while task.wait(0.25) do
         if not State.DroppedKeys then continue end
+
         local folder = workspace:FindFirstChild("DroppedKeys")
         if not folder then continue end
+
         local _, hrp = getChar()
         if not hrp then continue end
+
         for _, k in ipairs(folder:GetChildren()) do
             local base = k:IsA("BasePart") and k
                       or k.PrimaryPart
                       or k:FindFirstChildWhichIsA("BasePart", true)
+
             if base then
                 base.CanCollide = false
-                if (base.Position - hrp.Position).Magnitude <= State.KeysRange then
+
+                local dist = (base.Position - hrp.Position).Magnitude
+                if dist <= State.KeysRange then
+                    -- Teleport key near player
                     base.CFrame = CFrame.new(
-                        hrp.Position + Vector3.new(math.random(-3,3), 2, math.random(-3,3))
+                        hrp.Position + Vector3.new(math.random(-2, 2), 1.5, math.random(-2, 2))
                     )
+
+                    -- Auto prompt
+                    local prompt = base:FindFirstChildOfClass("ProximityPrompt")
+                        or k:FindFirstChildOfClass("ProximityPrompt")
+                        or k:FindFirstChildWhichIsA("ProximityPrompt", true)
+
+                    if prompt then
+                        firePrompt(prompt)
+                    end
                 end
             end
         end
@@ -288,13 +317,13 @@ window:CreateDropdown(tab, "Locations", {"Spawn", "Candados", "Sala de Máquinas
 end)
 
 window:CreateLabel(tab, "Keys")
-local keysToggle = window:CreateToggle(tab, "Dropped-key magnet", State.DroppedKeys, function(v)
+local keysToggle = window:CreateToggle(tab, "Dropped-key magnet + AutoPrompt", State.DroppedKeys, function(v)
     State.DroppedKeys = v
-end, "Keys inside DroppedKeys follow the player")
+end, "Pulls keys to you and auto fires their ProximityPrompt")
 
 local keysRangeSlider = window:CreateSlider(tab, "Magnet range", 10, 200, State.KeysRange, function(v)
     State.KeysRange = v
-end, "Max distance for pulling keys")
+end, "Max distance for pulling keys + auto prompt")
 
 window:SetConfigSnapshot(function()
     return {
