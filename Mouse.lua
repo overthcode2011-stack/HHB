@@ -285,7 +285,7 @@ window:CreateDropdown(tab, "Locations", {"Spawn", "Candados", "Sala de Máquinas
     if cf then
         TeleportTo(cf)
     end
-end, "Teleport to important places")
+end)
 
 window:CreateLabel(tab, "Keys")
 local keysToggle = window:CreateToggle(tab, "Dropped-key magnet", State.DroppedKeys, function(v)
