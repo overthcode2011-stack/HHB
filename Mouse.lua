@@ -28,9 +28,23 @@ local State = {
     Subtitles   = true,
 }
 
+local Locations = {
+    ["Spawn"] = CFrame.new(-0.873805463, 84.6807098, 420.842041, -0.999592185, -4.40816414e-08, 0.0285557229, -4.41032633e-08, 1, -1.27348007e-10, -0.0285557229, -1.38669665e-09, -0.999592185),
+    ["Candados"] = CFrame.new(-0.226893097, 63.1807289, 600.175476, -0.999982774, 3.84528391e-08, 0.00587046798, 3.85263554e-08, 1, 1.24099806e-08, -0.00587046798, 1.26359341e-08, -0.999982774),
+    ["Sala de Máquinas"] = CFrame.new(5.4896574, 35.1807289, 636.038025, 0.999612808, 5.34604272e-09, -0.0278247297, -3.5277663e-09, 1, 6.53965913e-08, 0.0278247297, -6.52731131e-08, 0.999612808),
+}
+
 local function getChar()
     local c = LP.Character
     return c, c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function TeleportTo(cf)
+    local _, hrp = getChar()
+    if hrp then
+        hrp.CFrame = cf
+        API:Notify("Teleported", 1.5)
+    end
 end
 
 local function getMickeyRig()
@@ -265,6 +279,14 @@ local noclipToggle = window:CreateToggle(tab, "Noclip", State.Noclip, function(v
         if cp and cp:IsA("BasePart") then cp.CanCollide = true end
     end
 end, "Walk through walls (includes Server Authority bypass)", "Noclip")
+
+window:CreateLabel(tab, "Teleport")
+window:CreateDropdown(tab, "Locations", {"Spawn", "Candados", "Sala de Máquinas"}, function(selected)
+    local cf = Locations[selected]
+    if cf then
+        TeleportTo(cf)
+    end
+end, "Teleport to important places")
 
 window:CreateLabel(tab, "Keys")
 local keysToggle = window:CreateToggle(tab, "Dropped-key magnet", State.DroppedKeys, function(v)
