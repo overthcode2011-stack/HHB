@@ -217,7 +217,6 @@ window:CreateImageCard(home, {
     Subtitle    = "by " .. creatorName,
     Description = placeName .. " · replicatedman · Happy Hub · Open Source",
     Height      = 150,
-    ImageWidth  = 130,
     OnClick     = function()
         API:Notify("Current game", 2)
     end,
@@ -281,7 +280,7 @@ local noclipToggle = window:CreateToggle(tab, "Noclip", State.Noclip, function(v
 end, "Walk through walls (includes Server Authority bypass)", "Noclip")
 
 window:CreateLabel(tab, "Teleport")
-window:CreateDropdown(tab, "Locations", {"Spawn", "Candados", "Sala de Máquinas"}, function(selected)
+window:CreateDropdown(tab, "Locations", {"Spawn", "Candados", "Sala de Máquinas"}, "Spawn", function(selected)
     local cf = Locations[selected]
     if cf then
         TeleportTo(cf)
@@ -312,30 +311,39 @@ end)
 
 window:SetConfigApply(function(data)
     if data.ESP ~= nil then
-        espToggle:SetState(data.ESP, true); State.ESP = data.ESP
+        espToggle:SetState(data.ESP, true)
+        State.ESP = data.ESP
         if data.ESP then ensureHighlight() else removeHighlight() end
     end
     if data.Subtitles ~= nil then
-        subToggle:SetState(data.Subtitles, true); State.Subtitles = data.Subtitles
+        subToggle:SetState(data.Subtitles, true)
+        State.Subtitles = data.Subtitles
         if not data.Subtitles then subtitle.Visible = false end
     end
     if data.UWU ~= nil then
-        uwuToggle:SetState(data.UWU, true); State.UWU = data.UWU
+        uwuToggle:SetState(data.UWU, true)
+        State.UWU = data.UWU
     end
     if data.UWUVolume ~= nil then
-        uwuVolSlider:SetValue(data.UWUVolume, true); State.UWUVolume = data.UWUVolume
+        uwuVolSlider:SetValue(data.UWUVolume, true)
+        State.UWUVolume = data.UWUVolume
     end
     if data.Noclip ~= nil then
-        noclipToggle:SetState(data.Noclip, true); State.Noclip = data.Noclip
+        noclipToggle:SetState(data.Noclip, true)
+        State.Noclip = data.Noclip
         if data.Noclip then applyNoclip() else setCharCollision(true) end
     end
     if data.DroppedKeys ~= nil then
-        keysToggle:SetState(data.DroppedKeys, true); State.DroppedKeys = data.DroppedKeys
+        keysToggle:SetState(data.DroppedKeys, true)
+        State.DroppedKeys = data.DroppedKeys
     end
     if data.KeysRange ~= nil then
-        keysRangeSlider:SetValue(data.KeysRange, true); State.KeysRange = data.KeysRange
+        keysRangeSlider:SetValue(data.KeysRange, true)
+        State.KeysRange = data.KeysRange
     end
-    if data.Theme then API:SetTheme(data.Theme) end
+    if data.Theme then
+        API:SetTheme(data.Theme)
+    end
 end)
 
 window:BuildConfigPage()
