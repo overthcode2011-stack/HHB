@@ -449,7 +449,7 @@ function F.setupKnifeDodgeHook()
 
     F.trackConn("knife_dodge", gunFired.OnClientEvent:Connect(function(handle, p1, p2, part)
         if typeof(p1) ~= "Vector3" or typeof(p2) ~= "Vector3" then return end
-        task.spawn(tryDodgeKnife, p1, p2)
+        task.spawn(F.tryDodgeKnife, p1, p2)
     end))
 end
 
@@ -1156,21 +1156,49 @@ function F.fireGunShootRemote(gun, originCF, targetCF)
     local shoot = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
     if not shoot then return false, "no Shoot" end
 
+    pcall(function() gun:Activate() end)
+
+    local targetPos = targetCF
+    if typeof(targetCF) == "CFrame" then
+        targetPos = targetCF.Position
+    end
+
     if shoot:IsA("RemoteEvent") then
-        local ok = pcall(function() shoot:FireServer(originCF, targetCF) end)
-        if ok then
-            pcall(function() shoot:FireServer(originCF, targetCF) end)
-            return true, "Shoot RE"
+        local attempts = {
+            function() shoot:FireServer(originCF, targetCF) end,
+            function() shoot:FireServer(originCF, targetPos) end,
+            function() shoot:FireServer(originCF.Position, targetPos) end,
+            function() shoot:FireServer(targetCF, originCF) end,
+        }
+        for i = 1, #attempts do
+            if pcall(attempts[i]) then
+                pcall(attempts[i])
+                return true, "Shoot RE"
+            end
         end
         return false, "FireServer failed"
     end
 
     if shoot:IsA("BindableEvent") then
-        local ok = pcall(function() shoot:Fire(originCF, targetCF) end)
-        if ok then return true, "Shoot BE" end
+        if pcall(function() shoot:Fire(originCF, targetCF) end) then
+            return true, "Shoot BE"
+        end
+        if pcall(function() shoot:Fire(originCF, targetPos) end) then
+            return true, "Shoot BE pos"
+        end
         if type(firesignal) == "function" then
             pcall(function() firesignal(shoot.Event, originCF, targetCF) end)
             return true, "Shoot firesignal"
+        end
+        if type(getconnections) == "function" then
+            pcall(function()
+                for _, conn in ipairs(getconnections(shoot.Event)) do
+                    if type(conn.Function) == "function" then
+                        pcall(conn.Function, originCF, targetCF)
+                    end
+                end
+            end)
+            return true, "Shoot getconnections"
         end
         return false, "Bindable Fire failed"
     end
@@ -4042,8 +4070,8 @@ LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.6)
     if isMobile then F.scanForGunShoot() end
     if MovementSettings.Fly then F.attachFlyBodyMovers() end
-    if AvatarSettings.Korblox then pcall(applyKorblox) end
-    if AvatarSettings.AnimPack then pcall(applyAnimPack) end
+    if AvatarSettings.Korblox then pcall(F.applyKorblox) end
+    if AvatarSettings.AnimPack then pcall(F.applyAnimPack) end
     if FarmSettings.AutoFarm and S.roundActive then
         task.wait(0.5)
         if not S.coinCollecting then F.startCoinCollector() end
@@ -4417,7 +4445,7 @@ function F.setupMobileButtons()
 
         pcall(function()
             window:AddMobileButton({
-                OnClick = function() task.spawn(mobileForceShoot) end,
+                OnClick = function() task.spawn(F.mobileForceShoot) end,
                 Icon = "rbxassetid://12804017021",
                 Tooltip = "Shoot Murderer"
             })
@@ -4473,7 +4501,7 @@ F.trackConn("hotkeys", UserInputService.InputBegan:Connect(function(input, gp)
     elseif input.KeyCode == Enum.KeyCode.B then
         if UI.autoFireRef then UI.autoFireRef.SetState(not UI.autoFireRef.GetState()) end
     elseif input.KeyCode == Enum.KeyCode.V then
-        task.spawn(mobileForceShoot)
+        task.spawn(F.mobileForceShoot)
     end
 end))
 
@@ -4578,8 +4606,8 @@ function F.applyConfig(data)
         hum.JumpPower = MovementSettings.JumpPower
         hum.UseJumpPower = true
     end
-    if AvatarSettings.Korblox then pcall(applyKorblox) else pcall(removeKorblox) end
-    if AvatarSettings.AnimPack then pcall(applyAnimPack) end
+    if AvatarSettings.Korblox then pcall(F.applyKorblox) else pcall(F.removeKorblox) end
+    if AvatarSettings.AnimPack then pcall(F.applyAnimPack) end
     if FarmSettings.AutoFarm then
         F.ensureFarmHelpers()
         F.ensureFarmNoclip()
@@ -4594,8 +4622,8 @@ function F.applyConfig(data)
     if window.UpdateThemeButtons then window:UpdateThemeButtons() end
 end
 
-window:SetConfigSnapshot(snapshotSettings)
-window:SetConfigApply(applyConfig)
+window:SetConfigSnapshot(F.snapshotSettings)
+window:SetConfigApply(F.applyConfig)
 window:BuildConfigPage()
 
 pcall(function() F.setTheme("Green") end)
