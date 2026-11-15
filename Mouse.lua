@@ -1,6 +1,6 @@
 local API = loadstring(game:HttpGet("https://raw.githubusercontent.com/overthcode2011-stack/HHB/refs/heads/main/API"))()
 
-API.Config.SupportedGames = {}
+API.Config.SupportedGames = {89440018933049} --just in game
 API.Config.KeySystem.Enabled = false
 
 local window = API:CreateWindow("Happy Hub", "By replicatedman")
