@@ -135,7 +135,7 @@ Create("UIStroke", {
 }, Header)
 
 local CloseButton = Create("ImageButton", {
-	Name = "Minimize",
+	Name = "Close",
 	Size = UDim2.fromOffset(23, 23),
 	Position = UDim2.new(1, -31, 0, 8),
 	BackgroundTransparency = 1,
@@ -249,6 +249,34 @@ end
 local function RestoreMouse()
 	UserInputService.MouseBehavior = OriginalMouseBehavior
 	UserInputService.MouseIconEnabled = OriginalMouseIcon
+end
+
+local function Cleanup()
+	if Destroyed then
+		return
+	end
+
+	Destroyed = true
+	Dragging = false
+
+	RestoreMouse()
+	ClearCardConnections()
+
+	for _, connection in ipairs(Connections) do
+		if connection.Connected then
+			connection:Disconnect()
+		end
+	end
+
+	table.clear(Connections)
+
+	pcall(function()
+		RunService:UnbindFromRenderStep("TeleportTool_MouseControl")
+	end)
+
+	if GUI and GUI.Parent then
+		GUI:Destroy()
+	end
 end
 
 local function SetMinimized(state)
@@ -456,7 +484,7 @@ Connect(Players.PlayerAdded, BuildPlayers)
 Connect(Players.PlayerRemoving, BuildPlayers)
 
 Connect(CloseButton.MouseButton1Click, function()
-	SetMinimized(true)
+	Cleanup()
 end)
 
 Connect(OpenBar.MouseButton1Click, function()
@@ -536,30 +564,6 @@ Connect(LocalPlayer.Idled, function()
 		VirtualUser:ClickButton2(Vector2.new(0, 0))
 	end)
 end)
-
-local function Cleanup()
-	if Destroyed then
-		return
-	end
-
-	Destroyed = true
-	Dragging = false
-
-	RestoreMouse()
-	ClearCardConnections()
-
-	for _, connection in ipairs(Connections) do
-		if connection.Connected then
-			connection:Disconnect()
-		end
-	end
-
-	table.clear(Connections)
-
-	pcall(function()
-		RunService:UnbindFromRenderStep("TeleportTool_MouseControl")
-	end)
-end
 
 GUI.Destroying:Connect(Cleanup)
 
