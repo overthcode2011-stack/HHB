@@ -1144,6 +1144,42 @@ function F.getWallbangOrigin(targetChar, targetPart)
     return CFrame.new(pos - dir * 2.2 + Vector3.new(0, 0.35, 0))
 end
 
+function F.getCloseKillOrigin(targetChar, targetPart)
+    local aimPart = targetPart
+        or (targetChar and (targetChar:FindFirstChild("Head")
+            or targetChar:FindFirstChild("HumanoidRootPart")))
+    if not aimPart then return nil end
+    local pos = aimPart.Position
+    local myHRP = F.getHRP()
+    local from = myHRP and myHRP.Position or (workspace.CurrentCamera and workspace.CurrentCamera.CFrame.Position) or pos
+    local dir = pos - from
+    if dir.Magnitude < 0.1 then
+        dir = Vector3.new(0, 0, -1)
+    else
+        dir = dir.Unit
+    end
+    local originPos = pos - dir * 2.4 + Vector3.new(0, 0.25, 0)
+    if F.classifyPathHit(originPos, pos, targetChar) == "innocent" then
+        return nil
+    end
+    return CFrame.new(originPos)
+end
+
+function F.autoKillShot(targetPlr)
+    if not targetPlr or not targetPlr.Character then return false, "no target" end
+    if F.shouldWaitForCoins() then return false, "farming" end
+    local targetPart = F.getMM2TargetPart(targetPlr.Character)
+    if not targetPart then return false, "no part" end
+    local originCF = F.getCloseKillOrigin(targetPlr.Character, targetPart)
+    if not originCF then return false, "innocent in path" end
+    local gun, how = F.prepareGun()
+    if not gun then return false, how end
+    local targetCF = CFrame.new(targetPart.Position)
+    local ok, info = F.fireGunShootRemote(gun, originCF, targetCF)
+    if ok then return true, info end
+    return F.fireGunChannels(gun, originCF, targetCF)
+end
+
 function F.pathBlockedTo(targetChar, targetPart)
     local origin = F.getGunRaycastOrigin()
     if not origin or not targetPart then return false end
@@ -1234,6 +1270,7 @@ end
 
 function F.shootAt(targetPlr, targetPart, wallbang)
     if not targetPlr or not targetPlr.Character then return false, "no target" end
+    if F.shouldWaitForCoins() then return false, "farming" end
     local gun, how = F.prepareGun()
     if not gun then return false, how end
 
@@ -1268,6 +1305,10 @@ function F.yarhmInstakill(targetPlr)
 end
 
 function F.mobileForceShoot()
+    if F.shouldWaitForCoins() then
+        F.notify("Farming coins first", 2)
+        return false
+    end
     local murderer = F.getMurdererCached()
     if not F.isTargetSafe(murderer) then
         F.notify("No murderer", 2)
@@ -1539,24 +1580,18 @@ if UNC.hookmetamethod and UNC.getnamecallmethod then
             local method = S.getNamecall()
             if method == "FireServer" and typeof(self) == "Instance" and self:IsA("RemoteEvent") then
                 if MiscSettings.SilentAim and F.isGunShootRemote(self) then
-                    local args = table.pack(...)
+                    if F.shouldWaitForCoins() then
+                        return oldNamecall(self, ...)
+                    end
                     local murderer = F.getMurdererCached()
                     if F.isTargetSafe(murderer) then
                         local targetPart = F.getMM2TargetPart(murderer.Character)
                         if targetPart then
-                            local cam = workspace.CurrentCamera
-                            local myHRP = F.getHRP()
-                            local origin = (myHRP and myHRP.Position) or cam.CFrame.Position
-                            if F.isVisibleForShot(origin, targetPart.Position, murderer.Character, murderer) then
-                                local newTarget = F.predictAim(targetPart)
-                                if newTarget then
-                                    for i = 2, math.min(6, args.n) do
-                                        if typeof(args[i]) == "CFrame" then
-                                            args[i] = newTarget
-                                            break
-                                        end
-                                    end
-                                    return oldNamecall(self, table.unpack(args, 1, args.n))
+                            local originCF = F.getGunRaycastOrigin()
+                            local targetCF = F.predictAim(targetPart) or CFrame.new(targetPart.Position)
+                            if originCF and targetCF then
+                                if F.isVisibleForShot(originCF.Position, targetPart.Position, murderer.Character, murderer) then
+                                    return oldNamecall(self, originCF, targetCF)
                                 end
                             end
                         end
@@ -1569,24 +1604,24 @@ if UNC.hookmetamethod and UNC.getnamecallmethod then
     end)
 end
 
-if not isMobile then
-    F.trackConn("silent_click", UserInputService.InputBegan:Connect(function(input, gp)
-        if gp then return end
-        if not MiscSettings.SilentAim then return end
-        if S.silentAimHookInstalled then return end
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-        local murderer = F.getMurdererCached()
-        if not F.isTargetSafe(murderer) then return end
-        local targetPart = F.getMM2TargetPart(murderer.Character)
-        if not targetPart then return end
-        local myHRP = F.getHRP()
-        if not myHRP then return end
-        if not F.isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
-        F.trackThread(task.spawn(function()
-            F.yarhmFireAt(murderer, targetPart)
-        end))
+F.trackConn("silent_click", UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if not MiscSettings.SilentAim then return end
+    if F.shouldWaitForCoins() then return end
+    local isClick = input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch
+    if not isClick then return end
+    if S.silentAimHookInstalled and input.UserInputType == Enum.UserInputType.MouseButton1 then
+        return
+    end
+    local murderer = F.getMurdererCached()
+    if not F.isTargetSafe(murderer) then return end
+    local targetPart = F.getMM2TargetPart(murderer.Character)
+    if not targetPart then return end
+    F.trackThread(task.spawn(function()
+        F.yarhmFireAt(murderer, targetPart)
     end))
-end
+end))
 
 function F.equipKnife()
     local char = LocalPlayer.Character
@@ -3719,18 +3754,24 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
     AimbotSettings.AutoFire = v
     if v then
         local lastShot = 0
-        F.trackConn("autofire", RunService.RenderStepped:Connect(function()
+        F.trackConn("autofire", RunService.Heartbeat:Connect(function()
             if not AimbotSettings.AutoFire then return end
             if F.shouldWaitForCoins() then return end
+            if not F.findGunEquipped() and not F.findGunInBackpack() then return end
             local murderer = F.getMurdererCached()
             if not F.isTargetSafe(murderer) then return end
             local targetPart = F.getMM2TargetPart(murderer.Character)
             if not targetPart then return end
-            if not F.findGunEquipped() and not F.findGunInBackpack() then return end
+            local myHRP = F.getHRP()
+            if myHRP and AimbotSettings.WallCheck then
+                if not F.isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then
+                    return
+                end
+            end
             local now = tick()
-            if now - lastShot < 0.12 then return end
+            if now - lastShot < 0.1 then return end
             lastShot = now
-            F.shootAt(murderer, targetPart, true)
+            F.shootAt(murderer, targetPart, not AimbotSettings.WallCheck)
         end))
     else
         F.dropConn("autofire")
@@ -3743,19 +3784,17 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill", false, function(v)
     AimbotSettings.AutoKillMurderer = v
     if v then
         local lastShot = 0
-        F.trackConn("autokill", RunService.RenderStepped:Connect(function()
+        F.trackConn("autokill", RunService.Heartbeat:Connect(function()
             if not AimbotSettings.AutoKillMurderer then return end
             if not F.isLocalSheriffOrHero() then return end
             if F.shouldWaitForCoins() then return end
-            if tick() - S.roundStartedAt < CFG.AUTO_KILL_COOLDOWN then return end
+            if S.roundStartedAt > 0 and tick() - S.roundStartedAt < CFG.AUTO_KILL_COOLDOWN then return end
             local murderer = F.getMurdererCached()
             if not F.isTargetSafe(murderer) then return end
-            local targetPart = F.getMM2TargetPart(murderer.Character)
-            if not targetPart then return end
             local now = tick()
-            if now - lastShot < 0.12 then return end
+            if now - lastShot < 0.1 then return end
             lastShot = now
-            F.shootAt(murderer, targetPart, true)
+            F.autoKillShot(murderer)
         end))
     else
         F.dropConn("autokill")
@@ -3785,6 +3824,7 @@ function F.findKnifeRemotes()
 end
 
 function F.serverKillAllTick()
+    if F.shouldWaitForCoins() then return false end
     local knife, stabEv, touchEv, handle = F.findKnifeRemotes()
     if not knife then return false end
 
@@ -3850,6 +3890,10 @@ function F.serverKillAllTick()
 end
 
 window:CreateButton(aimbotTab, "Kill Everyone", function()
+    if F.shouldWaitForCoins() then
+        F.notify("Farm coins first (" .. tostring(S.totalCoins) .. "/" .. tostring(CFG.FARM_GOAL) .. ")", 3)
+        return
+    end
     local hasKnife = F.getLocalKnife() ~= nil
     if not hasKnife then
         F.equipKnife()
