@@ -3259,7 +3259,7 @@ window:CreateButton(playersTab, "Teleport", function()
     end
 end)
 
-window:CreateLabel(playersTab, "Player")
+window:CreateLabel(playersTab, "Fling / Spectate")
 _G.__HH_FlingTarget = "Murderer"
 
 function F.getFlingList()
@@ -3270,7 +3270,7 @@ function F.getFlingList()
             local n = plr.Name
             if type(n) == "string" and n ~= "" and not seen[n] then
                 seen[n] = true
-                table.insert(names, n)
+                names[#names + 1] = n
             end
         end
     end
@@ -3279,7 +3279,7 @@ end
 
 flingDropdownRef = window:CreateDropdown(
     playersTab,
-    "Target",
+    "Fling Target",
     { "Murderer", "Sheriff", "Hero" },
     "Murderer",
     function(v)
@@ -3293,6 +3293,18 @@ lastFlingSignature = "Murderer|Sheriff|Hero"
 
 function F.refreshFlingDropdown(force)
     local names = F.getFlingList()
+    if names[1] ~= "Murderer" then
+        local rebuilt = { "Murderer", "Sheriff", "Hero" }
+        local seen = { Murderer = true, Sheriff = true, Hero = true }
+        for i = 1, #names do
+            local n = names[i]
+            if n and not seen[n] then
+                seen[n] = true
+                rebuilt[#rebuilt + 1] = n
+            end
+        end
+        names = rebuilt
+    end
     local signature = table.concat(names, "|")
     if not force and signature == lastFlingSignature then return end
     lastFlingSignature = signature
@@ -3303,6 +3315,8 @@ function F.refreshFlingDropdown(force)
         pcall(function() flingDropdownRef:SetOptions(names) end)
     elseif type(flingDropdownRef.Refresh) == "function" then
         pcall(function() flingDropdownRef:Refresh(names) end)
+    elseif type(flingDropdownRef.SetList) == "function" then
+        pcall(function() flingDropdownRef:SetList(names) end)
     end
 
     local sel = _G.__HH_FlingTarget
@@ -3318,18 +3332,20 @@ function F.refreshFlingDropdown(force)
     end
     if type(flingDropdownRef.SetValue) == "function" then
         pcall(function() flingDropdownRef:SetValue(sel) end)
+    elseif type(flingDropdownRef.Set) == "function" then
+        pcall(function() flingDropdownRef:Set(sel) end)
     end
 end
 
 function F.resolveSelectedPlayer()
     local sel = _G.__HH_FlingTarget
-    if (type(sel) ~= "string" or sel == "") and flingDropdownRef and type(flingDropdownRef.GetValue) == "function" then
+    if flingDropdownRef and type(flingDropdownRef.GetValue) == "function" then
         local ok, v = pcall(function() return flingDropdownRef:GetValue() end)
         if ok and type(v) == "string" and v ~= "" then sel = v end
     end
     if type(sel) ~= "string" or sel == "" then sel = "Murderer" end
     _G.__HH_FlingTarget = sel
-    if sel == "Murderer" then return F.getMurderer() end
+    if sel == "Murderer" or sel == "Murder" then return F.getMurderer() end
     if sel == "Sheriff" then return F.getSheriff() end
     if sel == "Hero" then return F.getHero() end
     return F.getFlingTargetByName(sel)
