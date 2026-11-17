@@ -1170,14 +1170,17 @@ function F.autoKillShot(targetPlr)
     if F.shouldWaitForCoins() then return false, "farming" end
     local targetPart = F.getMM2TargetPart(targetPlr.Character)
     if not targetPart then return false, "no part" end
-    local originCF = F.getCloseKillOrigin(targetPlr.Character, targetPart)
-    if not originCF then return false, "innocent in path" end
+    local predicted = F.predictAim(targetPart) or CFrame.new(targetPart.Position)
+    local aimPos = predicted.Position
+    local originCF = CFrame.new(aimPos + Vector3.new(0, 3.6, 0))
+    if F.classifyPathHit(originCF.Position, aimPos, targetPlr.Character) == "innocent" then
+        return false, "innocent in path"
+    end
     local gun, how = F.prepareGun()
     if not gun then return false, how end
-    local targetCF = CFrame.new(targetPart.Position)
-    local ok, info = F.fireGunShootRemote(gun, originCF, targetCF)
+    local ok, info = F.fireGunShootRemote(gun, originCF, predicted)
     if ok then return true, info end
-    return F.fireGunChannels(gun, originCF, targetCF)
+    return F.fireGunChannels(gun, originCF, predicted)
 end
 
 function F.pathBlockedTo(targetChar, targetPart)
@@ -3262,80 +3265,18 @@ end)
 window:CreateLabel(playersTab, "Fling / Spectate")
 _G.__HH_FlingTarget = "Murderer"
 
-function F.getFlingList()
-    local names = { "Murderer", "Sheriff", "Hero" }
-    local seen = { Murderer = true, Sheriff = true, Hero = true }
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            local n = plr.Name
-            if type(n) == "string" and n ~= "" and not seen[n] then
-                seen[n] = true
-                names[#names + 1] = n
-            end
-        end
-    end
-    return names
-end
-
 flingDropdownRef = window:CreateDropdown(
     playersTab,
     "Fling Target",
-    { "Murderer", "Sheriff", "Hero" },
+    { "Murderer", "Sheriff", "All Players" },
     "Murderer",
     function(v)
         if type(v) == "string" and v ~= "" then
             _G.__HH_FlingTarget = v
         end
-    end
+    end,
+    "Murderer, Sheriff, or every other player"
 )
-
-lastFlingSignature = "Murderer|Sheriff|Hero"
-
-function F.refreshFlingDropdown(force)
-    local names = F.getFlingList()
-    if names[1] ~= "Murderer" then
-        local rebuilt = { "Murderer", "Sheriff", "Hero" }
-        local seen = { Murderer = true, Sheriff = true, Hero = true }
-        for i = 1, #names do
-            local n = names[i]
-            if n and not seen[n] then
-                seen[n] = true
-                rebuilt[#rebuilt + 1] = n
-            end
-        end
-        names = rebuilt
-    end
-    local signature = table.concat(names, "|")
-    if not force and signature == lastFlingSignature then return end
-    lastFlingSignature = signature
-
-    if not flingDropdownRef then return end
-
-    if type(flingDropdownRef.SetOptions) == "function" then
-        pcall(function() flingDropdownRef:SetOptions(names) end)
-    elseif type(flingDropdownRef.Refresh) == "function" then
-        pcall(function() flingDropdownRef:Refresh(names) end)
-    elseif type(flingDropdownRef.SetList) == "function" then
-        pcall(function() flingDropdownRef:SetList(names) end)
-    end
-
-    local sel = _G.__HH_FlingTarget
-    local valid = false
-    if type(sel) == "string" then
-        for _, n in ipairs(names) do
-            if n == sel then valid = true break end
-        end
-    end
-    if not valid then
-        sel = "Murderer"
-        _G.__HH_FlingTarget = sel
-    end
-    if type(flingDropdownRef.SetValue) == "function" then
-        pcall(function() flingDropdownRef:SetValue(sel) end)
-    elseif type(flingDropdownRef.Set) == "function" then
-        pcall(function() flingDropdownRef:Set(sel) end)
-    end
-end
 
 function F.resolveSelectedPlayer()
     local sel = _G.__HH_FlingTarget
@@ -3347,43 +3288,45 @@ function F.resolveSelectedPlayer()
     _G.__HH_FlingTarget = sel
     if sel == "Murderer" or sel == "Murder" then return F.getMurderer() end
     if sel == "Sheriff" then return F.getSheriff() end
-    if sel == "Hero" then return F.getHero() end
+    if sel == "All Players" then return nil end
     return F.getFlingTargetByName(sel)
 end
 
-task.defer(function()
-    task.wait(0.5)
-    F.refreshFlingDropdown(true)
-end)
-
-F.trackThread(task.spawn(function()
-    while true do
-        task.wait(1)
-        F.refreshFlingDropdown(false)
+function F.resolveFlingTargets()
+    local sel = _G.__HH_FlingTarget
+    if flingDropdownRef and type(flingDropdownRef.GetValue) == "function" then
+        local ok, v = pcall(function() return flingDropdownRef:GetValue() end)
+        if ok and type(v) == "string" and v ~= "" then sel = v end
     end
-end))
-
-Players.PlayerAdded:Connect(function()
-    task.wait(0.2)
-    F.refreshFlingDropdown(true)
-end)
-Players.PlayerRemoving:Connect(function()
-    task.wait(0.2)
-    F.refreshFlingDropdown(true)
-end)
+    if type(sel) ~= "string" or sel == "" then sel = "Murderer" end
+    _G.__HH_FlingTarget = sel
+    if sel == "All Players" then
+        local list = {}
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer then list[#list + 1] = plr end
+        end
+        return list
+    end
+    local one = F.resolveSelectedPlayer()
+    if one then return { one } end
+    return {}
+end
 
 window:CreateButton(playersTab, "Fling", function()
-    local plr = F.resolveSelectedPlayer()
-    if not plr then F.notify("Target not found") return end
-    F.startFlingTarget(plr)
-end)
+    local targets = F.resolveFlingTargets()
+    if #targets == 0 then F.notify("Target not found") return end
+    for _, plr in ipairs(targets) do
+        F.startFlingTarget(plr)
+        if #targets > 1 then task.wait(0.35) end
+    end
+end, "Fling the selected role or all players")
 
 window:CreateButton(playersTab, "Spectate", function()
     local plr = F.resolveSelectedPlayer()
     if not plr then F.notify("Target not found") return end
     F.spectatePlayer(plr)
     F.notify("Spectating " .. plr.DisplayName, 2)
-end)
+end, "Spectate Murderer or Sheriff")
 
 window:CreateButton(playersTab, "Stop", function()
     F.stopSpectating()
@@ -3621,19 +3564,32 @@ end)
 F.registerControl(MovementSettings, "AntiFling", UI.antiFlingRef)
 
 window:CreateLabel(movementTab, "Emotes")
-for _, emote in ipairs(EMOTES) do
-    window:CreateButton(movementTab, emote.name, function()
-        F.playEmote(emote.name, emote.id)
-    end)
-end
-
-window:CreateButton(movementTab, "Stop Emote", function()
-    if S.currentEmoteTrack then
-        pcall(function() S.currentEmoteTrack:Stop(0.1) end)
-        S.currentEmoteTrack = nil
-        F.notify("Emote stopped", 1.5)
+do
+    local emoteNames = {}
+    local emoteByName = {}
+    for _, emote in ipairs(EMOTES) do
+        emoteNames[#emoteNames + 1] = emote.name
+        emoteByName[emote.name] = emote.id
     end
-end)
+    MiscSettings.SelectedEmote = MiscSettings.SelectedEmote or emoteNames[1]
+    window:CreateDropdown(movementTab, "Emote", emoteNames, MiscSettings.SelectedEmote, function(v)
+        MiscSettings.SelectedEmote = v
+    end, "Pick an emote")
+    UI.emoteToggleRef = window:CreateToggle(movementTab, "Play Emote", false, function(v)
+        if v then
+            local name = MiscSettings.SelectedEmote
+            local id = emoteByName[name]
+            if name and id then
+                F.playEmote(name, id)
+            end
+        else
+            if S.currentEmoteTrack then
+                pcall(function() S.currentEmoteTrack:Stop(0.1) end)
+                S.currentEmoteTrack = nil
+            end
+        end
+    end, "Play or stop the selected emote")
+end
 
 window:CreateLabel(movementTab, "Reset")
 window:CreateButton(movementTab, "Autokill", function()
@@ -3765,7 +3721,6 @@ UI.triggerRangeRef = window:CreateSlider(aimbotTab, "Trigger Range", 20, 400, 15
 F.registerControl(AimbotSettings, "TriggerRange", UI.triggerRangeRef)
 
 window:CreateLabel(aimbotTab, "AutoShoot")
-window:CreateParagraph(aimbotTab, "PC keybinds · T lock · O ESP · B auto fire · V shoot murderer")
 UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
     AimbotSettings.AutoFire = v
     if v then
@@ -3779,20 +3734,32 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
             local targetPart = F.getMM2TargetPart(murderer.Character)
             if not targetPart then return end
             local myHRP = F.getHRP()
-            if myHRP and AimbotSettings.WallCheck then
-                if not F.isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then
-                    return
-                end
+            local originPos = myHRP and myHRP.Position
+            if not originPos then return end
+            if F.classifyPathHit(originPos, targetPart.Position, murderer.Character) == "innocent" then
+                return
+            end
+            if AimbotSettings.WallCheck and not F.isVisibleForShot(originPos, targetPart.Position, murderer.Character, murderer) then
+                return
             end
             local now = tick()
             if now - lastShot < 0.1 then return end
             lastShot = now
-            F.shootAt(murderer, targetPart, not AimbotSettings.WallCheck)
+            if MiscSettings.SilentAim then
+                local pred = F.predictAim(targetPart) or CFrame.new(targetPart.Position)
+                local gun = select(1, F.prepareGun())
+                if gun then
+                    local originCF = F.getGunRaycastOrigin() or CFrame.new(originPos)
+                    F.fireGunShootRemote(gun, originCF, pred)
+                end
+            else
+                F.shootAt(murderer, targetPart, not AimbotSettings.WallCheck)
+            end
         end))
     else
         F.dropConn("autofire")
     end
-end)
+end, "Auto shoots the Murderer · skips innocents · uses Silent Aim when enabled")
 F.registerControl(AimbotSettings, "AutoFire", UI.autoFireRef)
 
 window:CreateLabel(aimbotTab, "Sheriff / Hero")
@@ -3815,7 +3782,7 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill", false, function(v)
     else
         F.dropConn("autokill")
     end
-end)
+end, "Beam from above the Murderer with movement prediction · skips innocents")
 F.registerControl(AimbotSettings, "AutoKillMurderer", UI.autoKillRef)
 
 UI.wallCheckRef = window:CreateToggle(aimbotTab, "Wall Check", true, function(v)
@@ -4364,20 +4331,6 @@ F.registerControl(MiscSettings, "KnifeDodge", UI.knifeDodgeRef)
 
 F.setupKnifeDodgeHook()
 
-window:CreateLabel(miscTab, "Debug")
-window:CreateButton(miscTab, "Check Gun Status", function()
-    local char = LocalPlayer.Character
-    if not char then F.notify("No character", 3) return end
-    local rigGun = F.findGunEquipped()
-    local bagGun = F.findGunInBackpack()
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    local equipped = hum and hum:FindFirstChildWhichIsA("Tool")
-    local msg = {}
-    table.insert(msg, "Rig: " .. (rigGun and rigGun.Name or "no"))
-    table.insert(msg, "Bag: " .. (bagGun and bagGun.Name or "no"))
-    table.insert(msg, "Equipped: " .. (equipped and equipped.Name or "no"))
-    F.notify(table.concat(msg, " | "), 6)
-end)
 
 function F.toggleESPAll()
     local anyOn = VisualSettings.MM2ESP or VisualSettings.NameTags or VisualSettings.GunESP or VisualSettings.Beam
