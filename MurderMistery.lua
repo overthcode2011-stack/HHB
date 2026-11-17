@@ -1168,19 +1168,60 @@ end
 function F.autoKillShot(targetPlr)
     if not targetPlr or not targetPlr.Character then return false, "no target" end
     if F.shouldWaitForCoins() then return false, "farming" end
-    local targetPart = F.getMM2TargetPart(targetPlr.Character)
+
+    local char = targetPlr.Character
+    local targetPart = F.getMM2TargetPart(char)
+        or char:FindFirstChild("Head")
+        or char:FindFirstChild("HumanoidRootPart")
     if not targetPart then return false, "no part" end
+
     local predicted = F.predictAim(targetPart) or CFrame.new(targetPart.Position)
     local aimPos = predicted.Position
-    local originCF = CFrame.new(aimPos + Vector3.new(0, 3.6, 0))
-    if F.classifyPathHit(originCF.Position, aimPos, targetPlr.Character) == "innocent" then
-        return false, "innocent in path"
+
+    local above = aimPos + Vector3.new(0, 4.2, 0)
+    if F.classifyPathHit(above, aimPos, char) == "innocent" then
+        above = aimPos + Vector3.new(0, 6.5, 0)
+        if F.classifyPathHit(above, aimPos, char) == "innocent" then
+            return false, "innocent in path"
+        end
     end
+
+    local originCF = CFrame.new(above, aimPos)
+    local targetCF = CFrame.new(aimPos)
+
     local gun, how = F.prepareGun()
     if not gun then return false, how end
-    local ok, info = F.fireGunShootRemote(gun, originCF, predicted)
+    pcall(function() gun:Activate() end)
+
+    local shoot = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
+    if shoot and shoot:IsA("RemoteEvent") then
+        local attempts = {
+            function() shoot:FireServer(originCF, targetCF) end,
+            function() shoot:FireServer(originCF, aimPos) end,
+            function() shoot:FireServer(above, aimPos) end,
+            function() shoot:FireServer(originCF, predicted) end,
+        }
+        for i = 1, #attempts do
+            if pcall(attempts[i]) then
+                pcall(attempts[i])
+                return true, "auto-kill RE"
+            end
+        end
+    end
+
+    if shoot and shoot:IsA("BindableEvent") then
+        if pcall(function() shoot:Fire(originCF, targetCF) end) then
+            return true, "auto-kill BE"
+        end
+        if type(firesignal) == "function" then
+            pcall(function() firesignal(shoot.Event, originCF, targetCF) end)
+            return true, "auto-kill firesignal"
+        end
+    end
+
+    local ok, info = F.fireGunShootRemote(gun, originCF, targetCF)
     if ok then return true, info end
-    return F.fireGunChannels(gun, originCF, predicted)
+    return F.fireGunChannels(gun, originCF, targetCF)
 end
 
 function F.pathBlockedTo(targetChar, targetPart)
