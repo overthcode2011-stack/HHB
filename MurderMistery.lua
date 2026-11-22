@@ -1,28 +1,27 @@
-local CoreGui = game:GetService("CoreGui")
-local HH_FOLDER_NAME = "\240\159\167\145HH_" .. tostring(math.random(100000, 999999))
-
 do
-    for _, child in ipairs(CoreGui:GetChildren()) do
-        if child:IsA("Folder") and (child.Name:find("HH_") or child.Name:match("^\240")) then
-            pcall(function() child:Destroy() end)
-        end
-        if child.Name == "HH_FOV" or child.Name == "HH_ReopenUI" or (child.Name:find("HH_") and child:IsA("ScreenGui")) then
-            pcall(function() child:Destroy() end)
-        end
+    local oldState = getgenv and getgenv().__HH_STATE
+    if oldState then
+        pcall(function()
+            for _, c in ipairs(oldState.connections or {}) do
+                pcall(function() c:Disconnect() end)
+            end
+            for _, t in ipairs(oldState.threads or {}) do
+                pcall(task.cancel, t)
+            end
+            for _, g in ipairs(oldState.screenGuis or {}) do
+                pcall(function() g:Destroy() end)
+            end
+        end)
+        if getgenv then getgenv().__HH_STATE = nil end
+        task.wait(0.3)
     end
-    task.wait(0.12)
 end
 
-local HH_FOLDER = Instance.new("Folder")
-HH_FOLDER.Name = HH_FOLDER_NAME
-HH_FOLDER.Parent = CoreGui
-
-local __HH_STATE = {
+getgenv().__HH_STATE = {
     connections = {},
     threads = {},
     screenGuis = {},
     startedAt = tick(),
-    GunShootBindable = nil,
 }
 
 local ConnectionRegistry = {}
@@ -37,7 +36,7 @@ function F.trackConn(key, conn)
         end
         ConnectionRegistry[key] = conn
     end
-    local list = __HH_STATE.connections
+    local list = getgenv().__HH_STATE.connections
     local n = #list
     if n > 80 then
         local alive = {}
@@ -50,7 +49,7 @@ function F.trackConn(key, conn)
                 end
             end
         end
-        __HH_STATE.connections = alive
+        getgenv().__HH_STATE.connections = alive
         list = alive
     end
     table.insert(list, conn)
@@ -66,7 +65,7 @@ end
 
 function F.trackThread(t)
     if t then
-        local list = __HH_STATE.threads
+        local list = getgenv().__HH_STATE.threads
         if #list > 40 then
             local alive = {}
             for i = 1, #list do
@@ -78,7 +77,7 @@ function F.trackThread(t)
                     end
                 end
             end
-            __HH_STATE.threads = alive
+            getgenv().__HH_STATE.threads = alive
             list = alive
         end
         table.insert(list, t)
@@ -88,11 +87,10 @@ end
 
 function F.trackGui(g)
     if g then
-        table.insert(__HH_STATE.screenGuis, g)
+        table.insert(getgenv().__HH_STATE.screenGuis, g)
     end
     return g
 end
-
 
 
 local success, API = pcall(function()
@@ -213,6 +211,7 @@ local CUSTOM_ANIMS = {
     jump  = { id = "rbxassetid://10921160088",     priority = Enum.AnimationPriority.Action4 },
 }
 
+local MINI_BOX_ANIM_ID = "rbxassetid://89158965064756"
 
 local AimbotSettings = {
     MM2LockOn = false, MM2Smooth = 8, MM2Range = 500, MM2Target = "Head",
@@ -249,21 +248,22 @@ local VisCache = {}
 CFG.VIS_TTL = 0.05
 CFG.MURDERER_TTL = 0.4
 CFG.FARM_GOAL = 50
-CFG.FARM_TOUCH_RADIUS = 26
-CFG.FARM_ARRIVE_DIST = 4
+CFG.FARM_TOUCH_RADIUS = 22
+CFG.FARM_ARRIVE_DIST = 5
 CFG.FARM_DANGER_DIST = 20
-CFG.FARM_GROUND_OFFSET = -0.8
+CFG.FARM_GROUND_OFFSET = -1.2
 CFG.FARM_TOUCH_COOLDOWN = 0.3
-CFG.FARM_FALLBACK_TIMEOUT = 9
-CFG.FARM_FALLBACK_COOLDOWN = 4
-CFG.FARM_STUCK_TIME = 1.4
-CFG.FARM_STUCK_DIST = 1.6
+CFG.FARM_FALLBACK_TIMEOUT = 20
+CFG.FARM_FALLBACK_COOLDOWN = 8
+CFG.FARM_STUCK_TIME = 3.2
+CFG.FARM_STUCK_DIST = 2.2
 CFG.FARM_NEAR_RADIUS = 14
 CFG.FARM_COLLECT_SPEED_RESET_TIME = 0.45
 CFG.FARM_FLY_SPEED = 18
 CFG.FARM_NEAR_BOOST = 1.2
-CFG.FARM_TARGET_TIMEOUT = 5.5
-CFG.FARM_UNSTICK_MAX = 2
+CFG.FARM_BLACKLIST_TIME = 5
+CFG.FARM_TARGET_TIMEOUT = 9
+CFG.FARM_UNSTICK_MAX = 1
 CFG.AUTO_KILL_COOLDOWN = 2
 CFG.ANTI_FOCUS_RADIUS = 45
 CFG.ANTI_FOCUS_DURATION = 5
@@ -303,6 +303,7 @@ local S = {
     flingRunning = false, tpAllRunning = false, killAllRunning = false,
     musicSound = nil,
     currentEmoteTrack = nil,
+    miniBoxTrack = nil,
     animPriorityConn = nil,
     korbloxPart = nil,
     mobileFlyVec = Vector3.zero, mobileFlyDragging = false,
@@ -327,6 +328,7 @@ local S = {
     savedFarmStates = nil,
     farmTargetCoin = nil,
     farmTouchedCoins = {},
+    farmBlacklist = {},
     farmWalkBV = nil,
     farmLastCollectAt = 0,
     farmStartedAt = 0,
@@ -354,7 +356,7 @@ function F.getHumanoid()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
 
-function F.markRoundStartedd()
+function F.markRoundStarted()
     if S.roundStartedAt == 0 or (tick() - S.roundStartedAt) > 15 then
         S.roundStartedAt = tick()
     end
@@ -363,32 +365,22 @@ end
 function F.isCoinValid(coin)
     if not coin or not coin.Parent then return false end
     if coin:GetAttribute("Collected") then return false end
-    local touch = coin:FindFirstChildWhichIsA("TouchTransmitter", true) or coin:FindFirstChild("TouchInterest", true)
-    return touch ~= nil
+    return coin:FindFirstChildWhichIsA("TouchTransmitter") ~= nil
 end
 
-function F.getCoinPosition(coin)
-    if not coin then return nil end
-    if coin:IsA("Model") then
-        if coin.PrimaryPart then return coin.PrimaryPart.Position end
-        local ok, pivot = pcall(function() return coin:GetPivot().Position end)
-        if ok then return pivot end
-        local part = coin:FindFirstChildWhichIsA("BasePart")
-        return part and part.Position or nil
+function F.isCoinBlacklisted(coin)
+    local t = S.farmBlacklist[coin]
+    if not t then return false end
+    if tick() - t > CFG.FARM_BLACKLIST_TIME then
+        S.farmBlacklist[coin] = nil
+        return false
     end
-    if coin:IsA("BasePart") then return coin.Position end
-    return nil
+    return true
 end
 
-function F.getCoinTouchPart(coin)
-    if not coin then return nil end
-    if coin:IsA("BasePart") then return coin end
-    if coin:IsA("Model") then
-        return coin.PrimaryPart or coin:FindFirstChildWhichIsA("BasePart")
-    end
-    return nil
+function F.blacklistCoin(coin)
+    if coin then S.farmBlacklist[coin] = tick() end
 end
-
 
 function F.tryDodgeKnife(p1, p2)
     if not MiscSettings.KnifeDodge then return end
@@ -703,7 +695,7 @@ function F.hookGunShootEvent(bindable)
     if type(getconnections) ~= "function" or type(hookfunction) ~= "function" then return end
 
     GunShootBindable = bindable
-    __HH_STATE.GunShootBindable = bindable
+    getgenv().HH_GunShootBindable = bindable
     GunShootHandlerHooked = false
 
     for _, conn in ipairs(getconnections(bindable.Event)) do
@@ -1561,35 +1553,34 @@ function F.playEmote(emoteName, emoteId)
     end
 end
 
-function F.applyFarmProne()
+function F.playMiniBoxAnimation()
     local char = LocalPlayer.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hum or not hrp then return end
+    if not hum then return end
+    local animator = hum:FindFirstChildOfClass("Animator")
+    if not animator then return end
 
-    hum.PlatformStand = true
-    hum.AutoRotate = false
+    if S.miniBoxTrack then
+        pcall(function() S.miniBoxTrack:Stop(0.1) end)
+        S.miniBoxTrack = nil
+    end
 
-    local pos = hrp.Position
-    hrp.CFrame = CFrame.new(pos) * CFrame.Angles(math.rad(-90), 0, 0)
-    hrp.Velocity = Vector3.zero
-    hrp.RotVelocity = Vector3.zero
-
-    if S.coinGyro and S.coinGyro.Parent then
-        S.coinGyro.CFrame = hrp.CFrame
-        S.coinGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
-        S.coinGyro.P = 3e5
+    local anim = Instance.new("Animation")
+    anim.AnimationId = MINI_BOX_ANIM_ID
+    local ok, track = pcall(function() return animator:LoadAnimation(anim) end)
+    if ok and track then
+        track.Priority = Enum.AnimationPriority.Action4
+        track.Looped = true
+        track:Play(0.1)
+        S.miniBoxTrack = track
     end
 end
 
-function F.stopFarmProne()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        hum.PlatformStand = false
-        hum.AutoRotate = true
+function F.stopMiniBoxAnimation()
+    if S.miniBoxTrack then
+        pcall(function() S.miniBoxTrack:Stop(0.1) end)
+        S.miniBoxTrack = nil
     end
 end
 
@@ -1815,6 +1806,11 @@ function F.purgeMemoryCaches(full)
         if S.farmTouchedCoins then
             for coin in pairs(S.farmTouchedCoins) do
                 if not coin or not coin.Parent then S.farmTouchedCoins[coin] = nil end
+            end
+        end
+        if S.farmBlacklist then
+            for coin in pairs(S.farmBlacklist) do
+                if not coin or not coin.Parent then S.farmBlacklist[coin] = nil end
             end
         end
         if ESP and ESP.highlights then
@@ -2498,8 +2494,14 @@ function F.getAllCoins()
     if not cc then return {} end
     local coins = {}
     for _, child in ipairs(cc:GetChildren()) do
-        if F.isCoinValid(child) then
-            table.insert(coins, child)
+        local part
+        if child:IsA("BasePart") then
+            part = child
+        elseif child:IsA("Model") then
+            part = child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")
+        end
+        if part and part:IsA("BasePart") then
+            table.insert(coins, part)
         end
     end
     return coins
@@ -2560,6 +2562,7 @@ function F.stopCoinCollector()
     F.disableUltraOptimization()
     S.farmTargetCoin = nil
     S.farmTouchedCoins = {}
+    S.farmBlacklist = {}
     S.farmLastCollectAt = 0
     S.farmStartedAt = 0
     S.farmLastFallbackAt = 0
@@ -2570,7 +2573,7 @@ function F.stopCoinCollector()
     S.farmTargetStartedAt = 0
     S.lastGyroUpdate = 0
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
-    F.stopFarmProne()
+    F.stopMiniBoxAnimation()
     local hrp = F.getHRP()
     if hrp then
         hrp.Velocity = Vector3.zero
@@ -2579,6 +2582,7 @@ function F.stopCoinCollector()
 end
 
 function F.startCoinCollector()
+    if S.totalCoins >= CFG.FARM_GOAL then return end
     if not F.getCoinContainer() then return end
     if not F.getHRP() then return end
 
@@ -2589,6 +2593,7 @@ function F.startCoinCollector()
     S.coinCollecting = true
     S.farmTargetCoin = nil
     S.farmTouchedCoins = {}
+    S.farmBlacklist = {}
     S.farmStartedAt = tick()
     S.farmLastCollectAt = tick()
     S.farmLastFallbackAt = tick()
@@ -2600,7 +2605,7 @@ function F.startCoinCollector()
     if S.coinStatusSetter then
         S.coinStatusSetter(F.isLocalMurderer() and "Murderer · farming..." or "Searching target...")
     end
-    F.applyFarmProne()
+    F.playMiniBoxAnimation()
     F.ensureFarmHelpers()
     F.ensureFarmNoclip()
     if FarmSettings.UltraOpt then F.enableUltraOptimization() end
@@ -2609,41 +2614,98 @@ function F.startCoinCollector()
 
     S.coinConnection = F.trackConn("farm", RunService.Heartbeat:Connect(function()
         if not S.coinCollecting then return end
-        if not S.roundActive then return end
+        if not S.roundActive then F.stopCoinCollector() return end
         if S.totalCoins >= CFG.FARM_GOAL then
-            if S.farmWalkBV then S.farmWalkBV.Velocity = Vector3.zero end
-            if S.coinStatusSetter then S.coinStatusSetter("Goal reached · idle") end
+            if S.coinStatusSetter then S.coinStatusSetter("Goal reached") end
+            F.stopCoinCollector()
+            if F.isLocalMurderer() then
+                if not S.killAllRunning and tick() - S.roundStartedAt >= CFG.AUTO_KILL_COOLDOWN then
+                    S.killAllRunning = true
+                    if S.coinStatusSetter then S.coinStatusSetter("Murderer · killing...") end
+                    F.notify("Goal reached · killing everyone", 2)
+                    task.spawn(function()
+                        local startTime = tick()
+                        while S.killAllRunning and S.roundActive and tick() - startTime < 6 do
+                            F.serverKillAllTick()
+                            task.wait(0.03)
+                        end
+                        S.killAllRunning = false
+                    end)
+                end
+            elseif not S.rerolling then
+                if not F.isLocalSheriffOrHero() then
+                    S.rerolling = true
+                    task.delay(0.5, function()
+                        local hum = F.getHumanoid()
+                        if hum and hum.Health > 0 then
+                            hum.Health = 0
+                        end
+                        task.delay(3, function() S.rerolling = false end)
+                    end)
+                end
+            end
             return
         end
 
         local hrp = F.getHRP()
         if not hrp then return end
 
-        local char = LocalPlayer.Character
-        if char then
-            for _, p in ipairs(char:GetDescendants()) do
-                if p:IsA("BasePart") then
-                    p.CanCollide = false
-                end
-            end
-        end
-
         local now = tick()
         local myPos = hrp.Position
+        local coins = F.getAllCoins()
 
         if S.coinGyro and S.coinGyro.Parent then
-            if now - S.lastGyroUpdate > 0.12 then
-                S.coinGyro.CFrame = CFrame.new(myPos) * CFrame.Angles(math.rad(-90), 0, 0)
+            if now - S.lastGyroUpdate > 0.15 then
+                S.coinGyro.CFrame = CFrame.new(myPos)
                 S.lastGyroUpdate = now
             end
-        else
+        elseif not S.coinGyro then
             F.attachFarmGyro()
-            F.applyFarmProne()
         end
 
         if not S.farmWalkBV or not S.farmWalkBV.Parent then
             F.ensureFarmBodyMovers()
             if not S.farmWalkBV then return end
+        end
+
+        for _, coin in ipairs(coins) do
+            if coin and coin.Parent then
+                if (coin.Position - myPos).Magnitude <= CFG.FARM_TOUCH_RADIUS then
+                    local lastTouch = S.farmTouchedCoins[coin]
+                    if not lastTouch or now - lastTouch > CFG.FARM_TOUCH_COOLDOWN then
+                        S.farmTouchedCoins[coin] = now
+                        task.spawn(function()
+                            pcall(firetouchinterest, hrp, coin, 0)
+                            task.wait(0.02)
+                            if coin and coin.Parent then
+                                pcall(firetouchinterest, hrp, coin, 1)
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+        local touchCount = 0
+        for coin, t in pairs(S.farmTouchedCoins) do
+            if now - t > 5 or not coin or not coin.Parent then
+                S.farmTouchedCoins[coin] = nil
+            else
+                touchCount = touchCount + 1
+            end
+        end
+        if touchCount > 40 then
+            S.farmTouchedCoins = {}
+        end
+        local blCount = 0
+        for coin, t in pairs(S.farmBlacklist) do
+            if now - t > CFG.FARM_BLACKLIST_TIME + 2 or not coin or not coin.Parent then
+                S.farmBlacklist[coin] = nil
+            else
+                blCount = blCount + 1
+            end
+        end
+        if blCount > 30 then
+            S.farmBlacklist = {}
         end
 
         local localIsMurderer = F.isLocalMurderer()
@@ -2665,107 +2727,142 @@ function F.startCoinCollector()
             return
         end
 
-        -- Committed target: only drop if invalid (no TouchInterest = taken/despawned)
-        if S.farmTargetCoin and not F.isCoinValid(S.farmTargetCoin) then
+        if S.farmTargetCoin and (now - S.farmTargetStartedAt) > CFG.FARM_TARGET_TIMEOUT then
+            F.blacklistCoin(S.farmTargetCoin)
             S.farmTargetCoin = nil
             S.farmTargetStartedAt = 0
-            S.farmStuckPos = nil
-            S.farmStuckAt = 0
+            S.farmUnstickAttempts = 0
+            if S.coinStatusSetter then S.coinStatusSetter("Target timeout · new route") end
         end
 
-        -- Pick nearest valid coin once and commit
-        if not S.farmTargetCoin then
-            local coins = F.getAllCoins()
-            local bestCoin, bestDist = nil, math.huge
+        if not S.farmTargetCoin or not S.farmTargetCoin.Parent or not F.isCoinValid(S.farmTargetCoin) then
+            S.farmTargetCoin = nil
+            local candidates = {}
             for _, coin in ipairs(coins) do
-                local cpos = F.getCoinPosition(coin)
-                if cpos then
-                    local d = (cpos - myPos).Magnitude
-                    if d < bestDist then
-                        bestDist = d
-                        bestCoin = coin
-                    end
+                if F.isCoinValid(coin) and not F.isCoinBlacklisted(coin) then
+                    table.insert(candidates, { coin = coin, dist = (coin.Position - myPos).Magnitude })
                 end
             end
+            table.sort(candidates, function(a, b) return a.dist < b.dist end)
+            local bestCoin = candidates[1] and candidates[1].coin or nil
+            if not bestCoin then
+                local bestDist = math.huge
+                for _, coin in ipairs(coins) do
+                    if F.isCoinValid(coin) then
+                        local d = (coin.Position - myPos).Magnitude
+                        if d < bestDist then
+                            bestDist = d
+                            bestCoin = coin
+                        end
+                    end
+                end
+            elseif candidates[2] and candidates[1].dist < 4 and candidates[2].dist < 18 then
+                bestCoin = candidates[2].coin
+            end
             S.farmTargetCoin = bestCoin
-            S.farmTargetStartedAt = now
-            S.farmStuckPos = myPos
-            S.farmStuckAt = now
+            S.farmTargetStartedAt = tick()
+            S.farmStuckPos = nil
+            S.farmStuckAt = 0
+            S.farmUnstickAttempts = 0
         end
 
         local target = S.farmTargetCoin
         if not target then
             S.farmWalkBV.Velocity = Vector3.zero
-            if S.coinStatusSetter then S.coinStatusSetter("Waiting coins...") end
+            if S.coinStatusSetter then S.coinStatusSetter("No valid coins · waiting") end
             return
         end
 
-        local tPos = F.getCoinPosition(target)
-        if not tPos then
-            S.farmTargetCoin = nil
-            return
-        end
-
-        local touchPart = F.getCoinTouchPart(target)
-        local distToTarget = (tPos - myPos).Magnitude
-
-        -- Touch when close
-        if touchPart and distToTarget <= CFG.FARM_TOUCH_RADIUS then
-            local lastTouch = S.farmTouchedCoins[target]
-            if not lastTouch or now - lastTouch > CFG.FARM_TOUCH_COOLDOWN then
-                S.farmTouchedCoins[target] = now
-                task.spawn(function()
-                    pcall(firetouchinterest, hrp, touchPart, 0)
-                    task.wait(0.03)
-                    if touchPart and touchPart.Parent then
-                        pcall(firetouchinterest, hrp, touchPart, 1)
-                    end
-                end)
-            end
-        end
-
-        local targetPos = tPos + Vector3.new(0, CFG.FARM_GROUND_OFFSET, 0)
+        local distToTarget = (target.Position - myPos).Magnitude
+        local targetPos = target.Position + Vector3.new(0, CFG.FARM_GROUND_OFFSET, 0)
         local delta = targetPos - myPos
         local horiz = Vector3.new(delta.X, 0, delta.Z)
         local hDist = horiz.Magnitude
-        local speed = F.getFarmSpeed()
-        if distToTarget < CFG.FARM_NEAR_RADIUS then
-            speed = speed * F.getNearBoost()
-        end
 
         if distToTarget < CFG.FARM_ARRIVE_DIST then
-            S.farmWalkBV.Velocity = delta.Magnitude > 0.1 and (delta.Unit * math.min(speed, 16)) or Vector3.zero
-            if distToTarget > 1.2 then
-                hrp.CFrame = CFrame.new(myPos:Lerp(targetPos, 0.45)) * CFrame.Angles(math.rad(-90), 0, 0)
-            end
-        elseif hDist > 0.5 then
-            S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2.5, -9, 9), 0)
+            S.farmWalkBV.Velocity = Vector3.new(delta.X, delta.Y, delta.Z) * 4
+            S.farmStuckPos = myPos
+            S.farmStuckAt = now
         else
-            S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2.5, -9, 9), 0)
+            local baseSpeed = F.getFarmSpeed()
+            local justCollected = (now - S.farmLastCollectSpeedAt) < CFG.FARM_COLLECT_SPEED_RESET_TIME
+            if not justCollected and distToTarget < CFG.FARM_NEAR_RADIUS then
+                baseSpeed = baseSpeed * F.getNearBoost()
+            end
+
+            if hDist > 0.5 then
+                local speed = math.min(baseSpeed, math.max(hDist * 4, baseSpeed * 0.75))
+                S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+            else
+                S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+            end
         end
 
-        -- Soft unstuck only (do NOT change target unless TouchInterest is gone)
-        if not S.farmStuckPos then
+        if distToTarget < CFG.FARM_TOUCH_RADIUS then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
-        elseif (myPos - S.farmStuckPos).Magnitude > 2.5 then
+        elseif not S.farmStuckPos then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
-        elseif now - S.farmStuckAt > 2.0 then
-            local angle = math.rad((now * 50) % 360)
+        elseif (myPos - S.farmStuckPos).Magnitude > CFG.FARM_STUCK_DIST then
+            S.farmStuckPos = myPos
+            S.farmStuckAt = now
+            S.farmUnstickAttempts = 0
+        elseif now - S.farmStuckAt > CFG.FARM_STUCK_TIME then
+            S.farmUnstickAttempts = (S.farmUnstickAttempts or 0) + 1
+            local angle = math.rad((S.farmUnstickAttempts * 120) % 360)
             local side = Vector3.new(math.cos(angle), 0, math.sin(angle))
-            local nudgePos = myPos + side * 8 + Vector3.new(0, 5, 0)
-            hrp.CFrame = CFrame.new(nudgePos) * CFrame.Angles(math.rad(-90), 0, 0)
-            hrp.Velocity = side * speed + Vector3.new(0, 12, 0)
-            S.farmWalkBV.Velocity = side * speed * 1.6 + Vector3.new(0, 12, 0)
-            S.farmStuckPos = hrp.Position
+            if S.farmWalkBV then
+                S.farmWalkBV.Velocity = side * F.getFarmSpeed() * 1.15 + Vector3.new(0, 6, 0)
+            end
+            S.farmStuckPos = myPos
             S.farmStuckAt = now
-            if S.coinStatusSetter then S.coinStatusSetter("Unstuck · same target") end
+            if S.farmUnstickAttempts >= CFG.FARM_UNSTICK_MAX then
+                F.blacklistCoin(S.farmTargetCoin)
+                S.farmTargetCoin = nil
+                S.farmUnstickAttempts = 0
+                S.farmTargetStartedAt = 0
+                if S.coinStatusSetter then S.coinStatusSetter("Stuck · next coin") end
+            else
+                if S.coinStatusSetter then S.coinStatusSetter("Unsticking...") end
+            end
+        end
+
+        local timeSinceCollect = now - math.max(S.farmStartedAt, S.lastCollectTime)
+        if timeSinceCollect > CFG.FARM_FALLBACK_TIMEOUT
+            and now - S.farmLastFallbackAt > CFG.FARM_FALLBACK_COOLDOWN
+            and (localIsMurderer or not mHRP or distToMurderer > 30) then
+            S.farmLastFallbackAt = now
+            local tpCoin = nil
+            local bestDist = math.huge
+
+            for _, c in ipairs(coins) do
+                if F.isCoinValid(c) and not F.isCoinBlacklisted(c) then
+                    if localIsMurderer or not mHRP or (c.Position - mHRP.Position).Magnitude > 30 then
+                        local d = (c.Position - hrp.Position).Magnitude
+                        if d > 12 and d < bestDist then
+                            bestDist = d
+                            tpCoin = c
+                        end
+                    end
+                end
+            end
+
+            if tpCoin and bestDist > 35 then
+                S.farmTargetCoin = tpCoin
+                S.farmTargetStartedAt = tick()
+                F.fireTeleportToPart(hrp, tpCoin)
+                S.farmStuckPos = nil
+                S.farmStuckAt = 0
+                if S.coinStatusSetter then
+                    S.coinStatusSetter("Fallback TP")
+                end
+            end
         end
 
         if S.coinStatusSetter then
             local prefix = localIsMurderer and "Murderer · " or ""
-            S.coinStatusSetter(prefix .. "Going to coin · " .. math.floor(distToTarget) .. "m")
+            S.coinStatusSetter(prefix .. "Moving to target · " .. #coins .. " coins")
         end
     end))
 end
@@ -4006,6 +4103,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.korbloxPart = nil
     S.lastSafeCFrame = nil
     S.currentEmoteTrack = nil
+    S.miniBoxTrack = nil
     S.flingOriginalCFrame = nil
     S.flingOriginalPosition = nil
     S.flingTargetRunning = false
@@ -4020,6 +4118,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.farmTargetCoin = nil
     pcall(F.purgeMemoryCaches, false)
     S.farmTouchedCoins = {}
+    S.farmBlacklist = {}
     S.farmWalkBV = nil
     S.farmLastCollectAt = 0
     S.farmStartedAt = 0
@@ -4096,7 +4195,7 @@ local roundStartEvent = gameplay and gameplay:FindFirstChild("RoundStart")
 
 if coinsStartedEvent then
     coinsStartedEvent.OnClientEvent:Connect(function(data)
-        F.markRoundStartedd()
+        F.markRoundStarted()
         F.stopCoinCollector()
         S.bagProgress = {}
         if type(data) == "table" and data.Coin then
@@ -4106,7 +4205,8 @@ if coinsStartedEvent then
         end
         S.totalCoins = 0
         S.farmTargetCoin = nil
-            S.farmTouchedCoins = {}
+        S.farmBlacklist = {}
+        S.farmTouchedCoins = {}
         S.farmLastCollectSpeedAt = 0
         if S.coinCountSetter then S.coinCountSetter(0) end
         S.roundActive = true
@@ -4123,7 +4223,6 @@ if coinCollectedEvent then
         S.farmLastCollectAt = tick()
         S.farmLastCollectSpeedAt = tick()
 
-        -- We got a collect event -> drop current target and pick next on next tick
         S.farmTargetCoin = nil
         S.farmTargetStartedAt = 0
         S.farmStuckPos = nil
@@ -4139,18 +4238,18 @@ if coinCollectedEvent then
             end
         end
         if S.coinCountSetter then S.coinCountSetter(S.totalCoins) end
-        if S.coinStatusSetter then S.coinStatusSetter("Collected · next") end
     end)
 end
 
 if roundStartEvent then
     roundStartEvent.OnClientEvent:Connect(function()
-        F.markRoundStartedd()
+        F.markRoundStarted()
         F.stopCoinCollector()
         S.bagProgress = {}
         S.totalCoins = 0
         S.farmTargetCoin = nil
-            S.farmTouchedCoins = {}
+        S.farmBlacklist = {}
+        S.farmTouchedCoins = {}
         S.farmLastCollectSpeedAt = 0
         S.rerolling = false
         S.killAllRunning = false
@@ -4198,8 +4297,8 @@ end
 
 F.trackThread(task.spawn(function()
     while true do
-        task.wait(0.35)
-        if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting then
+        task.wait(0.5)
+        if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting and S.totalCoins < CFG.FARM_GOAL then
             F.startCoinCollector()
         end
     end
@@ -4209,7 +4308,7 @@ F.trackThread(task.spawn(function()
     while true do
         task.wait(45)
         pcall(F.purgeMemoryCaches, false)
-        local list = __HH_STATE and __HH_STATE.connections
+        local list = getgenv().__HH_STATE and getgenv().__HH_STATE.connections
         if list and #list > 60 then
             local alive = {}
             for i = 1, #list do
@@ -4219,7 +4318,7 @@ F.trackThread(task.spawn(function()
                     if ok and connected then alive[#alive + 1] = c end
                 end
             end
-            __HH_STATE.connections = alive
+            getgenv().__HH_STATE.connections = alive
         end
     end
 end))
@@ -4450,11 +4549,11 @@ F.trackConn("hotkeys", UserInputService.InputBegan:Connect(function(input, gp)
     if isMobile then return end
     if UserInputService:GetFocusedTextBox() then return end
     if input.KeyCode == Enum.KeyCode.T then
-        if UI.mm2LockRef then pcall(function() UI.mm2LockRef:SetState(not UI.mm2LockRef:GetState()) end) end
+        if UI.mm2LockRef then UI.mm2LockRef.SetState(not UI.mm2LockRef.GetState()) end
     elseif input.KeyCode == Enum.KeyCode.O then
-        if UI.mm2ESPToggleRef then pcall(function() UI.mm2ESPToggleRef:SetState(not UI.mm2ESPToggleRef:GetState()) end) end
+        if UI.mm2ESPToggleRef then UI.mm2ESPToggleRef.SetState(not UI.mm2ESPToggleRef.GetState()) end
     elseif input.KeyCode == Enum.KeyCode.B then
-        if UI.autoFireRef then pcall(function() UI.autoFireRef:SetState(not UI.autoFireRef:GetState()) end) end
+        if UI.autoFireRef then UI.autoFireRef.SetState(not UI.autoFireRef.GetState()) end
     elseif input.KeyCode == Enum.KeyCode.V then
         task.spawn(F.mobileForceShoot)
     end
@@ -4595,4 +4694,3 @@ end)
 F.notify("Hello again "..LocalPlayer.DisplayName, 3)
 end
 F.buildUI()
-
