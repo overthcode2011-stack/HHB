@@ -249,21 +249,21 @@ local VisCache = {}
 CFG.VIS_TTL = 0.05
 CFG.MURDERER_TTL = 0.4
 CFG.FARM_GOAL = 50
-CFG.FARM_TOUCH_RADIUS = 22
-CFG.FARM_ARRIVE_DIST = 5
+CFG.FARM_TOUCH_RADIUS = 26
+CFG.FARM_ARRIVE_DIST = 4
 CFG.FARM_DANGER_DIST = 20
-CFG.FARM_GROUND_OFFSET = -1.2
+CFG.FARM_GROUND_OFFSET = -0.8
 CFG.FARM_TOUCH_COOLDOWN = 0.3
-CFG.FARM_FALLBACK_TIMEOUT = 20
-CFG.FARM_FALLBACK_COOLDOWN = 8
-CFG.FARM_STUCK_TIME = 3.2
-CFG.FARM_STUCK_DIST = 2.2
+CFG.FARM_FALLBACK_TIMEOUT = 9
+CFG.FARM_FALLBACK_COOLDOWN = 4
+CFG.FARM_STUCK_TIME = 1.4
+CFG.FARM_STUCK_DIST = 1.6
 CFG.FARM_NEAR_RADIUS = 14
 CFG.FARM_COLLECT_SPEED_RESET_TIME = 0.45
 CFG.FARM_FLY_SPEED = 18
 CFG.FARM_NEAR_BOOST = 1.2
-CFG.FARM_TARGET_TIMEOUT = 9
-CFG.FARM_UNSTICK_MAX = 1
+CFG.FARM_TARGET_TIMEOUT = 5.5
+CFG.FARM_UNSTICK_MAX = 2
 CFG.AUTO_KILL_COOLDOWN = 2
 CFG.ANTI_FOCUS_RADIUS = 45
 CFG.ANTI_FOCUS_DURATION = 5
@@ -2763,46 +2763,66 @@ function F.startCoinCollector()
         local horiz = Vector3.new(delta.X, 0, delta.Z)
         local hDist = horiz.Magnitude
 
+        local baseSpeed = F.getFarmSpeed()
+        local justCollected = (now - S.farmLastCollectSpeedAt) < CFG.FARM_COLLECT_SPEED_RESET_TIME
+        if not justCollected and distToTarget < CFG.FARM_NEAR_RADIUS then
+            baseSpeed = baseSpeed * F.getNearBoost()
+        end
+
         if distToTarget < CFG.FARM_ARRIVE_DIST then
-            S.farmWalkBV.Velocity = Vector3.new(delta.X, delta.Y, delta.Z) * 4
+            S.farmWalkBV.Velocity = Vector3.new(delta.X, delta.Y, delta.Z) * 6
+            if distToTarget > 1.2 then
+                hrp.CFrame = CFrame.new(myPos:Lerp(targetPos, 0.35)) * CFrame.Angles(math.rad(-90), 0, 0)
+            end
             S.farmStuckPos = myPos
             S.farmStuckAt = now
         else
-            local baseSpeed = F.getFarmSpeed()
-            local justCollected = (now - S.farmLastCollectSpeedAt) < CFG.FARM_COLLECT_SPEED_RESET_TIME
-            if not justCollected and distToTarget < CFG.FARM_NEAR_RADIUS then
-                baseSpeed = baseSpeed * F.getNearBoost()
-            end
-
-            if hDist > 0.5 then
-                local speed = math.min(baseSpeed, math.max(hDist * 4, baseSpeed * 0.75))
-                S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+            if hDist > 0.4 then
+                local speed = math.clamp(hDist * 5, baseSpeed * 0.7, baseSpeed)
+                S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 3, -10, 10), 0)
             else
-                S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+                S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 3, -10, 10), 0)
             end
         end
+
+        local moved = S.farmStuckPos and (myPos - S.farmStuckPos).Magnitude or 999
+        local almostStill = hrp.Velocity.Magnitude < 2.5
 
         if distToTarget < CFG.FARM_TOUCH_RADIUS then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
+            S.farmUnstickAttempts = 0
         elseif not S.farmStuckPos then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
-        elseif (myPos - S.farmStuckPos).Magnitude > CFG.FARM_STUCK_DIST then
+        elseif moved > CFG.FARM_STUCK_DIST then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
             S.farmUnstickAttempts = 0
-        elseif now - S.farmStuckAt > CFG.FARM_STUCK_TIME then
+        elseif (now - S.farmStuckAt > CFG.FARM_STUCK_TIME) or (almostStill and now - S.farmStuckAt > 0.9) then
             S.farmUnstickAttempts = (S.farmUnstickAttempts or 0) + 1
-            local angle = math.rad((S.farmUnstickAttempts * 120) % 360)
+
+            local angle = math.rad((S.farmUnstickAttempts * 75) % 360)
             local side = Vector3.new(math.cos(angle), 0, math.sin(angle))
+            local boost = side * (F.getFarmSpeed() * 1.8) + Vector3.new(0, 12, 0)
             if S.farmWalkBV then
-                S.farmWalkBV.Velocity = side * F.getFarmSpeed() * 1.15 + Vector3.new(0, 6, 0)
+                S.farmWalkBV.Velocity = boost
             end
-            S.farmStuckPos = myPos
+
+            local nudge = myPos + side * 6 + Vector3.new(0, 3, 0)
+            hrp.CFrame = CFrame.new(nudge) * CFrame.Angles(math.rad(-90), 0, 0)
+            hrp.Velocity = boost
+            hrp.RotVelocity = Vector3.zero
+
+            S.farmStuckPos = hrp.Position
             S.farmStuckAt = now
+
             if S.farmUnstickAttempts >= CFG.FARM_UNSTICK_MAX then
-                    S.farmTargetCoin = nil
+                S.farmSkipUntil = S.farmSkipUntil or {}
+                if S.farmTargetCoin then
+                    S.farmSkipUntil[S.farmTargetCoin] = now + 3.5
+                end
+                S.farmTargetCoin = nil
                 S.farmUnstickAttempts = 0
                 S.farmTargetStartedAt = 0
                 if S.coinStatusSetter then S.coinStatusSetter("Stuck · next coin") end
@@ -2821,9 +2841,10 @@ function F.startCoinCollector()
 
             for _, c in ipairs(coins) do
                 if F.isCoinValid(c) then
-                    if localIsMurderer or not mHRP or (c.Position - mHRP.Position).Magnitude > 30 then
-                        local d = (c.Position - hrp.Position).Magnitude
-                        if d > 12 and d < bestDist then
+                    local cpos = c:IsA("Model") and ((c.PrimaryPart and c.PrimaryPart.Position) or c:GetPivot().Position) or c.Position
+                    if localIsMurderer or not mHRP or (cpos - mHRP.Position).Magnitude > 25 then
+                        local d = (cpos - hrp.Position).Magnitude
+                        if d > 8 and d < bestDist then
                             bestDist = d
                             tpCoin = c
                         end
@@ -2831,10 +2852,14 @@ function F.startCoinCollector()
                 end
             end
 
-            if tpCoin and bestDist > 35 then
+            if tpCoin and bestDist > 18 then
+                local tpos = tpCoin:IsA("Model") and ((tpCoin.PrimaryPart and tpCoin.PrimaryPart.Position) or tpCoin:GetPivot().Position) or tpCoin.Position
                 S.farmTargetCoin = tpCoin
                 S.farmTargetStartedAt = tick()
+                S.farmUnstickAttempts = 0
                 F.fireTeleportToPart(hrp, tpCoin)
+                hrp.CFrame = CFrame.new(tpos + Vector3.new(0, 2, 0)) * CFrame.Angles(math.rad(-90), 0, 0)
+                hrp.Velocity = Vector3.zero
                 S.farmStuckPos = nil
                 S.farmStuckAt = 0
                 if S.coinStatusSetter then
