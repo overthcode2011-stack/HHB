@@ -363,19 +363,15 @@ end
 function F.isCoinValid(coin)
     if not coin or not coin.Parent then return false end
     if coin:GetAttribute("Collected") then return false end
-    if coin:IsA("BasePart") then
-        if coin:FindFirstChildWhichIsA("TouchTransmitter") then return true end
-        if coin:FindFirstChild("TouchInterest") then return true end
-        return true
+    local name = string.lower(coin.Name)
+    local looksLikeCoin = name:find("coin", 1, true) or name:find("gold", 1, true) or name == "c" or coin:GetAttribute("Coin") ~= nil
+    if not looksLikeCoin then
+        local hasTouch = coin:FindFirstChildWhichIsA("TouchTransmitter", true) or coin:FindFirstChild("TouchInterest", true)
+        if not hasTouch then return false end
     end
+    if coin:IsA("BasePart") then return true end
     if coin:IsA("Model") then
-        local part = coin.PrimaryPart or coin:FindFirstChildWhichIsA("BasePart")
-        if part then
-            if part:FindFirstChildWhichIsA("TouchTransmitter") or part:FindFirstChild("TouchInterest") then
-                return true
-            end
-            return true
-        end
+        return (coin.PrimaryPart or coin:FindFirstChildWhichIsA("BasePart")) ~= nil
     end
     return false
 end
@@ -2489,12 +2485,20 @@ function F.getAllCoins()
     if not cc then return {} end
     local coins = {}
     for _, child in ipairs(cc:GetChildren()) do
-        if child:IsA("BasePart") then
-            table.insert(coins, child)
-        elseif child:IsA("Model") then
-            local part = child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")
-            if part then
-                table.insert(coins, child)
+        if not child:GetAttribute("Collected") then
+            local name = string.lower(child.Name)
+            local looksLikeCoin = name:find("coin", 1, true) or name:find("gold", 1, true) or name == "c" or child:GetAttribute("Coin") ~= nil
+            if not looksLikeCoin and (child:IsA("BasePart") or child:IsA("Model")) then
+                local hasTouch = child:FindFirstChildWhichIsA("TouchTransmitter", true) or child:FindFirstChild("TouchInterest", true)
+                if hasTouch then looksLikeCoin = true end
+            end
+            if looksLikeCoin then
+                if child:IsA("BasePart") then
+                    table.insert(coins, child)
+                elseif child:IsA("Model") then
+                    local part = child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")
+                    if part then table.insert(coins, child) end
+                end
             end
         end
     end
@@ -2614,6 +2618,15 @@ function F.startCoinCollector()
 
         local hrp = F.getHRP()
         if not hrp then return end
+
+        local char = LocalPlayer.Character
+        if char then
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    p.CanCollide = false
+                end
+            end
+        end
 
         local now = tick()
         local myPos = hrp.Position
