@@ -363,17 +363,30 @@ end
 function F.isCoinValid(coin)
     if not coin or not coin.Parent then return false end
     if coin:GetAttribute("Collected") then return false end
-    local name = string.lower(coin.Name)
-    local looksLikeCoin = name:find("coin", 1, true) or name:find("gold", 1, true) or name == "c" or coin:GetAttribute("Coin") ~= nil
-    if not looksLikeCoin then
-        local hasTouch = coin:FindFirstChildWhichIsA("TouchTransmitter", true) or coin:FindFirstChild("TouchInterest", true)
-        if not hasTouch then return false end
-    end
-    if coin:IsA("BasePart") then return true end
+    local touch = coin:FindFirstChildWhichIsA("TouchTransmitter", true) or coin:FindFirstChild("TouchInterest", true)
+    return touch ~= nil
+end
+
+function F.getCoinPosition(coin)
+    if not coin then return nil end
     if coin:IsA("Model") then
-        return (coin.PrimaryPart or coin:FindFirstChildWhichIsA("BasePart")) ~= nil
+        if coin.PrimaryPart then return coin.PrimaryPart.Position end
+        local ok, pivot = pcall(function() return coin:GetPivot().Position end)
+        if ok then return pivot end
+        local part = coin:FindFirstChildWhichIsA("BasePart")
+        return part and part.Position or nil
     end
-    return false
+    if coin:IsA("BasePart") then return coin.Position end
+    return nil
+end
+
+function F.getCoinTouchPart(coin)
+    if not coin then return nil end
+    if coin:IsA("BasePart") then return coin end
+    if coin:IsA("Model") then
+        return coin.PrimaryPart or coin:FindFirstChildWhichIsA("BasePart")
+    end
+    return nil
 end
 
 
@@ -2485,21 +2498,8 @@ function F.getAllCoins()
     if not cc then return {} end
     local coins = {}
     for _, child in ipairs(cc:GetChildren()) do
-        if not child:GetAttribute("Collected") then
-            local name = string.lower(child.Name)
-            local looksLikeCoin = name:find("coin", 1, true) or name:find("gold", 1, true) or name == "c" or child:GetAttribute("Coin") ~= nil
-            if not looksLikeCoin and (child:IsA("BasePart") or child:IsA("Model")) then
-                local hasTouch = child:FindFirstChildWhichIsA("TouchTransmitter", true) or child:FindFirstChild("TouchInterest", true)
-                if hasTouch then looksLikeCoin = true end
-            end
-            if looksLikeCoin then
-                if child:IsA("BasePart") then
-                    table.insert(coins, child)
-                elseif child:IsA("Model") then
-                    local part = child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")
-                    if part then table.insert(coins, child) end
-                end
-            end
+        if F.isCoinValid(child) then
+            table.insert(coins, child)
         end
     end
     return coins
@@ -2646,28 +2646,6 @@ function F.startCoinCollector()
             if not S.farmWalkBV then return end
         end
 
-        local coins = F.getAllCoins()
-
-        for _, coin in ipairs(coins) do
-            if coin and coin.Parent then
-                local cpos = coin:IsA("Model") and ((coin.PrimaryPart and coin.PrimaryPart.Position) or coin:GetPivot().Position) or coin.Position
-                if (cpos - myPos).Magnitude <= CFG.FARM_TOUCH_RADIUS then
-                    local lastTouch = S.farmTouchedCoins[coin]
-                    if not lastTouch or now - lastTouch > CFG.FARM_TOUCH_COOLDOWN then
-                        S.farmTouchedCoins[coin] = now
-                        task.spawn(function()
-                            pcall(firetouchinterest, hrp, coin:IsA("Model") and (coin.PrimaryPart or coin:FindFirstChildWhichIsA("BasePart")) or coin, 0)
-                            task.wait(0.02)
-                            local part = coin:IsA("Model") and (coin.PrimaryPart or coin:FindFirstChildWhichIsA("BasePart")) or coin
-                            if part and part.Parent then
-                                pcall(firetouchinterest, hrp, part, 1)
-                            end
-                        end)
-                    end
-                end
-            end
-        end
-
         local localIsMurderer = F.isLocalMurderer()
         local murderer = F.getMurdererCached()
         local mHRP = (not localIsMurderer) and murderer and murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
@@ -2687,15 +2665,21 @@ function F.startCoinCollector()
             return
         end
 
-        if S.farmTargetCoin and (not S.farmTargetCoin.Parent or not F.isCoinValid(S.farmTargetCoin)) then
+        -- Committed target: only drop if invalid (no TouchInterest = taken/despawned)
+        if S.farmTargetCoin and not F.isCoinValid(S.farmTargetCoin) then
             S.farmTargetCoin = nil
+            S.farmTargetStartedAt = 0
+            S.farmStuckPos = nil
+            S.farmStuckAt = 0
         end
 
+        -- Pick nearest valid coin once and commit
         if not S.farmTargetCoin then
+            local coins = F.getAllCoins()
             local bestCoin, bestDist = nil, math.huge
             for _, coin in ipairs(coins) do
-                if F.isCoinValid(coin) then
-                    local cpos = coin:IsA("Model") and ((coin.PrimaryPart and coin.PrimaryPart.Position) or coin:GetPivot().Position) or coin.Position
+                local cpos = F.getCoinPosition(coin)
+                if cpos then
                     local d = (cpos - myPos).Magnitude
                     if d < bestDist then
                         bestDist = d
@@ -2716,26 +2700,43 @@ function F.startCoinCollector()
             return
         end
 
-        local tPos
-        if target:IsA("Model") then
-            tPos = (target.PrimaryPart and target.PrimaryPart.Position) or target:GetPivot().Position
-        else
-            tPos = target.Position
+        local tPos = F.getCoinPosition(target)
+        if not tPos then
+            S.farmTargetCoin = nil
+            return
         end
+
+        local touchPart = F.getCoinTouchPart(target)
+        local distToTarget = (tPos - myPos).Magnitude
+
+        -- Touch when close
+        if touchPart and distToTarget <= CFG.FARM_TOUCH_RADIUS then
+            local lastTouch = S.farmTouchedCoins[target]
+            if not lastTouch or now - lastTouch > CFG.FARM_TOUCH_COOLDOWN then
+                S.farmTouchedCoins[target] = now
+                task.spawn(function()
+                    pcall(firetouchinterest, hrp, touchPart, 0)
+                    task.wait(0.03)
+                    if touchPart and touchPart.Parent then
+                        pcall(firetouchinterest, hrp, touchPart, 1)
+                    end
+                end)
+            end
+        end
+
         local targetPos = tPos + Vector3.new(0, CFG.FARM_GROUND_OFFSET, 0)
         local delta = targetPos - myPos
         local horiz = Vector3.new(delta.X, 0, delta.Z)
         local hDist = horiz.Magnitude
-        local distToTarget = (tPos - myPos).Magnitude
         local speed = F.getFarmSpeed()
         if distToTarget < CFG.FARM_NEAR_RADIUS then
             speed = speed * F.getNearBoost()
         end
 
         if distToTarget < CFG.FARM_ARRIVE_DIST then
-            S.farmWalkBV.Velocity = delta.Unit * math.min(speed, 14) 
-            if distToTarget > 1.5 then
-                hrp.CFrame = CFrame.new(myPos:Lerp(targetPos, 0.4)) * CFrame.Angles(math.rad(-90), 0, 0)
+            S.farmWalkBV.Velocity = delta.Magnitude > 0.1 and (delta.Unit * math.min(speed, 16)) or Vector3.zero
+            if distToTarget > 1.2 then
+                hrp.CFrame = CFrame.new(myPos:Lerp(targetPos, 0.45)) * CFrame.Angles(math.rad(-90), 0, 0)
             end
         elseif hDist > 0.5 then
             S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2.5, -9, 9), 0)
@@ -2743,28 +2744,28 @@ function F.startCoinCollector()
             S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2.5, -9, 9), 0)
         end
 
+        -- Soft unstuck only (do NOT change target unless TouchInterest is gone)
         if not S.farmStuckPos then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
-        elseif (myPos - S.farmStuckPos).Magnitude > 2 then
+        elseif (myPos - S.farmStuckPos).Magnitude > 2.5 then
             S.farmStuckPos = myPos
             S.farmStuckAt = now
-        elseif now - S.farmStuckAt > 1.6 then
-            local angle = math.rad((tick() * 40) % 360)
+        elseif now - S.farmStuckAt > 2.0 then
+            local angle = math.rad((now * 50) % 360)
             local side = Vector3.new(math.cos(angle), 0, math.sin(angle))
-            local nudgePos = myPos + side * 7 + Vector3.new(0, 4, 0)
+            local nudgePos = myPos + side * 8 + Vector3.new(0, 5, 0)
             hrp.CFrame = CFrame.new(nudgePos) * CFrame.Angles(math.rad(-90), 0, 0)
-            hrp.Velocity = side * speed + Vector3.new(0, 10, 0)
-            S.farmWalkBV.Velocity = side * speed * 1.5 + Vector3.new(0, 10, 0)
+            hrp.Velocity = side * speed + Vector3.new(0, 12, 0)
+            S.farmWalkBV.Velocity = side * speed * 1.6 + Vector3.new(0, 12, 0)
             S.farmStuckPos = hrp.Position
             S.farmStuckAt = now
-            S.farmTargetCoin = nil
-            if S.coinStatusSetter then S.coinStatusSetter("Unstuck · retarget") end
+            if S.coinStatusSetter then S.coinStatusSetter("Unstuck · same target") end
         end
 
         if S.coinStatusSetter then
             local prefix = localIsMurderer and "Murderer · " or ""
-            S.coinStatusSetter(prefix .. "Farming · " .. #coins .. " coins")
+            S.coinStatusSetter(prefix .. "Going to coin · " .. math.floor(distToTarget) .. "m")
         end
     end))
 end
@@ -4122,11 +4123,11 @@ if coinCollectedEvent then
         S.farmLastCollectAt = tick()
         S.farmLastCollectSpeedAt = tick()
 
+        -- We got a collect event -> drop current target and pick next on next tick
         S.farmTargetCoin = nil
         S.farmTargetStartedAt = 0
         S.farmStuckPos = nil
         S.farmStuckAt = 0
-        S.farmSkipUntil = nil
 
         if type(bagName) == "string" and type(currentCoins) == "number" then
             S.bagProgress[bagName] = currentCoins
@@ -4138,10 +4139,7 @@ if coinCollectedEvent then
             end
         end
         if S.coinCountSetter then S.coinCountSetter(S.totalCoins) end
-
-        if FarmSettings.AutoFarm and S.roundActive and S.coinCollecting then
-            if S.coinStatusSetter then S.coinStatusSetter("Collected · next") end
-        end
+        if S.coinStatusSetter then S.coinStatusSetter("Collected · next") end
     end)
 end
 
