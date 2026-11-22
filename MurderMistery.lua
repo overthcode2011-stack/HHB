@@ -1,27 +1,28 @@
+local CoreGui = game:GetService("CoreGui")
+local HH_FOLDER_NAME = "\240\159\167\145HH_" .. tostring(math.random(100000, 999999))
+
 do
-    local oldState = getgenv and getgenv().__HH_STATE
-    if oldState then
-        pcall(function()
-            for _, c in ipairs(oldState.connections or {}) do
-                pcall(function() c:Disconnect() end)
-            end
-            for _, t in ipairs(oldState.threads or {}) do
-                pcall(task.cancel, t)
-            end
-            for _, g in ipairs(oldState.screenGuis or {}) do
-                pcall(function() g:Destroy() end)
-            end
-        end)
-        if getgenv then getgenv().__HH_STATE = nil end
-        task.wait(0.3)
+    for _, child in ipairs(CoreGui:GetChildren()) do
+        if child:IsA("Folder") and (child.Name:find("HH_") or child.Name:match("^\240")) then
+            pcall(function() child:Destroy() end)
+        end
+        if child.Name == "HH_FOV" or child.Name == "HH_ReopenUI" or (child.Name:find("HH_") and child:IsA("ScreenGui")) then
+            pcall(function() child:Destroy() end)
+        end
     end
+    task.wait(0.12)
 end
 
-getgenv().__HH_STATE = {
+local HH_FOLDER = Instance.new("Folder")
+HH_FOLDER.Name = HH_FOLDER_NAME
+HH_FOLDER.Parent = CoreGui
+
+local __HH_STATE = {
     connections = {},
     threads = {},
     screenGuis = {},
     startedAt = tick(),
+    GunShootBindable = nil,
 }
 
 local ConnectionRegistry = {}
@@ -36,7 +37,7 @@ function F.trackConn(key, conn)
         end
         ConnectionRegistry[key] = conn
     end
-    local list = getgenv().__HH_STATE.connections
+    local list = __HH_STATE.connections
     local n = #list
     if n > 80 then
         local alive = {}
@@ -49,7 +50,7 @@ function F.trackConn(key, conn)
                 end
             end
         end
-        getgenv().__HH_STATE.connections = alive
+        __HH_STATE.connections = alive
         list = alive
     end
     table.insert(list, conn)
@@ -65,7 +66,7 @@ end
 
 function F.trackThread(t)
     if t then
-        local list = getgenv().__HH_STATE.threads
+        local list = __HH_STATE.threads
         if #list > 40 then
             local alive = {}
             for i = 1, #list do
@@ -77,7 +78,7 @@ function F.trackThread(t)
                     end
                 end
             end
-            getgenv().__HH_STATE.threads = alive
+            __HH_STATE.threads = alive
             list = alive
         end
         table.insert(list, t)
@@ -87,10 +88,11 @@ end
 
 function F.trackGui(g)
     if g then
-        table.insert(getgenv().__HH_STATE.screenGuis, g)
+        table.insert(__HH_STATE.screenGuis, g)
     end
     return g
 end
+
 
 
 local success, API = pcall(function()
@@ -211,7 +213,6 @@ local CUSTOM_ANIMS = {
     jump  = { id = "rbxassetid://10921160088",     priority = Enum.AnimationPriority.Action4 },
 }
 
-local MINI_BOX_ANIM_ID = "rbxassetid://89158965064756"
 
 local AimbotSettings = {
     MM2LockOn = false, MM2Smooth = 8, MM2Range = 500, MM2Target = "Head",
@@ -261,7 +262,6 @@ CFG.FARM_NEAR_RADIUS = 14
 CFG.FARM_COLLECT_SPEED_RESET_TIME = 0.45
 CFG.FARM_FLY_SPEED = 18
 CFG.FARM_NEAR_BOOST = 1.2
-CFG.FARM_BLACKLIST_TIME = 5
 CFG.FARM_TARGET_TIMEOUT = 9
 CFG.FARM_UNSTICK_MAX = 1
 CFG.AUTO_KILL_COOLDOWN = 2
@@ -303,7 +303,6 @@ local S = {
     flingRunning = false, tpAllRunning = false, killAllRunning = false,
     musicSound = nil,
     currentEmoteTrack = nil,
-    miniBoxTrack = nil,
     animPriorityConn = nil,
     korbloxPart = nil,
     mobileFlyVec = Vector3.zero, mobileFlyDragging = false,
@@ -328,7 +327,6 @@ local S = {
     savedFarmStates = nil,
     farmTargetCoin = nil,
     farmTouchedCoins = {},
-    farmBlacklist = {},
     farmWalkBV = nil,
     farmLastCollectAt = 0,
     farmStartedAt = 0,
@@ -368,19 +366,6 @@ function F.isCoinValid(coin)
     return coin:FindFirstChildWhichIsA("TouchTransmitter") ~= nil
 end
 
-function F.isCoinBlacklisted(coin)
-    local t = S.farmBlacklist[coin]
-    if not t then return false end
-    if tick() - t > CFG.FARM_BLACKLIST_TIME then
-        S.farmBlacklist[coin] = nil
-        return false
-    end
-    return true
-end
-
-function F.blacklistCoin(coin)
-    if coin then S.farmBlacklist[coin] = tick() end
-end
 
 function F.tryDodgeKnife(p1, p2)
     if not MiscSettings.KnifeDodge then return end
@@ -695,7 +680,7 @@ function F.hookGunShootEvent(bindable)
     if type(getconnections) ~= "function" or type(hookfunction) ~= "function" then return end
 
     GunShootBindable = bindable
-    getgenv().HH_GunShootBindable = bindable
+    __HH_STATE.GunShootBindable = bindable
     GunShootHandlerHooked = false
 
     for _, conn in ipairs(getconnections(bindable.Event)) do
@@ -1553,34 +1538,35 @@ function F.playEmote(emoteName, emoteId)
     end
 end
 
-function F.playMiniBoxAnimation()
+function F.applyFarmProne()
     local char = LocalPlayer.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    local animator = hum:FindFirstChildOfClass("Animator")
-    if not animator then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hum or not hrp then return end
 
-    if S.miniBoxTrack then
-        pcall(function() S.miniBoxTrack:Stop(0.1) end)
-        S.miniBoxTrack = nil
-    end
+    hum.PlatformStand = true
+    hum.AutoRotate = false
 
-    local anim = Instance.new("Animation")
-    anim.AnimationId = MINI_BOX_ANIM_ID
-    local ok, track = pcall(function() return animator:LoadAnimation(anim) end)
-    if ok and track then
-        track.Priority = Enum.AnimationPriority.Action4
-        track.Looped = true
-        track:Play(0.1)
-        S.miniBoxTrack = track
+    local pos = hrp.Position
+    hrp.CFrame = CFrame.new(pos) * CFrame.Angles(math.rad(-90), 0, 0)
+    hrp.Velocity = Vector3.zero
+    hrp.RotVelocity = Vector3.zero
+
+    if S.coinGyro and S.coinGyro.Parent then
+        S.coinGyro.CFrame = hrp.CFrame
+        S.coinGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+        S.coinGyro.P = 3e5
     end
 end
 
-function F.stopMiniBoxAnimation()
-    if S.miniBoxTrack then
-        pcall(function() S.miniBoxTrack:Stop(0.1) end)
-        S.miniBoxTrack = nil
+function F.stopFarmProne()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.PlatformStand = false
+        hum.AutoRotate = true
     end
 end
 
@@ -1806,11 +1792,6 @@ function F.purgeMemoryCaches(full)
         if S.farmTouchedCoins then
             for coin in pairs(S.farmTouchedCoins) do
                 if not coin or not coin.Parent then S.farmTouchedCoins[coin] = nil end
-            end
-        end
-        if S.farmBlacklist then
-            for coin in pairs(S.farmBlacklist) do
-                if not coin or not coin.Parent then S.farmBlacklist[coin] = nil end
             end
         end
         if ESP and ESP.highlights then
@@ -2562,7 +2543,6 @@ function F.stopCoinCollector()
     F.disableUltraOptimization()
     S.farmTargetCoin = nil
     S.farmTouchedCoins = {}
-    S.farmBlacklist = {}
     S.farmLastCollectAt = 0
     S.farmStartedAt = 0
     S.farmLastFallbackAt = 0
@@ -2573,7 +2553,7 @@ function F.stopCoinCollector()
     S.farmTargetStartedAt = 0
     S.lastGyroUpdate = 0
     if S.coinStatusSetter then S.coinStatusSetter("Idle") end
-    F.stopMiniBoxAnimation()
+    F.stopFarmProne()
     local hrp = F.getHRP()
     if hrp then
         hrp.Velocity = Vector3.zero
@@ -2593,7 +2573,6 @@ function F.startCoinCollector()
     S.coinCollecting = true
     S.farmTargetCoin = nil
     S.farmTouchedCoins = {}
-    S.farmBlacklist = {}
     S.farmStartedAt = tick()
     S.farmLastCollectAt = tick()
     S.farmLastFallbackAt = tick()
@@ -2605,7 +2584,7 @@ function F.startCoinCollector()
     if S.coinStatusSetter then
         S.coinStatusSetter(F.isLocalMurderer() and "Murderer · farming..." or "Searching target...")
     end
-    F.playMiniBoxAnimation()
+    F.applyFarmProne()
     F.ensureFarmHelpers()
     F.ensureFarmNoclip()
     if FarmSettings.UltraOpt then F.enableUltraOptimization() end
@@ -2655,12 +2634,14 @@ function F.startCoinCollector()
         local coins = F.getAllCoins()
 
         if S.coinGyro and S.coinGyro.Parent then
-            if now - S.lastGyroUpdate > 0.15 then
-                S.coinGyro.CFrame = CFrame.new(myPos)
+            if now - S.lastGyroUpdate > 0.12 then
+                local flatCF = CFrame.new(myPos) * CFrame.Angles(math.rad(-90), 0, 0)
+                S.coinGyro.CFrame = flatCF
                 S.lastGyroUpdate = now
             end
-        elseif not S.coinGyro then
+        else
             F.attachFarmGyro()
+            F.applyFarmProne()
         end
 
         if not S.farmWalkBV or not S.farmWalkBV.Parent then
@@ -2696,17 +2677,6 @@ function F.startCoinCollector()
         if touchCount > 40 then
             S.farmTouchedCoins = {}
         end
-        local blCount = 0
-        for coin, t in pairs(S.farmBlacklist) do
-            if now - t > CFG.FARM_BLACKLIST_TIME + 2 or not coin or not coin.Parent then
-                S.farmBlacklist[coin] = nil
-            else
-                blCount = blCount + 1
-            end
-        end
-        if blCount > 30 then
-            S.farmBlacklist = {}
-        end
 
         local localIsMurderer = F.isLocalMurderer()
         local murderer = F.getMurdererCached()
@@ -2728,7 +2698,6 @@ function F.startCoinCollector()
         end
 
         if S.farmTargetCoin and (now - S.farmTargetStartedAt) > CFG.FARM_TARGET_TIMEOUT then
-            F.blacklistCoin(S.farmTargetCoin)
             S.farmTargetCoin = nil
             S.farmTargetStartedAt = 0
             S.farmUnstickAttempts = 0
@@ -2739,7 +2708,7 @@ function F.startCoinCollector()
             S.farmTargetCoin = nil
             local candidates = {}
             for _, coin in ipairs(coins) do
-                if F.isCoinValid(coin) and not F.isCoinBlacklisted(coin) then
+                if F.isCoinValid(coin) then
                     table.insert(candidates, { coin = coin, dist = (coin.Position - myPos).Magnitude })
                 end
             end
@@ -2818,8 +2787,7 @@ function F.startCoinCollector()
             S.farmStuckPos = myPos
             S.farmStuckAt = now
             if S.farmUnstickAttempts >= CFG.FARM_UNSTICK_MAX then
-                F.blacklistCoin(S.farmTargetCoin)
-                S.farmTargetCoin = nil
+                    S.farmTargetCoin = nil
                 S.farmUnstickAttempts = 0
                 S.farmTargetStartedAt = 0
                 if S.coinStatusSetter then S.coinStatusSetter("Stuck · next coin") end
@@ -2837,7 +2805,7 @@ function F.startCoinCollector()
             local bestDist = math.huge
 
             for _, c in ipairs(coins) do
-                if F.isCoinValid(c) and not F.isCoinBlacklisted(c) then
+                if F.isCoinValid(c) then
                     if localIsMurderer or not mHRP or (c.Position - mHRP.Position).Magnitude > 30 then
                         local d = (c.Position - hrp.Position).Magnitude
                         if d > 12 and d < bestDist then
@@ -4103,7 +4071,6 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.korbloxPart = nil
     S.lastSafeCFrame = nil
     S.currentEmoteTrack = nil
-    S.miniBoxTrack = nil
     S.flingOriginalCFrame = nil
     S.flingOriginalPosition = nil
     S.flingTargetRunning = false
@@ -4118,7 +4085,6 @@ LocalPlayer.CharacterAdded:Connect(function()
     S.farmTargetCoin = nil
     pcall(F.purgeMemoryCaches, false)
     S.farmTouchedCoins = {}
-    S.farmBlacklist = {}
     S.farmWalkBV = nil
     S.farmLastCollectAt = 0
     S.farmStartedAt = 0
@@ -4205,8 +4171,7 @@ if coinsStartedEvent then
         end
         S.totalCoins = 0
         S.farmTargetCoin = nil
-        S.farmBlacklist = {}
-        S.farmTouchedCoins = {}
+            S.farmTouchedCoins = {}
         S.farmLastCollectSpeedAt = 0
         if S.coinCountSetter then S.coinCountSetter(0) end
         S.roundActive = true
@@ -4248,8 +4213,7 @@ if roundStartEvent then
         S.bagProgress = {}
         S.totalCoins = 0
         S.farmTargetCoin = nil
-        S.farmBlacklist = {}
-        S.farmTouchedCoins = {}
+            S.farmTouchedCoins = {}
         S.farmLastCollectSpeedAt = 0
         S.rerolling = false
         S.killAllRunning = false
@@ -4308,7 +4272,7 @@ F.trackThread(task.spawn(function()
     while true do
         task.wait(45)
         pcall(F.purgeMemoryCaches, false)
-        local list = getgenv().__HH_STATE and getgenv().__HH_STATE.connections
+        local list = __HH_STATE and __HH_STATE.connections
         if list and #list > 60 then
             local alive = {}
             for i = 1, #list do
@@ -4318,7 +4282,7 @@ F.trackThread(task.spawn(function()
                     if ok and connected then alive[#alive + 1] = c end
                 end
             end
-            getgenv().__HH_STATE.connections = alive
+            __HH_STATE.connections = alive
         end
     end
 end))
@@ -4549,11 +4513,11 @@ F.trackConn("hotkeys", UserInputService.InputBegan:Connect(function(input, gp)
     if isMobile then return end
     if UserInputService:GetFocusedTextBox() then return end
     if input.KeyCode == Enum.KeyCode.T then
-        if UI.mm2LockRef then UI.mm2LockRef.SetState(not UI.mm2LockRef.GetState()) end
+        if UI.mm2LockRef then pcall(function() UI.mm2LockRef:SetState(not UI.mm2LockRef:GetState()) end) end
     elseif input.KeyCode == Enum.KeyCode.O then
-        if UI.mm2ESPToggleRef then UI.mm2ESPToggleRef.SetState(not UI.mm2ESPToggleRef.GetState()) end
+        if UI.mm2ESPToggleRef then pcall(function() UI.mm2ESPToggleRef:SetState(not UI.mm2ESPToggleRef:GetState()) end) end
     elseif input.KeyCode == Enum.KeyCode.B then
-        if UI.autoFireRef then UI.autoFireRef.SetState(not UI.autoFireRef.GetState()) end
+        if UI.autoFireRef then pcall(function() UI.autoFireRef:SetState(not UI.autoFireRef:GetState()) end) end
     elseif input.KeyCode == Enum.KeyCode.V then
         task.spawn(F.mobileForceShoot)
     end
