@@ -363,7 +363,21 @@ end
 function F.isCoinValid(coin)
     if not coin or not coin.Parent then return false end
     if coin:GetAttribute("Collected") then return false end
-    return coin:FindFirstChildWhichIsA("TouchTransmitter") ~= nil
+    if coin:IsA("BasePart") then
+        if coin:FindFirstChildWhichIsA("TouchTransmitter") then return true end
+        if coin:FindFirstChild("TouchInterest") then return true end
+        return true
+    end
+    if coin:IsA("Model") then
+        local part = coin.PrimaryPart or coin:FindFirstChildWhichIsA("BasePart")
+        if part then
+            if part:FindFirstChildWhichIsA("TouchTransmitter") or part:FindFirstChild("TouchInterest") then
+                return true
+            end
+            return true
+        end
+    end
+    return false
 end
 
 
@@ -2475,14 +2489,13 @@ function F.getAllCoins()
     if not cc then return {} end
     local coins = {}
     for _, child in ipairs(cc:GetChildren()) do
-        local part
         if child:IsA("BasePart") then
-            part = child
+            table.insert(coins, child)
         elseif child:IsA("Model") then
-            part = child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")
-        end
-        if part and part:IsA("BasePart") then
-            table.insert(coins, part)
+            local part = child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")
+            if part then
+                table.insert(coins, child)
+            end
         end
     end
     return coins
@@ -2562,7 +2575,6 @@ function F.stopCoinCollector()
 end
 
 function F.startCoinCollector()
-    if S.totalCoins >= CFG.FARM_GOAL then return end
     if not F.getCoinContainer() then return end
     if not F.getHRP() then return end
 
@@ -2595,8 +2607,8 @@ function F.startCoinCollector()
         if not S.coinCollecting then return end
         if not S.roundActive then F.stopCoinCollector() return end
         if S.totalCoins >= CFG.FARM_GOAL then
-            if S.coinStatusSetter then S.coinStatusSetter("Goal reached") end
-            F.stopCoinCollector()
+            if S.coinStatusSetter then S.coinStatusSetter("Goal reached · idle") end
+            if S.farmWalkBV then S.farmWalkBV.Velocity = Vector3.zero end
             if F.isLocalMurderer() then
                 if not S.killAllRunning and tick() - S.roundStartedAt >= CFG.AUTO_KILL_COOLDOWN then
                     S.killAllRunning = true
@@ -2609,17 +2621,6 @@ function F.startCoinCollector()
                             task.wait(0.03)
                         end
                         S.killAllRunning = false
-                    end)
-                end
-            elseif not S.rerolling then
-                if not F.isLocalSheriffOrHero() then
-                    S.rerolling = true
-                    task.delay(0.5, function()
-                        local hum = F.getHumanoid()
-                        if hum and hum.Health > 0 then
-                            hum.Health = 0
-                        end
-                        task.delay(3, function() S.rerolling = false end)
                     end)
                 end
             end
@@ -2651,7 +2652,8 @@ function F.startCoinCollector()
 
         for _, coin in ipairs(coins) do
             if coin and coin.Parent then
-                if (coin.Position - myPos).Magnitude <= CFG.FARM_TOUCH_RADIUS then
+                local cpos = coin:IsA("Model") and ((coin.PrimaryPart and coin.PrimaryPart.Position) or coin:GetPivot().Position) or coin.Position
+                if (cpos - myPos).Magnitude <= CFG.FARM_TOUCH_RADIUS then
                     local lastTouch = S.farmTouchedCoins[coin]
                     if not lastTouch or now - lastTouch > CFG.FARM_TOUCH_COOLDOWN then
                         S.farmTouchedCoins[coin] = now
@@ -2706,10 +2708,16 @@ function F.startCoinCollector()
 
         if not S.farmTargetCoin or not S.farmTargetCoin.Parent or not F.isCoinValid(S.farmTargetCoin) then
             S.farmTargetCoin = nil
+            S.farmSkipUntil = S.farmSkipUntil or {}
+            local nowSkip = tick()
             local candidates = {}
             for _, coin in ipairs(coins) do
                 if F.isCoinValid(coin) then
-                    table.insert(candidates, { coin = coin, dist = (coin.Position - myPos).Magnitude })
+                    local skipT = S.farmSkipUntil[coin]
+                    if not skipT or nowSkip > skipT then
+                        local cpos = coin:IsA("Model") and (coin.PrimaryPart and coin.PrimaryPart.Position or coin:GetPivot().Position) or coin.Position
+                        table.insert(candidates, { coin = coin, dist = (cpos - myPos).Magnitude })
+                    end
                 end
             end
             table.sort(candidates, function(a, b) return a.dist < b.dist end)
@@ -2718,14 +2726,15 @@ function F.startCoinCollector()
                 local bestDist = math.huge
                 for _, coin in ipairs(coins) do
                     if F.isCoinValid(coin) then
-                        local d = (coin.Position - myPos).Magnitude
+                        local cpos = coin:IsA("Model") and (coin.PrimaryPart and coin.PrimaryPart.Position or coin:GetPivot().Position) or coin.Position
+                        local d = (cpos - myPos).Magnitude
                         if d < bestDist then
                             bestDist = d
                             bestCoin = coin
                         end
                     end
                 end
-            elseif candidates[2] and candidates[1].dist < 4 and candidates[2].dist < 18 then
+            elseif candidates[2] and candidates[1].dist < 5 and candidates[2].dist < 20 then
                 bestCoin = candidates[2].coin
             end
             S.farmTargetCoin = bestCoin
@@ -2742,8 +2751,14 @@ function F.startCoinCollector()
             return
         end
 
-        local distToTarget = (target.Position - myPos).Magnitude
-        local targetPos = target.Position + Vector3.new(0, CFG.FARM_GROUND_OFFSET, 0)
+        local tPos
+        if target:IsA("Model") then
+            tPos = (target.PrimaryPart and target.PrimaryPart.Position) or target:GetPivot().Position
+        else
+            tPos = target.Position
+        end
+        local distToTarget = (tPos - myPos).Magnitude
+        local targetPos = tPos + Vector3.new(0, CFG.FARM_GROUND_OFFSET, 0)
         local delta = targetPos - myPos
         local horiz = Vector3.new(delta.X, 0, delta.Z)
         local hDist = horiz.Magnitude
@@ -4261,8 +4276,8 @@ end
 
 F.trackThread(task.spawn(function()
     while true do
-        task.wait(0.5)
-        if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting and S.totalCoins < CFG.FARM_GOAL then
+        task.wait(0.35)
+        if FarmSettings.AutoFarm and S.roundActive and not S.coinCollecting then
             F.startCoinCollector()
         end
     end
