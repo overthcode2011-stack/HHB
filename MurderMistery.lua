@@ -1165,65 +1165,6 @@ function F.getCloseKillOrigin(targetChar, targetPart)
     return CFrame.new(originPos)
 end
 
-function F.autoKillShot(targetPlr)
-    if not targetPlr or not targetPlr.Character then return false, "no target" end
-    if F.shouldWaitForCoins() then return false, "farming" end
-
-    local char = targetPlr.Character
-    local targetPart = F.getMM2TargetPart(char)
-        or char:FindFirstChild("Head")
-        or char:FindFirstChild("HumanoidRootPart")
-    if not targetPart then return false, "no part" end
-
-    local predicted = F.predictAim(targetPart) or CFrame.new(targetPart.Position)
-    local aimPos = predicted.Position
-
-    local above = aimPos + Vector3.new(0, 4.2, 0)
-    if F.classifyPathHit(above, aimPos, char) == "innocent" then
-        above = aimPos + Vector3.new(0, 6.5, 0)
-        if F.classifyPathHit(above, aimPos, char) == "innocent" then
-            return false, "innocent in path"
-        end
-    end
-
-    local originCF = CFrame.new(above, aimPos)
-    local targetCF = CFrame.new(aimPos)
-
-    local gun, how = F.prepareGun()
-    if not gun then return false, how end
-    pcall(function() gun:Activate() end)
-
-    local shoot = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
-    if shoot and shoot:IsA("RemoteEvent") then
-        local attempts = {
-            function() shoot:FireServer(originCF, targetCF) end,
-            function() shoot:FireServer(originCF, aimPos) end,
-            function() shoot:FireServer(above, aimPos) end,
-            function() shoot:FireServer(originCF, predicted) end,
-        }
-        for i = 1, #attempts do
-            if pcall(attempts[i]) then
-                pcall(attempts[i])
-                return true, "auto-kill RE"
-            end
-        end
-    end
-
-    if shoot and shoot:IsA("BindableEvent") then
-        if pcall(function() shoot:Fire(originCF, targetCF) end) then
-            return true, "auto-kill BE"
-        end
-        if type(firesignal) == "function" then
-            pcall(function() firesignal(shoot.Event, originCF, targetCF) end)
-            return true, "auto-kill firesignal"
-        end
-    end
-
-    local ok, info = F.fireGunShootRemote(gun, originCF, targetCF)
-    if ok then return true, info end
-    return F.fireGunChannels(gun, originCF, targetCF)
-end
-
 function F.pathBlockedTo(targetChar, targetPart)
     local origin = F.getGunRaycastOrigin()
     if not origin or not targetPart then return false end
@@ -1312,40 +1253,77 @@ function F.prepareGun()
     return gun, how
 end
 
+function F.happyhubShoot(originCF, targetCF)
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local gun = F.ensureGunReady()
+    if not gun or gun.Parent ~= char then return false end
+    local shootEv = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
+    if not shootEv then return false end
+    if shootEv:IsA("RemoteEvent") then
+        return pcall(function() shootEv:FireServer(originCF, targetCF) end)
+    end
+    if shootEv:IsA("BindableEvent") then
+        return pcall(function() shootEv:Fire(originCF, targetCF) end)
+    end
+    return false
+end
+
+function F.happyhubFireAt(targetPlr, targetPart)
+    if not targetPlr or not targetPlr.Character then return false end
+    if F.shouldWaitForCoins() then return false end
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local gun = F.ensureGunReady()
+    if not gun or gun.Parent ~= char then return false end
+    local shootEv = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
+    if not shootEv then return false end
+    local hand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
+    if not hand then return false end
+    local originCF = CFrame.new(hand.Position)
+    local targetPos = F.getPredictedPosition(targetPlr, CFG.YARHM_SHOOT_OFFSET)
+    if not targetPos then return false end
+    local targetCF = CFrame.new(targetPos)
+    if targetPart then
+        local predCF = F.predictAim(targetPart)
+        if predCF then targetCF = predCF end
+    end
+    return F.happyhubShoot(originCF, targetCF)
+end
+
+function F.happyhubInstakill(targetPlr)
+    if not targetPlr or not targetPlr.Character then return false end
+    if F.shouldWaitForCoins() then return false end
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local gun = F.ensureGunReady()
+    if not gun or gun.Parent ~= char then return false end
+    local shootEv = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
+    if not shootEv then return false end
+    local theirHRP = targetPlr.Character:FindFirstChild("HumanoidRootPart")
+    if not theirHRP then return false end
+    local originCF = CFrame.new(theirHRP.Position + Vector3.new(0, 1, 0))
+    local targetCF = CFrame.new(theirHRP.Position)
+    return F.happyhubShoot(originCF, targetCF)
+end
+
 function F.shootAt(targetPlr, targetPart, wallbang)
-    if not targetPlr or not targetPlr.Character then return false, "no target" end
-    if F.shouldWaitForCoins() then return false, "farming" end
-    local gun, how = F.prepareGun()
-    if not gun then return false, how end
-
-    local targetCF = F.buildTargetCF(targetPlr, targetPart)
-    if not targetCF then return false, "no target pos" end
-
-    local originCF
-    if wallbang or F.pathBlockedTo(targetPlr.Character, targetPart or targetPlr.Character:FindFirstChild("HumanoidRootPart")) then
-        originCF = F.getWallbangOrigin(targetPlr.Character, targetPart)
+    if wallbang then
+        return F.happyhubInstakill(targetPlr)
     end
-    if not originCF then
-        originCF = F.getGunRaycastOrigin()
-    end
-    if not originCF then return false, "no origin" end
-
-    local ok, info = F.fireGunShootRemote(gun, originCF, targetCF)
-    if ok then return true, info end
-    return F.fireGunChannels(gun, originCF, targetCF)
+    return F.happyhubFireAt(targetPlr, targetPart)
 end
 
 function F.yarhmFireAt(targetPlr, targetPart)
-    local forceBang = not AimbotSettings.WallCheck
-    return F.shootAt(targetPlr, targetPart, forceBang)
+    return F.happyhubFireAt(targetPlr, targetPart)
 end
 
 function F.yarhmInstakill(targetPlr)
-    local part = targetPlr and targetPlr.Character and (
-        targetPlr.Character:FindFirstChild("Head")
-        or targetPlr.Character:FindFirstChild("HumanoidRootPart")
-    )
-    return F.shootAt(targetPlr, part, true)
+    return F.happyhubInstakill(targetPlr)
+end
+
+function F.autoKillShot(targetPlr)
+    return F.happyhubInstakill(targetPlr)
 end
 
 function F.mobileForceShoot()
@@ -1358,13 +1336,12 @@ function F.mobileForceShoot()
         F.notify("No murderer", 2)
         return false
     end
-    local targetPart = F.getMM2TargetPart(murderer.Character)
-    local ok, info = F.shootAt(murderer, targetPart, true)
+    local ok = F.happyhubInstakill(murderer)
     if ok then
         F.notify("Shot " .. murderer.DisplayName, 1.5)
         return true
     end
-    F.notify("Fire failed: " .. tostring(info), 3)
+    F.notify("Fire failed", 3)
     return false
 end
 
@@ -1615,27 +1592,31 @@ function F.stopMusic()
     end
 end
 
-if UNC.hookmetamethod and UNC.getnamecallmethod then
-    pcall(function()
-        S.hookNamecall = hookmetamethod
-        S.getNamecall  = getnamecallmethod
+pcall(function()
+    if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" then
         local oldNamecall
-        oldNamecall = S.hookNamecall(game, "__namecall", function(self, ...)
-            local method = S.getNamecall()
-            if method == "FireServer" and typeof(self) == "Instance" and self:IsA("RemoteEvent") then
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            if getnamecallmethod() == "FireServer" and typeof(self) == "Instance" and self:IsA("RemoteEvent") then
+                local args = table.pack(...)
                 if MiscSettings.SilentAim and F.isGunShootRemote(self) then
-                    if F.shouldWaitForCoins() then
-                        return oldNamecall(self, ...)
-                    end
-                    local murderer = F.getMurdererCached()
-                    if F.isTargetSafe(murderer) then
-                        local targetPart = F.getMM2TargetPart(murderer.Character)
-                        if targetPart then
-                            local originCF = F.getGunRaycastOrigin()
-                            local targetCF = F.predictAim(targetPart) or CFrame.new(targetPart.Position)
-                            if originCF and targetCF then
-                                if F.isVisibleForShot(originCF.Position, targetPart.Position, murderer.Character, murderer) then
-                                    return oldNamecall(self, originCF, targetCF)
+                    if not F.shouldWaitForCoins() then
+                        local murderer = F.getMurdererCached()
+                        if F.isTargetSafe(murderer) then
+                            local targetPart = F.getMM2TargetPart(murderer.Character)
+                            if targetPart then
+                                local myHRP = F.getHRP()
+                                local origin = (myHRP and myHRP.Position) or workspace.CurrentCamera.CFrame.Position
+                                if F.isVisibleForShot(origin, targetPart.Position, murderer.Character, murderer) then
+                                    local newTarget = F.predictAim(targetPart)
+                                    if newTarget then
+                                        for i = 2, math.min(5, args.n) do
+                                            if typeof(args[i]) == "CFrame" then
+                                                args[i] = newTarget
+                                                break
+                                            end
+                                        end
+                                        return oldNamecall(self, table.unpack(args, 1, args.n))
+                                    end
                                 end
                             end
                         end
@@ -1645,25 +1626,25 @@ if UNC.hookmetamethod and UNC.getnamecallmethod then
             return oldNamecall(self, ...)
         end)
         S.silentAimHookInstalled = true
-    end)
-end
+        S.hookNamecall = hookmetamethod
+        S.getNamecall = getnamecallmethod
+    end
+end)
 
 F.trackConn("silent_click", UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if not MiscSettings.SilentAim then return end
     if F.shouldWaitForCoins() then return end
+    if S.silentAimHookInstalled then return end
     local isClick = input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch
     if not isClick then return end
-    if S.silentAimHookInstalled and input.UserInputType == Enum.UserInputType.MouseButton1 then
-        return
-    end
     local murderer = F.getMurdererCached()
     if not F.isTargetSafe(murderer) then return end
     local targetPart = F.getMM2TargetPart(murderer.Character)
     if not targetPart then return end
     F.trackThread(task.spawn(function()
-        F.yarhmFireAt(murderer, targetPart)
+        F.happyhubFireAt(murderer, targetPart)
     end))
 end))
 
@@ -3360,14 +3341,14 @@ window:CreateButton(playersTab, "Fling", function()
         F.startFlingTarget(plr)
         if #targets > 1 then task.wait(0.35) end
     end
-end, "Fling the selected role or all players")
+end, "Fling target")
 
 window:CreateButton(playersTab, "Spectate", function()
     local plr = F.resolveSelectedPlayer()
     if not plr then F.notify("Target not found") return end
     F.spectatePlayer(plr)
     F.notify("Spectating " .. plr.DisplayName, 2)
-end, "Spectate Murderer or Sheriff")
+end, "Spectate target")
 
 window:CreateButton(playersTab, "Stop", function()
     F.stopSpectating()
@@ -3629,7 +3610,7 @@ do
                 S.currentEmoteTrack = nil
             end
         end
-    end, "Play or stop the selected emote")
+    end, "Play emote")
 end
 
 window:CreateLabel(movementTab, "Reset")
@@ -3766,7 +3747,7 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
     AimbotSettings.AutoFire = v
     if v then
         local lastShot = 0
-        F.trackConn("autofire", RunService.Heartbeat:Connect(function()
+        F.trackConn("autofire", RunService.RenderStepped:Connect(function()
             if not AimbotSettings.AutoFire then return end
             if F.shouldWaitForCoins() then return end
             if not F.findGunEquipped() and not F.findGunInBackpack() then return end
@@ -3775,32 +3756,17 @@ UI.autoFireRef = window:CreateToggle(aimbotTab, "Auto Fire", false, function(v)
             local targetPart = F.getMM2TargetPart(murderer.Character)
             if not targetPart then return end
             local myHRP = F.getHRP()
-            local originPos = myHRP and myHRP.Position
-            if not originPos then return end
-            if F.classifyPathHit(originPos, targetPart.Position, murderer.Character) == "innocent" then
-                return
-            end
-            if AimbotSettings.WallCheck and not F.isVisibleForShot(originPos, targetPart.Position, murderer.Character, murderer) then
-                return
-            end
+            if not myHRP then return end
+            if not F.isVisibleForShot(myHRP.Position, targetPart.Position, murderer.Character, murderer) then return end
             local now = tick()
-            if now - lastShot < 0.1 then return end
+            if now - lastShot < 0.15 then return end
             lastShot = now
-            if MiscSettings.SilentAim then
-                local pred = F.predictAim(targetPart) or CFrame.new(targetPart.Position)
-                local gun = select(1, F.prepareGun())
-                if gun then
-                    local originCF = F.getGunRaycastOrigin() or CFrame.new(originPos)
-                    F.fireGunShootRemote(gun, originCF, pred)
-                end
-            else
-                F.shootAt(murderer, targetPart, not AimbotSettings.WallCheck)
-            end
+            F.happyhubFireAt(murderer, targetPart)
         end))
     else
         F.dropConn("autofire")
     end
-end, "Auto shoots the Murderer · skips innocents · uses Silent Aim when enabled")
+end, "Auto shoot Murderer")
 F.registerControl(AimbotSettings, "AutoFire", UI.autoFireRef)
 
 window:CreateLabel(aimbotTab, "Sheriff / Hero")
@@ -3808,7 +3774,7 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill", false, function(v)
     AimbotSettings.AutoKillMurderer = v
     if v then
         local lastShot = 0
-        F.trackConn("autokill", RunService.Heartbeat:Connect(function()
+        F.trackConn("autokill", RunService.RenderStepped:Connect(function()
             if not AimbotSettings.AutoKillMurderer then return end
             if not F.isLocalSheriffOrHero() then return end
             if F.shouldWaitForCoins() then return end
@@ -3816,14 +3782,14 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill", false, function(v)
             local murderer = F.getMurdererCached()
             if not F.isTargetSafe(murderer) then return end
             local now = tick()
-            if now - lastShot < 0.1 then return end
+            if now - lastShot < 0.15 then return end
             lastShot = now
-            F.autoKillShot(murderer)
+            F.happyhubInstakill(murderer)
         end))
     else
         F.dropConn("autokill")
     end
-end, "Beam from above the Murderer with movement prediction · skips innocents")
+end, "Kill from any range")
 F.registerControl(AimbotSettings, "AutoKillMurderer", UI.autoKillRef)
 
 UI.wallCheckRef = window:CreateToggle(aimbotTab, "Wall Check", true, function(v)
@@ -4356,7 +4322,7 @@ UI.silentRef = window:CreateToggle(miscTab, "Silent Aim", false, function(v)
     if v and not S.silentAimHookInstalled then
         F.notify("Silent Aim unavailable", 2)
     end
-end)
+end, "Redirects shots to Murderer")
 F.registerControl(MiscSettings, "SilentAim", UI.silentRef)
 
 window:CreateLabel(miscTab, "Knife Dodge")
@@ -4694,3 +4660,4 @@ end)
 F.notify("Hello again "..LocalPlayer.DisplayName, 3)
 end
 F.buildUI()
+
