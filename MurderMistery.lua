@@ -218,7 +218,10 @@ local AimbotSettings = {
     TriggerBot = false, TriggerRange = 150, AutoFire = false, WallCheck = true,
     FOVCircle = false, FOVRadius = 120, AutoKillMurderer = false,
 }
-local VisualSettings = { MM2ESP = false, OGESP = false, NameTags = false, GunESP = false, Beam = false }
+local VisualSettings = {
+    MM2ESP = false, OGESP = false, NameTags = false,
+    GunESP = false, Beam = false, SelfESP = false,
+}
 local MiscSettings = {
     InfJump = false, AntiAFK = false, AutoTpGun = false,
     SilentAim = false, MusicCompanion = false, AntiVoid = false,
@@ -271,6 +274,13 @@ CFG.KNIFE_DODGE_MIN_DIST = 12
 CFG.KNIFE_DODGE_OFFSET = 20
 CFG.KNIFE_DODGE_COOLDOWN = 0.4
 CFG.YARHM_SHOOT_OFFSET = 2.8
+
+CFG.SAFE_ZONE_CF = CFrame.new(
+    70.8001633, 586.636047, 6841.95312,
+    -0.999991059, 0.000338302139, -0.00421423512,
+    1.66770542e-10, 0.996793389, 0.0800185874,
+    0.00422779191, 0.0800178722, -0.996784449
+)
 
 function F.getFarmSpeed()
     local s = FarmSettings.FarmSpeed
@@ -1291,9 +1301,9 @@ function F.happyhubFireAt(targetPlr, targetPart)
     return F.happyhubShoot(originCF, targetCF)
 end
 
-function F.happyhubInstakill(targetPlr)
+function F.happyhubInstakill(targetPlr, allowDuringFarm)
     if not targetPlr or not targetPlr.Character then return false end
-    if F.shouldWaitForCoins() then return false end
+    if not allowDuringFarm and F.shouldWaitForCoins() then return false end
     local char = LocalPlayer.Character
     if not char then return false end
     local gun = F.ensureGunReady()
@@ -1748,8 +1758,8 @@ local ESP_COLORS = {
 }
 
 local ESP = {
-    active = { MM2 = false, OG = false, NameTag = false },
-    highlights = { MM2 = {}, OG = {} },
+    active = { MM2 = false, OG = false, NameTag = false, Self = false },
+    highlights = { MM2 = {}, OG = {}, Self = nil },
     nameTags = {},
 }
 
@@ -1947,7 +1957,33 @@ function F.applyESP(plr)
     end
 end
 
+function F.applySelfESP()
+    local char = LocalPlayer.Character
+    if not VisualSettings.SelfESP or not char then
+        if ESP.highlights.Self then
+            pcall(function() ESP.highlights.Self:Destroy() end)
+            ESP.highlights.Self = nil
+        end
+        return
+    end
+    if ESP.highlights.Self and ESP.highlights.Self.Parent == char then return end
+    if ESP.highlights.Self then
+        pcall(function() ESP.highlights.Self:Destroy() end)
+        ESP.highlights.Self = nil
+    end
+    local h = Instance.new("Highlight")
+    h.Name = "HH_Self"
+    h.FillColor = Color3.fromRGB(0, 220, 130)
+    h.FillTransparency = 0.55
+    h.OutlineColor = Color3.fromRGB(0, 255, 160)
+    h.OutlineTransparency = 0.2
+    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    h.Parent = char
+    ESP.highlights.Self = h
+end
+
 function F.refreshAllESP()
+    F.applySelfESP()
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             if not plr.Character then F.clearHighlights(plr) else F.applyESP(plr) end
@@ -2855,6 +2891,17 @@ function F.shouldWaitForCoins()
     return true
 end
 
+function F.goToSafeZone()
+    local hrp = F.getHRP()
+    if not hrp then return false end
+    pcall(function()
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.CFrame = CFG.SAFE_ZONE_CF
+    end)
+    return true
+end
+
 function F.getFlingTargetByName(name)
     if not name then return nil end
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -3413,6 +3460,13 @@ UI.ogESPToggleRef = window:CreateToggle(espTab, "Neutral", false, function(v)
 end)
 F.registerControl(VisualSettings, "OGESP", UI.ogESPToggleRef)
 
+UI.selfESPToggleRef = window:CreateToggle(espTab, "Self", false, function(v)
+    VisualSettings.SelfESP = v
+    ESP.active.Self = v
+    F.applySelfESP()
+end, "Highlight yourself")
+F.registerControl(VisualSettings, "SelfESP", UI.selfESPToggleRef)
+
 window:CreateLabel(espTab, "Additional")
 UI.nameTagToggleRef = window:CreateToggle(espTab, "Nametag", false, function(v)
     ESP.active.NameTag = v
@@ -3777,19 +3831,21 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill", false, function(v)
         F.trackConn("autokill", RunService.RenderStepped:Connect(function()
             if not AimbotSettings.AutoKillMurderer then return end
             if not F.isLocalSheriffOrHero() then return end
-            if F.shouldWaitForCoins() then return end
             if S.roundStartedAt > 0 and tick() - S.roundStartedAt < CFG.AUTO_KILL_COOLDOWN then return end
             local murderer = F.getMurdererCached()
             if not F.isTargetSafe(murderer) then return end
             local now = tick()
             if now - lastShot < 0.15 then return end
             lastShot = now
-            F.happyhubInstakill(murderer)
+            if F.shouldWaitForCoins() then
+                F.goToSafeZone()
+            end
+            F.happyhubInstakill(murderer, true)
         end))
     else
         F.dropConn("autokill")
     end
-end, "Kill from any range")
+end, "Safe zone while farming")
 F.registerControl(AimbotSettings, "AutoKillMurderer", UI.autoKillRef)
 
 UI.wallCheckRef = window:CreateToggle(aimbotTab, "Wall Check", true, function(v)
@@ -4112,6 +4168,8 @@ LocalPlayer.CharacterAdded:Connect(function()
     end
     task.wait(0.2)
     F.reapplyActiveFeatures()
+    ESP.highlights.Self = nil
+    F.applySelfESP()
 end)
 
 window:CreateLabel(farmTab, "Coin Farm")
