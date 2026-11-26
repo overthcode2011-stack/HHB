@@ -112,7 +112,7 @@ local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-API.Config.SupportedGames = {}
+API.Config.SupportedGames = {142823291}
 if API.Config.KeySystem then
     API.Config.KeySystem.Enabled = false
 end
