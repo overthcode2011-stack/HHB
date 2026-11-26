@@ -517,13 +517,15 @@ function F.waitForGunAttachment(timeout)
     return nil
 end
 
-function F.ensureGunReady()
+function F.ensureGunReady(fast)
     local char = LocalPlayer.Character
     if not char then return nil, "no character" end
 
     local equipped = F.findGunEquipped()
     if equipped and equipped.Parent == char then
-        F.waitForGunAttachment(0.6)
+        if not fast then
+            F.waitForGunAttachment(0.35)
+        end
         return equipped, "already in rig"
     end
 
@@ -542,11 +544,24 @@ function F.ensureGunReady()
     end)
     pcall(function() hum:EquipTool(inBag) end)
 
-    local deadline = tick() + 1.5
+    if fast then
+        local eq = F.findGunEquipped()
+        if eq and eq.Parent == char then
+            return eq, "equipped fast"
+        end
+        task.wait(0.08)
+        eq = F.findGunEquipped()
+        if eq and eq.Parent == char then
+            return eq, "equipped fast"
+        end
+        return nil, "equip timeout"
+    end
+
+    local deadline = tick() + 1.2
     while tick() < deadline do
         local eq = F.findGunEquipped()
         if eq and eq.Parent == char then
-            F.waitForGunAttachment(0.8)
+            F.waitForGunAttachment(0.5)
             return eq, "equipped from backpack"
         end
         task.wait(0.05)
@@ -1263,10 +1278,10 @@ function F.prepareGun()
     return gun, how
 end
 
-function F.happyhubShoot(originCF, targetCF)
+function F.happyhubShoot(originCF, targetCF, gun)
     local char = LocalPlayer.Character
     if not char then return false end
-    local gun = F.ensureGunReady()
+    gun = gun or F.ensureGunReady(true)
     if not gun or gun.Parent ~= char then return false end
     local shootEv = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
     if not shootEv then return false end
@@ -1284,21 +1299,22 @@ function F.happyhubFireAt(targetPlr, targetPart)
     if F.shouldWaitForCoins() then return false end
     local char = LocalPlayer.Character
     if not char then return false end
-    local gun = F.ensureGunReady()
+    local gun = F.ensureGunReady(true)
     if not gun or gun.Parent ~= char then return false end
-    local shootEv = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
-    if not shootEv then return false end
     local hand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
-    if not hand then return false end
-    local originCF = CFrame.new(hand.Position)
-    local targetPos = F.getPredictedPosition(targetPlr, CFG.YARHM_SHOOT_OFFSET)
-    if not targetPos then return false end
-    local targetCF = CFrame.new(targetPos)
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local originPart = hand or hrp
+    if not originPart then return false end
+    local originCF = CFrame.new(originPart.Position)
+    local targetCF
     if targetPart then
-        local predCF = F.predictAim(targetPart)
-        if predCF then targetCF = predCF end
+        targetCF = F.predictAim(targetPart) or CFrame.new(targetPart.Position)
+    else
+        local targetPos = F.getPredictedPosition(targetPlr, CFG.YARHM_SHOOT_OFFSET)
+        if not targetPos then return false end
+        targetCF = CFrame.new(targetPos)
     end
-    return F.happyhubShoot(originCF, targetCF)
+    return F.happyhubShoot(originCF, targetCF, gun)
 end
 
 function F.happyhubInstakill(targetPlr, allowDuringFarm)
@@ -1306,15 +1322,13 @@ function F.happyhubInstakill(targetPlr, allowDuringFarm)
     if not allowDuringFarm and F.shouldWaitForCoins() then return false end
     local char = LocalPlayer.Character
     if not char then return false end
-    local gun = F.ensureGunReady()
+    local gun = F.ensureGunReady(true)
     if not gun or gun.Parent ~= char then return false end
-    local shootEv = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
-    if not shootEv then return false end
     local theirHRP = targetPlr.Character:FindFirstChild("HumanoidRootPart")
     if not theirHRP then return false end
     local originCF = CFrame.new(theirHRP.Position + Vector3.new(0, 1, 0))
     local targetCF = CFrame.new(theirHRP.Position)
-    return F.happyhubShoot(originCF, targetCF)
+    return F.happyhubShoot(originCF, targetCF, gun)
 end
 
 function F.shootAt(targetPlr, targetPart, wallbang)
@@ -3765,6 +3779,7 @@ UI.triggerRef = window:CreateToggle(aimbotTab, "Trigger Bot", false, function(v)
         local lastShot = 0
         F.trackConn("triggerbot", RunService.RenderStepped:Connect(function()
             if not AimbotSettings.TriggerBot then return end
+            if F.shouldWaitForCoins() then return end
             local murderer = F.getMurdererCached()
             if not F.isTargetSafe(murderer) then return end
             local targetPart = F.getMM2TargetPart(murderer.Character)
@@ -3828,24 +3843,23 @@ UI.autoKillRef = window:CreateToggle(aimbotTab, "Auto Kill", false, function(v)
     AimbotSettings.AutoKillMurderer = v
     if v then
         local lastShot = 0
-        F.trackConn("autokill", RunService.RenderStepped:Connect(function()
+        F.trackConn("autokill", RunService.Heartbeat:Connect(function()
             if not AimbotSettings.AutoKillMurderer then return end
             if not F.isLocalSheriffOrHero() then return end
             if S.roundStartedAt > 0 and tick() - S.roundStartedAt < CFG.AUTO_KILL_COOLDOWN then return end
+            -- only one murderer: finish coins first, then kill
+            if F.shouldWaitForCoins() then return end
             local murderer = F.getMurdererCached()
             if not F.isTargetSafe(murderer) then return end
             local now = tick()
             if now - lastShot < 0.15 then return end
             lastShot = now
-            if F.shouldWaitForCoins() then
-                F.goToSafeZone()
-            end
-            F.happyhubInstakill(murderer, true)
+            F.happyhubInstakill(murderer)
         end))
     else
         F.dropConn("autokill")
     end
-end, "Safe zone while farming")
+end, "Kills after farm goal")
 F.registerControl(AimbotSettings, "AutoKillMurderer", UI.autoKillRef)
 
 UI.wallCheckRef = window:CreateToggle(aimbotTab, "Wall Check", true, function(v)
@@ -4348,6 +4362,102 @@ F.trackThread(task.spawn(function()
 end))
 end
 F.bindFarmStatsAndRound(farmTab)
+
+window:CreateLabel(miscTab, "Vote Dupe")
+_G.__HH_VotePad = "Pad 1"
+S.voteDupeRunning = false
+
+function F.getVoteDetector(padName)
+    local lobby = workspace:FindFirstChild("RegularLobby")
+    local pads = lobby and lobby:FindFirstChild("VotePads")
+    if not pads then return nil end
+    local map = {
+        ["Pad 1"] = "Detector1",
+        ["Pad 2"] = "Detector2",
+        ["Pad 3"] = "Detector3",
+    }
+    local key = map[padName] or "Detector1"
+    local det = pads:FindFirstChild(key)
+    if det and det:IsA("BasePart") then return det end
+    return nil
+end
+
+function F.tpToVotePad(padName, det)
+    det = det or F.getVoteDetector(padName)
+    local hrp = F.getHRP()
+    if not det or not hrp then return false end
+    hrp.CFrame = det.CFrame + Vector3.new(0, 3, 0)
+    return true
+end
+
+function F.runVoteDupe(padName, times)
+    if S.voteDupeRunning then
+        F.notify("Already running")
+        return
+    end
+    times = times or 10
+    local det = F.getVoteDetector(padName)
+    if not det then
+        F.notify("Pads not found")
+        return
+    end
+    local hrp = F.getHRP()
+    if not hrp then
+        F.notify("No character")
+        return
+    end
+    local originalCF = hrp.CFrame
+    local padCF = det.CFrame + Vector3.new(0, 3, 0)
+    S.voteDupeRunning = true
+    F.notify("Vote dupe x" .. tostring(times), 1.5)
+    F.trackThread(task.spawn(function()
+        for _ = 1, times do
+            if not S.voteDupeRunning then break end
+            local root = F.getHRP()
+            if not root then
+                LocalPlayer.CharacterAdded:Wait()
+                task.wait(0.1)
+                root = F.getHRP()
+            end
+            if not root then break end
+            root.CFrame = padCF
+            task.wait(0.05)
+            local hum = F.getHumanoid()
+            if hum and hum.Health > 0 then
+                hum.Health = 0
+            end
+            local added = LocalPlayer.CharacterAdded:Wait()
+            local newRoot = added and added:WaitForChild("HumanoidRootPart", 2)
+            if not newRoot then
+                task.wait(0.15)
+                newRoot = F.getHRP()
+            end
+            if newRoot then
+                newRoot.CFrame = padCF
+            end
+            task.wait(0.18)
+        end
+        local finalHRP = F.getHRP()
+        if finalHRP and originalCF then
+            finalHRP.CFrame = originalCF
+        end
+        S.voteDupeRunning = false
+        F.notify("Vote dupe done", 1.5)
+    end))
+end
+
+window:CreateDropdown(miscTab, "Vote Pad", { "Pad 1", "Pad 2", "Pad 3" }, "Pad 1", function(v)
+    _G.__HH_VotePad = v
+end, "Pad to vote")
+
+window:CreateButton(miscTab, "Dupe Votes x10", function()
+    F.runVoteDupe(_G.__HH_VotePad or "Pad 1", 10)
+end, "TP > die > TP")
+
+window:CreateButton(miscTab, "Stop Vote Dupe", function()
+    S.voteDupeRunning = false
+    F.notify("Stopping")
+end)
 
 window:CreateLabel(miscTab, "Gun")
 window:CreateButton(miscTab, "Pick up Gun", function()
